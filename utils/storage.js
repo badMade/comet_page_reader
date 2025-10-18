@@ -1,3 +1,9 @@
+/**
+ * Resolves the runtime-specific browser API object (Chrome/Firefox compatible).
+ *
+ * @returns {typeof chrome|typeof browser} Browser API namespace.
+ * @throws {Error} When neither API is present.
+ */
 const getBrowserApi = () => {
   if (typeof chrome !== 'undefined') {
     return chrome;
@@ -10,6 +16,13 @@ const getBrowserApi = () => {
 
 const runtime = getBrowserApi();
 
+/**
+ * Determines the most suitable persistent storage area available to the
+ * extension.
+ *
+ * @returns {chrome.storage.StorageArea} Storage area instance.
+ * @throws {Error} When storage APIs are unavailable.
+ */
 const resolveStorageArea = () => {
   if (runtime.storage && runtime.storage.sync) {
     return runtime.storage.sync;
@@ -24,6 +37,13 @@ const storageArea = resolveStorageArea();
 
 const sessionArea = runtime.storage && runtime.storage.session ? runtime.storage.session : null;
 
+/**
+ * Promisified wrapper for Chrome-style callback APIs.
+ *
+ * @param {Function} fn - Storage API function.
+ * @param {...*} args - Arguments forwarded to the API.
+ * @returns {Promise<*>} Resolved API result.
+ */
 const promisify = (fn, ...args) => {
   return new Promise((resolve, reject) => {
     try {
@@ -41,6 +61,13 @@ const promisify = (fn, ...args) => {
   });
 };
 
+/**
+ * Promisified wrapper for session storage APIs.
+ *
+ * @param {Function} fn - Storage API function.
+ * @param {...*} args - Arguments forwarded to the API.
+ * @returns {Promise<*>} Resolved API result.
+ */
 const promisifySession = (fn, ...args) => {
   if (!sessionArea) {
     return Promise.resolve(undefined);
@@ -61,6 +88,13 @@ const promisifySession = (fn, ...args) => {
   });
 };
 
+/**
+ * Reads a value from the persistent storage area.
+ *
+ * @param {string} key - Storage key.
+ * @param {*} [defaultValue] - Fallback value when the key is missing.
+ * @returns {Promise<*>} Stored value or default.
+ */
 export async function getValue(key, defaultValue = undefined) {
   const data = await promisify(storageArea.get, key);
   if (data && Object.prototype.hasOwnProperty.call(data, key)) {
@@ -69,15 +103,36 @@ export async function getValue(key, defaultValue = undefined) {
   return defaultValue;
 }
 
+/**
+ * Persists a value using the persistent storage area.
+ *
+ * @param {string} key - Storage key.
+ * @param {*} value - Value to store.
+ * @returns {Promise<*>} Stored value.
+ */
 export async function setValue(key, value) {
   await promisify(storageArea.set, { [key]: value });
   return value;
 }
 
+/**
+ * Removes a value from the persistent storage area.
+ *
+ * @param {string} key - Storage key to remove.
+ * @returns {Promise<void>} Resolves once the key is removed.
+ */
 export async function removeValue(key) {
   await promisify(storageArea.remove, key);
 }
 
+/**
+ * Provides a cooperative lock using storage keys to avoid concurrent writes.
+ *
+ * @param {string} key - Identifier used for the lock key.
+ * @param {Function} fn - Async function executed while holding the lock.
+ * @returns {Promise<*>} Result of the function.
+ * @throws {Error} When the lock cannot be acquired within the retry budget.
+ */
 export async function withLock(key, fn) {
   const lockKey = `lock:${key}`;
   const maxAttempts = 5;
@@ -97,6 +152,13 @@ export async function withLock(key, fn) {
   throw new Error('Failed to acquire storage lock.');
 }
 
+/**
+ * Reads a value from the session storage area when available.
+ *
+ * @param {string} key - Storage key.
+ * @param {*} [defaultValue] - Fallback value when missing.
+ * @returns {Promise<*>} Stored value or default.
+ */
 export async function getSessionValue(key, defaultValue = undefined) {
   if (!sessionArea) {
     return defaultValue;
@@ -108,6 +170,13 @@ export async function getSessionValue(key, defaultValue = undefined) {
   return defaultValue;
 }
 
+/**
+ * Persists a value to the session storage area when available.
+ *
+ * @param {string} key - Storage key.
+ * @param {*} value - Value to store.
+ * @returns {Promise<*>} Stored value.
+ */
 export async function setSessionValue(key, value) {
   if (!sessionArea) {
     return value;

@@ -1,5 +1,17 @@
+/**
+ * Cache of recently evaluated element visibility checks to avoid repeated
+ * layout work during DOM traversals.
+ * @type {WeakMap<Element, boolean>}
+ */
 let VISIBILITY_CACHE = new WeakMap();
 
+/**
+ * Determines whether an element should be considered visible for the purposes
+ * of summarisation. Non-element nodes are treated as visible by default.
+ *
+ * @param {Node} node - Node being evaluated.
+ * @returns {boolean} True when the node's text content is suitable for use.
+ */
 function isNodeVisible(node) {
   if (!(node instanceof Element)) {
     return true;
@@ -25,6 +37,12 @@ function isNodeVisible(node) {
   return visible;
 }
 
+/**
+ * Normalises whitespace in text nodes to keep segment extraction consistent.
+ *
+ * @param {string} text - Raw text content.
+ * @returns {string} Cleaned text containing single spaces.
+ */
 function normaliseWhitespace(text) {
   return text
     .replace(/\s+/g, ' ')
@@ -32,6 +50,15 @@ function normaliseWhitespace(text) {
     .trim();
 }
 
+/**
+ * Traverses the DOM and yields text segments constrained by optional size
+ * thresholds. Invisible nodes and script-related elements are ignored.
+ *
+ * @param {Element} [root=document.body] - Root element to traverse.
+ * @param {{maxLength?: number, minSegmentLength?: number}} [options] -
+ *   Extraction constraints.
+ * @returns {string[]} Extracted text segments.
+ */
 export function extractVisibleText(root = document.body, options = {}) {
   const { maxLength = 4000, minSegmentLength = 500 } = options;
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
@@ -75,6 +102,13 @@ export function extractVisibleText(root = document.body, options = {}) {
   return segments.filter(Boolean);
 }
 
+/**
+ * Wraps the provided DOM range in a <mark> element to highlight the text.
+ *
+ * @param {Range} range - DOM range to decorate.
+ * @param {string} [className='comet-reader-highlight'] - CSS class applied.
+ * @returns {HTMLElement} The created highlight element.
+ */
 export function highlightRange(range, className = 'comet-reader-highlight') {
   const highlight = document.createElement('mark');
   highlight.className = className;
@@ -82,6 +116,11 @@ export function highlightRange(range, className = 'comet-reader-highlight') {
   return highlight;
 }
 
+/**
+ * Removes highlight wrappers from the document, restoring original text nodes.
+ *
+ * @param {string} [className='comet-reader-highlight'] - CSS class to target.
+ */
 export function clearHighlights(className = 'comet-reader-highlight') {
   document.querySelectorAll(`.${className}`).forEach(node => {
     const parent = node.parentNode;
@@ -95,6 +134,12 @@ export function clearHighlights(className = 'comet-reader-highlight') {
   });
 }
 
+/**
+ * Generates a predictable identifier for each extracted text segment.
+ *
+ * @param {string[]} segments - Sequential text segments.
+ * @returns {{id: string, text: string}[]} Segments paired with unique IDs.
+ */
 export function createSegmentMap(segments) {
   return segments.map((text, index) => ({
     id: `segment-${index + 1}`,
@@ -102,6 +147,14 @@ export function createSegmentMap(segments) {
   }));
 }
 
+/**
+ * Sets up a MutationObserver that invalidates cached visibility checks and
+ * triggers the supplied callback.
+ *
+ * @param {Function} callback - Invoked whenever the DOM changes.
+ * @param {MutationObserverInit} [options={}] - Additional observer options.
+ * @returns {MutationObserver} Active observer instance.
+ */
 export function observeMutations(callback, options = {}) {
   const observer = new MutationObserver(() => {
     VISIBILITY_CACHE = new WeakMap();
@@ -117,6 +170,14 @@ export function observeMutations(callback, options = {}) {
   return observer;
 }
 
+/**
+ * Coalesces rapid function calls into a single invocation executed at most
+ * once per interval.
+ *
+ * @param {Function} fn - Function to throttle.
+ * @param {number} delay - Delay in milliseconds.
+ * @returns {Function} Wrapper that throttles execution.
+ */
 export function throttle(fn, delay) {
   let timeout = null;
   let pendingArgs = null;

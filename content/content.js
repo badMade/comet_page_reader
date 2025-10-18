@@ -18,6 +18,10 @@
     return;
   }
 
+  /**
+   * Rebuilds the list of text segments by traversing the document and informs
+   * the background script of the latest segment metadata.
+   */
   function buildSegments() {
     const texts = extractVisibleText(document.body, {
       maxLength: 4000,
@@ -33,6 +37,12 @@
     }).catch(error => console.debug('Comet Page Reader: segment update failed', error));
   }
 
+  /**
+   * Locates the first matching text node range for the provided snippet.
+   *
+   * @param {string} snippet - Text sample taken from the cached segment.
+   * @returns {Range|null} Highlightable DOM range when found.
+   */
   function findTextRange(snippet) {
     const normalised = snippet.trim().toLowerCase();
     if (!normalised) {
@@ -53,6 +63,12 @@
     return null;
   }
 
+  /**
+   * Highlights a summarised segment in the DOM and scrolls it into view.
+   *
+   * @param {string} segmentId - Identifier from the segment map.
+   * @returns {boolean} True when the highlight was applied.
+   */
   function highlightSegment(segmentId) {
     clearHighlights();
     const segment = segments.find(item => item.id === segmentId);
@@ -79,6 +95,10 @@
 
   const throttledUpdate = throttle(buildSegments, 2000);
 
+  /**
+   * Ensures DOM mutation and scroll observers rebuild segments when the page
+   * structure changes.
+   */
   function ensureObservers() {
     if (observer) {
       observer.disconnect();

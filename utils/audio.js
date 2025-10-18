@@ -1,3 +1,10 @@
+/**
+ * Converts an AudioBuffer into a WAV blob that can be saved or uploaded.
+ *
+ * @param {AudioBuffer} buffer - Browser audio buffer.
+ * @param {number} sampleRate - Sample rate for the output file.
+ * @returns {Blob} WAV-encoded audio blob.
+ */
 export function bufferToWave(buffer, sampleRate) {
   const bytesPerSample = 2;
   const numChannels = buffer.numberOfChannels;
@@ -38,6 +45,12 @@ export function bufferToWave(buffer, sampleRate) {
   return new Blob([arrayBuffer], { type: 'audio/wav' });
 }
 
+/**
+ * Decodes base64 audio payloads returned by the OpenAI TTS API.
+ *
+ * @param {string} base64 - Encoded audio data.
+ * @returns {ArrayBuffer} Raw binary representation.
+ */
 export function base64ToArrayBuffer(base64) {
   const binary = atob(base64);
   const len = binary.length;
@@ -48,6 +61,13 @@ export function base64ToArrayBuffer(base64) {
   return bytes.buffer;
 }
 
+/**
+ * Plays an audio payload encoded as base64 and returns the Audio element used.
+ *
+ * @param {string} base64 - Base64 encoded audio data.
+ * @param {string} [mimeType='audio/mpeg'] - Media type reported by the API.
+ * @returns {Promise<HTMLAudioElement>} Resolved once playback starts.
+ */
 export async function playAudioFromBase64(base64, mimeType = 'audio/mpeg') {
   const arrayBuffer = base64ToArrayBuffer(base64);
   const blob = new Blob([arrayBuffer], { type: mimeType });
@@ -61,6 +81,14 @@ export async function playAudioFromBase64(base64, mimeType = 'audio/mpeg') {
   }
 }
 
+/**
+ * Constructs a MediaRecorder helper tailored for browsers that support the API.
+ *
+ * @param {MediaStream} stream - User media stream.
+ * @param {{mimeType?: string}} [options={}] - MediaRecorder configuration.
+ * @returns {{recorder: MediaRecorder, start: Function, stop: Function, cancel: Function}}
+ *   Recorder helpers.
+ */
 export function createRecorder(stream, options = {}) {
   if (!window.MediaRecorder) {
     throw new Error('MediaRecorder is not supported in this browser.');
@@ -101,6 +129,12 @@ export function createRecorder(stream, options = {}) {
   };
 }
 
+/**
+ * Provides an AudioContext instance across browsers that use prefixed APIs.
+ *
+ * @returns {Promise<AudioContext>} Constructed audio context.
+ * @throws {Error} When the environment does not support the API.
+ */
 export async function ensureAudioContext() {
   if (window.AudioContext || window.webkitAudioContext) {
     const Ctx = window.AudioContext || window.webkitAudioContext;

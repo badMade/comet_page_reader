@@ -1,6 +1,11 @@
 import { availableLocales, setLocale, t } from '../utils/i18n.js';
 import { createRecorder } from '../utils/audio.js';
 
+/**
+ * Popup controller responsible for coordinating UI state, background messages,
+ * and media capture for the Comet Page Reader extension.
+ */
+
 const runtime = chrome?.runtime || browser?.runtime;
 const tabsApi = chrome?.tabs || browser?.tabs;
 const usesBrowserPromises =
@@ -44,6 +49,13 @@ const state = {
 
 const elements = {};
 
+/**
+ * Retrieves a DOM element by ID and throws when not found to surface template
+ * regressions early during development.
+ *
+ * @param {string} id - Element ID.
+ * @returns {HTMLElement} Matched element.
+ */
 function qs(id) {
   const node = document.getElementById(id);
   if (!node) {
@@ -52,6 +64,9 @@ function qs(id) {
   return node;
 }
 
+/**
+ * Captures the DOM nodes used by the popup to avoid repeated lookups.
+ */
 function assignElements() {
   elements.apiForm = qs('api-form');
   elements.apiKey = qs('apiKey');
@@ -69,6 +84,9 @@ function assignElements() {
   elements.usageRowTemplate = document.getElementById('usageRowTemplate');
 }
 
+/**
+ * Applies the currently selected locale to all visible UI strings.
+ */
 function translateUi() {
   elements.apiForm.querySelector('label').textContent = t('apiKeyLabel');
   elements.summarise.textContent = t('summarise');
@@ -85,10 +103,23 @@ function translateUi() {
   }
 }
 
+/**
+ * Updates the status element used for inline user feedback.
+ *
+ * @param {string} message - Text content to display.
+ */
 function setStatus(message) {
   elements.recordingStatus.textContent = message || '';
 }
 
+/**
+ * Wraps event handlers to provide consistent error handling and prevent
+ * repetitive boilerplate.
+ *
+ * @template T
+ * @param {Function} handler - Async handler invoked in response to an event.
+ * @returns {Function} Decorated handler that reports errors via setStatus.
+ */
 function withErrorHandling(handler) {
   return async event => {
     event?.preventDefault?.();
@@ -101,6 +132,15 @@ function withErrorHandling(handler) {
   };
 }
 
+/**
+ * Sends a message to the background service worker, supporting both Chrome
+ * callbacks and Firefox promises. Falls back to local mocks when MOCK_MODE is
+ * enabled.
+ *
+ * @param {string} type - Message type handled by the background worker.
+ * @param {Object} [payload] - Payload forwarded to the worker.
+ * @returns {Promise<*>} Background response result.
+ */
 function sendMessage(type, payload) {
   if (MOCK_MODE && mockHandlers[type]) {
     return mockHandlers[type](payload);
@@ -143,6 +183,11 @@ function sendMessage(type, payload) {
   });
 }
 
+/**
+ * Loads the persisted API key from the background worker and updates the form.
+ *
+ * @returns {Promise<void>} Resolves once the value is populated.
+ */
 async function loadApiKey() {
   const apiKey = await sendMessage('comet:getApiKey');
   if (apiKey) {
@@ -150,12 +195,23 @@ async function loadApiKey() {
   }
 }
 
+/**
+ * Persists the API key entered by the user.
+ *
+ * @returns {Promise<void>} Resolves after the key is saved.
+ */
 async function saveApiKey(event) {
   const apiKey = elements.apiKey.value.trim();
   await sendMessage('comet:setApiKey', { apiKey });
   setStatus('API key saved securely.');
 }
 
+/**
+ * Queries the active browser window for tabs using the appropriate API style.
+ *
+ * @param {Object} options - Tab query parameters.
+ * @returns {Promise<chrome.tabs.Tab[]>} Matched tabs.
+ */
 function queryTabs(options) {
   if (usesBrowserPromises) {
     return tabsApi.query(options);
@@ -176,6 +232,13 @@ function queryTabs(options) {
   });
 }
 
+/**
+ * Sends a runtime message to a content script using the correct API flavour.
+ *
+ * @param {number} tabId - Tab identifier.
+ * @param {Object} message - Message delivered to the content script.
+ * @returns {Promise<*>} Content script response.
+ */
 function sendMessageToTab(tabId, message) {
   if (usesBrowserPromises) {
     return tabsApi.sendMessage(tabId, message);
@@ -196,6 +259,11 @@ function sendMessageToTab(tabId, message) {
   });
 }
 
+/**
+ * Resolves the ID of the currently active tab.
+ *
+ * @returns {Promise<number>} Active tab identifier.
+ */
 async function getActiveTabId() {
   const tabs = await queryTabs({ active: true, currentWindow: true });
   if (!tabs.length) {
@@ -204,6 +272,12 @@ async function getActiveTabId() {
   return tabs[0].id;
 }
 
+/**
+ * Requests pre-processed text segments from the content script.
+ *
+ * @param {number} tabId - Tab identifier.
+ * @returns {Promise<{url: string, segments: Array}>} Segment payload.
+ */
 async function fetchSegments(tabId) {
   const response = await sendMessageToTab(tabId, { type: 'comet:getSegments' });
   if (!response || !response.ok) {
@@ -212,6 +286,12 @@ async function fetchSegments(tabId) {
   return response.result;
 }
 
+/**
+ * Renders usage statistics in the popup.
+ *
+ * @param {{limitUsd?: number, totalCostUsd?: number, lastReset?: number}} usage -
+ *   Usage payload returned by the background worker.
+ */
 function updateUsage(usage) {
   if (!usage) {
     return;
@@ -235,6 +315,11 @@ function updateUsage(usage) {
   elements.usage.appendChild(lastReset);
 }
 
+/**
+ * Requests summaries for the current tab and updates local state.
+ *
+ * @returns {Promise<void>} Resolves when summaries and usage are refreshed.
+ */
 async function summarisePage() {
   if (MOCK_MODE) {
     const mock = await mockHandlers['comet:summarise']();
@@ -259,6 +344,11 @@ async function summarisePage() {
   setStatus('Summary ready. Use read aloud to listen.');
 }
 
+/**
+ * Lazily initialises the shared Audio element used for playback.
+ *
+ * @returns {HTMLAudioElement} Singleton audio element.
+ */
 function ensureAudio() {
   if (!state.audio) {
     state.audio = new Audio();
@@ -271,6 +361,11 @@ function ensureAudio() {
   return state.audio;
 }
 
+/**
+ * Generates speech for the first summary and begins playback.
+ *
+ * @returns {Promise<void>} Resolves when playback has started or been skipped.
+ */
 async function readAloud() {
   if (!state.summaries.length) {
     await summarisePage();
@@ -310,6 +405,9 @@ async function readAloud() {
   };
 }
 
+/**
+ * Stops the active audio playback and resets player controls.
+ */
 function stopPlayback() {
   if (state.audio) {
     state.audio.pause();
@@ -320,6 +418,9 @@ function stopPlayback() {
   elements.stop.disabled = true;
 }
 
+/**
+ * Pauses audio playback without resetting the position.
+ */
 function pausePlayback() {
   if (state.audio) {
     state.audio.pause();
@@ -329,32 +430,55 @@ function pausePlayback() {
   elements.stop.disabled = false;
 }
 
-function updateLanguage(event) {
+/**
+ * Updates the active language preference and persists it for future sessions.
+ *
+ * @param {Event} event - Change event from the language selector.
+ * @returns {Promise<void>} Resolves once the preference is stored.
+ */
+async function updateLanguage(event) {
   state.language = event.target.value;
   setLocale(state.language);
   translateUi();
   if (chrome?.storage?.sync) {
-    chrome.storage.sync.set({ language: state.language }, () => {
-      const err = chrome.runtime.lastError;
-      if (err) {
-        console.debug('Failed to persist language preference', err);
-      }
+    await new Promise(resolve => {
+      chrome.storage.sync.set({ language: state.language }, () => {
+        const err = chrome.runtime.lastError;
+        if (err) {
+          console.debug('Failed to persist language preference', err);
+        }
+        resolve();
+      });
     });
   }
 }
 
-function updateVoice(event) {
+/**
+ * Updates the preferred voice for speech synthesis.
+ *
+ * @param {Event} event - Change event from the voice selector.
+ * @returns {Promise<void>} Resolves once the preference is stored.
+ */
+async function updateVoice(event) {
   state.voice = event.target.value;
   if (chrome?.storage?.sync) {
-    chrome.storage.sync.set({ voice: state.voice }, () => {
-      const err = chrome.runtime.lastError;
-      if (err) {
-        console.debug('Failed to persist voice preference', err);
-      }
+    await new Promise(resolve => {
+      chrome.storage.sync.set({ voice: state.voice }, () => {
+        const err = chrome.runtime.lastError;
+        if (err) {
+          console.debug('Failed to persist voice preference', err);
+        }
+        resolve();
+      });
     });
   }
 }
 
+/**
+ * Loads persisted language and voice preferences from storage.
+ *
+ * @returns {Promise<void>} Resolves after UI state has been updated.
+ */
 async function loadPreferences() {
   const stored = await new Promise(resolve => {
     if (!chrome?.storage?.sync) {
@@ -375,6 +499,11 @@ async function loadPreferences() {
   translateUi();
 }
 
+/**
+ * Stops and cleans up the active MediaRecorder instance.
+ *
+ * @param {{cancel?: boolean}} [options] - Control whether to discard results.
+ */
 function teardownRecorder({ cancel = true } = {}) {
   if (state.recorder) {
     if (cancel) {
@@ -389,6 +518,11 @@ function teardownRecorder({ cancel = true } = {}) {
   elements.pushToTalk.setAttribute('aria-pressed', 'false');
 }
 
+/**
+ * Initiates microphone capture for push-to-talk actions.
+ *
+ * @returns {Promise<void>} Resolves when recording starts or mock mode triggers.
+ */
 async function startRecording() {
   if (state.recorder) {
     return;
@@ -405,6 +539,12 @@ async function startRecording() {
   setStatus(t('listening'));
 }
 
+/**
+ * Stops recording and forwards the audio to the background worker for
+ * transcription.
+ *
+ * @returns {Promise<void>} Resolves once transcription has been processed.
+ */
 async function stopRecording() {
   if (!state.recorder) {
     if (MOCK_MODE) {
@@ -440,6 +580,11 @@ async function stopRecording() {
   handleTranscript(response.text);
 }
 
+/**
+ * Reacts to completed transcripts by triggering summarise or read commands.
+ *
+ * @param {string} text - Transcript returned by the background worker.
+ */
 function handleTranscript(text) {
   if (!text) {
     setStatus('No speech detected.');
@@ -454,17 +599,30 @@ function handleTranscript(text) {
   }
 }
 
+/**
+ * Resets usage statistics via the background worker.
+ *
+ * @returns {Promise<void>} Resolves after the usage panel is refreshed.
+ */
 async function resetUsage() {
   const usage = await sendMessage('comet:resetUsage');
   updateUsage(usage);
   setStatus('Usage has been reset.');
 }
 
+/**
+ * Fetches the latest usage snapshot for display in the popup.
+ *
+ * @returns {Promise<void>} Resolves once the UI has been updated.
+ */
 async function refreshUsage() {
   const usage = await sendMessage('comet:getUsage');
   updateUsage(usage);
 }
 
+/**
+ * Attaches event listeners for the popup controls.
+ */
 function bindEvents() {
   elements.apiForm.addEventListener('submit', withErrorHandling(saveApiKey));
   elements.summarise.addEventListener('click', withErrorHandling(summarisePage));
@@ -506,6 +664,12 @@ function bindEvents() {
   });
 }
 
+/**
+ * Entry point executed when the popup loads. Wires up state, preferences, and
+ * event listeners.
+ *
+ * @returns {Promise<void>} Resolves once initialisation completes.
+ */
 async function init() {
   assignElements();
   await loadApiKey();
