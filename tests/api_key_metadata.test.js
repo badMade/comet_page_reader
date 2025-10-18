@@ -215,11 +215,15 @@ test('saveApiKey falls back to local storage when sync set reports disabled sync
 
   const syncArea = {
     set(_items, callback) {
-      if (globalThis.chrome?.runtime) {
-        globalThis.chrome.runtime.lastError = { message: disabledSyncMessage };
-      }
       if (typeof callback === 'function') {
-        callback();
+        const wrappedCallback = () => {
+          if (globalThis.chrome?.runtime) {
+            globalThis.chrome.runtime.lastError = { message: disabledSyncMessage };
+          }
+          callback();
+        };
+
+        wrappedCallback();
       }
     },
   };
