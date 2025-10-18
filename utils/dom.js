@@ -227,23 +227,59 @@ export function findTextRange(snippet, root = null) {
   const walker = doc.createTreeWalker(searchRoot, filter.SHOW_TEXT);
   let node = walker.nextNode();
 
+  let combined = '';
+  const positions = [];
+  let lastWasSpace = true;
+  let searchStart = 0;
+
   while (node) {
-    if (typeof node.textContent === 'string' && node.textContent.trim()) {
-      const { value, map } = normaliseForSearch(node.textContent);
-      if (value) {
-        const index = value.indexOf(query);
-        if (index !== -1) {
-          const range = doc.createRange();
-          const start = map[index];
-          const endIndex = map[index + query.length - 1];
-          if (typeof start === 'number' && typeof endIndex === 'number') {
-            range.setStart(node, start);
-            range.setEnd(node, endIndex + 1);
+    const text = typeof node.textContent === 'string' ? node.textContent : '';
+    if (text) {
+      const beforeLength = combined.length;
+      let index = 0;
+
+      while (index < text.length) {
+        const char = text[index];
+
+        if (WHITESPACE_REGEX.test(char)) {
+          let startIndex = index;
+          while (index < text.length && WHITESPACE_REGEX.test(text[index])) {
+            index += 1;
+          }
+          if (!lastWasSpace && combined) {
+            combined += ' ';
+            positions.push({ node, startOffset: startIndex, endOffset: index });
+            lastWasSpace = true;
+          }
+          continue;
+        }
+
+        combined += char.toLowerCase();
+        positions.push({ node, startOffset: index, endOffset: index + 1 });
+        lastWasSpace = false;
+        index += 1;
+      }
+
+      if (combined.length >= query.length) {
+        const startSearch = Math.max(searchStart, beforeLength - query.length);
+        const matchIndex = combined.indexOf(query, startSearch);
+
+        if (matchIndex !== -1) {
+          const startPosition = positions[matchIndex];
+          const endPosition = positions[matchIndex + query.length - 1];
+
+          if (startPosition && endPosition) {
+            const range = doc.createRange();
+            range.setStart(startPosition.node, startPosition.startOffset);
+            range.setEnd(endPosition.node, endPosition.endOffset);
             return range;
           }
         }
+
+        searchStart = Math.max(0, combined.length - query.length);
       }
     }
+
     node = walker.nextNode();
   }
 
