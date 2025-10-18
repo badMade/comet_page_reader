@@ -62,6 +62,19 @@ test('findTextRange locates text despite irregular whitespace', () => {
   );
 });
 
+test('findTextRange spans inline formatting boundaries', () => {
+  return withDom(
+    `
+      <p>First <strong>bold</strong> word</p>
+    `,
+    document => {
+      const range = findTextRange('First bold word', document.body);
+      assert.ok(range, 'Expected range across inline elements');
+      assert.equal(range.toString(), 'First bold word');
+    },
+  );
+});
+
 test('findTextRange tolerates leading whitespace without throwing', () => {
   return withDom(
     `
