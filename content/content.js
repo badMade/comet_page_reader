@@ -3,6 +3,7 @@
     extractVisibleText,
     createSegmentMap,
     clearHighlights,
+    findTextRange,
     observeMutations,
     throttle,
   } = await import(chrome.runtime.getURL('utils/dom.js'));
@@ -35,32 +36,6 @@
         segments: segments.map(({ id, text }) => ({ id, length: text.length })),
       },
     }).catch(error => console.debug('Comet Page Reader: segment update failed', error));
-  }
-
-  /**
-   * Locates the first matching text node range for the provided snippet.
-   *
-   * @param {string} snippet - Text sample taken from the cached segment.
-   * @returns {Range|null} Highlightable DOM range when found.
-   */
-  function findTextRange(snippet) {
-    const normalised = snippet.trim().toLowerCase();
-    if (!normalised) {
-      return null;
-    }
-    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
-    let node;
-    while ((node = walker.nextNode())) {
-      const text = node.textContent.trim();
-      const index = text.toLowerCase().indexOf(normalised);
-      if (index !== -1) {
-        const range = document.createRange();
-        range.setStart(node, index);
-        range.setEnd(node, Math.min(text.length, index + normalised.length));
-        return range;
-      }
-    }
-    return null;
   }
 
   /**

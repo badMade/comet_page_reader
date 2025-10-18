@@ -5,6 +5,8 @@
  */
 let VISIBILITY_CACHE = new WeakMap();
 
+const WHITESPACE_REGEX = /[\s\u00a0]/;
+
 /**
  * Determines whether an element should be considered visible for the purposes
  * of summarisation. Non-element nodes are treated as visible by default.
@@ -48,6 +50,55 @@ function normaliseWhitespace(text) {
     .replace(/\s+/g, ' ')
     .replace(/\u00a0/g, ' ')
     .trim();
+}
+
+/**
+ * Normalises text for range lookups while retaining a mapping back to the
+ * original character offsets. Multiple whitespace characters collapse into a
+ * single space so matches remain resilient to formatting differences.
+ *
+ * @param {string} text - Source text to normalise.
+ * @returns {{ value: string, map: number[] }} Lowercased text and offset map.
+ */
+function normaliseForSearch(text) {
+  const map = [];
+  let value = '';
+  let lastWasSpace = true;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (WHITESPACE_REGEX.test(char)) {
+      if (lastWasSpace) {
+        continue;
+      }
+      value += ' ';
+      map.push(index);
+      lastWasSpace = true;
+      continue;
+    }
+
+    value += char.toLowerCase();
+    map.push(index);
+    lastWasSpace = false;
+  }
+
+  if (value.endsWith(' ')) {
+    value = value.slice(0, -1);
+    map.pop();
+  }
+
+  return { value, map };
+}
+
+/**
+ * Normalises snippets provided by cached segments for comparison against DOM
+ * text nodes.
+ *
+ * @param {string} snippet - Snippet taken from the segment cache.
+ * @returns {string} Lowercased, whitespace-collapsed snippet.
+ */
+function normaliseSnippet(snippet) {
+  return snippet.replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
 /**
@@ -145,6 +196,58 @@ export function createSegmentMap(segments) {
     id: `segment-${index + 1}`,
     text,
   }));
+}
+
+/**
+ * Locates the first DOM range matching the provided snippet. The comparison is
+ * resilient to whitespace differences so cached segments can reliably map back
+ * to their original locations.
+ *
+ * @param {string} snippet - Text sample to locate in the DOM.
+ * @param {Element|null} [root=null] - Root node used for tree traversal.
+ * @returns {Range|null} Matching DOM range when found.
+ */
+export function findTextRange(snippet, root = null) {
+  const query = snippet ? normaliseSnippet(snippet) : '';
+  if (!query) {
+    return null;
+  }
+
+  const searchRoot = root || (typeof document !== 'undefined' ? document.body : null);
+  if (!searchRoot) {
+    return null;
+  }
+
+  const doc = searchRoot.ownerDocument || (typeof document !== 'undefined' ? document : null);
+  const filter = doc && (doc.defaultView?.NodeFilter || globalThis.NodeFilter);
+  if (!doc || !filter) {
+    return null;
+  }
+
+  const walker = doc.createTreeWalker(searchRoot, filter.SHOW_TEXT);
+  let node = walker.nextNode();
+
+  while (node) {
+    if (typeof node.textContent === 'string' && node.textContent.trim()) {
+      const { value, map } = normaliseForSearch(node.textContent);
+      if (value) {
+        const index = value.indexOf(query);
+        if (index !== -1) {
+          const range = doc.createRange();
+          const start = map[index];
+          const endIndex = map[index + query.length - 1];
+          if (typeof start === 'number' && typeof endIndex === 'number') {
+            range.setStart(node, start);
+            range.setEnd(node, endIndex + 1);
+            return range;
+          }
+        }
+      }
+    }
+    node = walker.nextNode();
+  }
+
+  return null;
 }
 
 /**
