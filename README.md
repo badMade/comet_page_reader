@@ -1,72 +1,58 @@
-#README.md
-You are an experienced JavaScript developer tasked with building a cost‑efficient, cross‑browser screen‑reader extension (WebExtensions API) that works in Chrome, Firefox, Edge and Comet. The goal is to read web pages aloud, answer spoken questions about the current page and minimize API costs.
+# Comet Page Reader
 
-Key requirements:
+Comet Page Reader is a cross-browser WebExtensions add-on that summarises web pages and reads them aloud using OpenAI services. It runs on Chrome, Edge, Firefox, and Comet, keeping the OpenAI API key inside the extension service worker and funnelling all network traffic through a single secure location.
 
-Architecture
+## Features
 
-Use a background service worker to store a user‑provided OpenAI API key securely and make all API requests.
+- **Secure background service worker** that stores the API key in `chrome.storage.sync` with Firefox fallbacks and enforces a configurable spend ceiling (defaults to USD 5.00 via `DEFAULT_LIMIT_USD` in `utils/cost.js`).
+- **Content intelligence** provided by a modular content script that extracts visible text, segments long pages, and responds to highlight or refresh requests.
+- **Popup dashboard** with API-key management, language and voice selectors, push-to-talk capture, audio playback controls, usage tracking, and a privacy disclaimer.
+- **Utility modules** for DOM parsing, localisation, cost accounting, and audio capture/playback to ensure the codebase stays maintainable and testable.
+- **Caching layer** keyed by URL/segment to avoid unnecessary OpenAI calls and keep running costs predictable.
 
-Inject content scripts to extract visible text from the page, filter out hidden elements and send the content to the background script.
+## Installation
 
-Create a popup UI (HTML/CSS/JS) with fields for the API key, TTS voice selection, controls to start/stop reading, a push‑to‑talk button to record voice commands, language selection and cost/usage settings.
+1. Clone or download this repository.
+2. Create an OpenAI API key and keep it handy.
+3. Load the extension in your browser:
+   - **Chromium (Chrome, Edge, Comet):** open `chrome://extensions`, enable Developer Mode, choose **Load unpacked**, and select the repository root.
+   - **Firefox:** open `about:debugging#/runtime/this-firefox`, choose **Load Temporary Add-on**, and select the repository root.
 
-Ensure the extension runs in Chromium‑based browsers and Firefox via WebExtensions.
+The extension registers its popup automatically and will request permissions for storage, tabs, activeTab, and scripting on first run.
 
-Speech‑to‑Text (STT)
+## Configuration & Usage
 
-Use the MediaRecorder API to capture microphone input when the user holds down the push‑to‑talk button.
+1. Open the popup from the browser toolbar.
+2. Paste your OpenAI API key and press **Save key**. The key is persisted in the background worker only.
+3. Pick a preferred language (for summaries and UI strings) and a voice preset.
+4. Use **Summarise current page** to request section-by-section summaries from the background worker.
+5. Press **Read highlighted segment** to generate speech for the first summary. The player controls support play, pause, and stop.
+6. Hold **Push to talk** to dictate commands; releasing the button triggers speech-to-text transcription. Commands containing “summary” trigger summarisation, and commands with “read” trigger playback automatically.
+7. Review the usage dashboard for real-time cost tracking and reset the cycle when required.
 
-Encode the recording in an accepted format (e.g., audio/webm or audio/wav) and send it as FormData to the OpenAI /v1/audio/transcriptions endpoint using the whisper‑1 model (which costs about $0.006/minute).
+## Privacy & Security
 
-Accept only recordings ≤25 MB and split longer recordings into chunks if needed.
+- API keys are stored with WebExtensions storage APIs and never injected into content pages.
+- All network traffic to OpenAI originates from the service worker, which validates cost ceilings before executing requests.
+- Page content is processed in-memory only for the duration of the request. Summaries are cached per URL/segment in session storage to minimise repeated uploads.
+- The popup displays a clear disclaimer reminding users that content is transmitted to OpenAI.
 
-Parse the JSON or plain‑text response to recognize commands (e.g., “read page”, “scroll down”, “summarize page”) or questions.
+## Testing Without Live APIs
 
-For questions, forward the transcribed text to the chat completion endpoint.
+To exercise the extension without incurring OpenAI costs:
 
-Chat Completion
+- Replace the endpoints inside `background/service_worker.js` with a local mock server (e.g. using `http://localhost:3000`) that echoes deterministic responses. Because all network calls originate from the service worker, only a single URL needs to change.
+- Alternatively, stub the `sendMessage` calls in `popup/script.js` with mock responses by uncommenting the sample `MOCK_MODE` snippet in that file (placeholder hooks are provided near the top of the file for quick toggling).
+- Use browser devtools to inspect console logs from the popup, background worker, and content script to confirm message flow, caching, and cost tracking.
 
-Use the /v1/chat/completions endpoint with the gpt‑3.5‑turbo model by default (cheaper) and gpt‑4o only when necessary.
+Automated browser integration tests are not bundled, but the code is structured into small, easily testable modules (`utils/` directory) so you can import them into your preferred test runner without the extension runtime. For example, you can unit test `extractVisibleText` or the cost tracker using Jest by providing minimal DOM shims.
 
-For summarizing page content, pass a system prompt such as “Summarize this page for a visually‑impaired user; preserve headings and important links” and keep messages concise.
+## Troubleshooting
 
-Minimize token usage by summarizing long pages before synthesis and by providing precise prompts.
+- If microphone access is denied, the popup will display the error in the status region. Grant the permission in browser settings and retry.
+- Cost-limit breaches return actionable error messages from the background worker; reset usage or raise the configured limit in code before reattempting.
+- Firefox currently lacks `chrome.storage.session`; the service worker falls back gracefully and keeps cache data in-memory.
 
-Text‑to‑Speech (TTS)
+## Contributing
 
-Call the /v1/audio/speech endpoint with the gpt‑4o‑mini‑tts model and a user‑selected voice (e.g., alloy, ash, ballad, coral, echo, fable, nova, onyx, sage or shimmer).
-
-Request streaming responses so the audio begins playing immediately.
-
-Use MP3 by default; allow users to select WAV/PCM for lower latency if desired.
-
-Use <audio> elements or the Web Audio API to play the returned audio; implement pause, resume and skip controls.
-
-Caching and Cost Controls
-
-Cache summaries and generated audio by URL/section to avoid repeated API calls.
-
-Expose settings to set monthly cost limits and display estimated usage (e.g., minutes of audio transcribed and generated).
-
-Provide a toggle to disable transcription on long pages and a disclaimer that the generated voice is AI‑produced.
-
-Accessibility & Localization
-
-Ensure all UI elements are keyboard‑accessible and labeled with ARIA attributes.
-
-Support multiple languages for STT and TTS; allow users to select input and output languages.
-
-Display the transcript of recognized speech for user review.
-
-Testing & Deployment
-
-Include a manifest.json configured for WebExtensions v3.
-
-Provide example background script (background.js or service_worker.js), content script (content.js), popup HTML/CSS/JS, and any utility modules.
-
-Test the extension across different websites and browsers.
-
-Adhere to privacy and store policies when publishing.
-
-Write the code for this extension, including manifest, scripts and HTML/CSS files, with clear comments explaining each part.
+Pull requests and issues are welcome. Please ensure additions remain modular, portable, and respectful of the privacy guarantees outlined above.

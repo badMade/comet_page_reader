@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Comet Page Reader</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Comet Page Reader</h1>
+      <p class="tagline">AI-powered summaries and read-aloud for any page.</p>
+    </header>
+
+    <main>
+      <section aria-labelledby="api-section">
+        <h2 id="api-section">API setup</h2>
+        <form id="api-form">
+          <label for="apiKey">OpenAI API key</label>
+          <input id="apiKey" name="apiKey" type="password" autocomplete="off" required />
+          <button type="submit" class="primary">Save key</button>
+        </form>
+      </section>
+
+      <section aria-labelledby="language-section" class="two-column">
+        <div>
+          <h2 id="language-section">Language</h2>
+          <label for="languageSelect">Preferred language</label>
+          <select id="languageSelect" name="language">
+            <option value="en">English</option>
+            <option value="es">Español</option>
+          </select>
+        </div>
+        <div>
+          <h2 id="voice-section">Voice</h2>
+          <label for="voiceSelect">Voice preset</label>
+          <select id="voiceSelect" name="voice">
+            <option value="alloy">Alloy</option>
+            <option value="verse">Verse</option>
+            <option value="lydia">Lydia</option>
+          </select>
+        </div>
+      </section>
+
+      <section aria-labelledby="actions-section">
+        <h2 id="actions-section">Actions</h2>
+        <div class="actions">
+          <button id="summariseBtn" class="primary">Summarise current page</button>
+          <button id="readBtn" class="secondary">Read highlighted segment</button>
+        </div>
+      </section>
+
+      <section aria-labelledby="speech-section">
+        <h2 id="speech-section">Speech control</h2>
+        <div class="microphone">
+          <button id="pushToTalkBtn" aria-pressed="false">Push to talk</button>
+          <span id="recordingStatus" role="status" aria-live="polite"></span>
+        </div>
+        <div class="playback">
+          <button id="playBtn" disabled>Play</button>
+          <button id="pauseBtn" disabled>Pause</button>
+          <button id="stopBtn" disabled>Stop</button>
+        </div>
+      </section>
+
+      <section aria-labelledby="usage-section">
+        <h2 id="usage-section">Usage</h2>
+        <dl id="usageDetails" class="usage"></dl>
+        <button id="resetUsageBtn" class="link">Reset usage</button>
+      </section>
+
+      <section aria-labelledby="disclaimer-section" class="disclaimer">
+        <h2 id="disclaimer-section">Disclaimer</h2>
+        <p>
+          Content is processed via OpenAI APIs. Review the privacy notice before using in
+          sensitive contexts.
+        </p>
+      </section>
+    </main>
+
+    <template id="usageRowTemplate">
+      <div class="usage-row">
+        <dt></dt>
+        <dd></dd>
+      </div>
+    </template>
+
+    <script type="module" src="script.js"></script>
+  </body>
+</html>

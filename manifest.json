@@ -1,0 +1,42 @@
+{
+  "manifest_version": 3,
+  "name": "Comet Page Reader",
+  "description": "Summarise and read webpages aloud using OpenAI services.",
+  "version": "0.1.0",
+  "minimum_chrome_version": "109",
+  "permissions": [
+    "storage",
+    "tabs",
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "<all_urls>",
+    "https://api.openai.com/*"
+  ],
+  "background": {
+    "service_worker": "background/service_worker.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup/index.html",
+    "default_title": "Comet Page Reader"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content/content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "options_ui": {
+    "page": "popup/index.html",
+    "open_in_tab": true
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "comet-page-reader@example.com",
+      "strict_min_version": "110.0"
+    }
+  }
+}
