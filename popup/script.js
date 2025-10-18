@@ -66,6 +66,8 @@ function qs(id) {
 
 /**
  * Captures the DOM nodes used by the popup to avoid repeated lookups.
+ *
+ * @returns {void}
  */
 function assignElements() {
   elements.apiForm = qs('api-form');
@@ -86,6 +88,8 @@ function assignElements() {
 
 /**
  * Applies the currently selected locale to all visible UI strings.
+ *
+ * @returns {void}
  */
 function translateUi() {
   elements.apiForm.querySelector('label').textContent = t('apiKeyLabel');
@@ -107,6 +111,7 @@ function translateUi() {
  * Updates the status element used for inline user feedback.
  *
  * @param {string} message - Text content to display.
+ * @returns {void}
  */
 function setStatus(message) {
   elements.recordingStatus.textContent = message || '';
@@ -291,6 +296,7 @@ async function fetchSegments(tabId) {
  *
  * @param {{limitUsd?: number, totalCostUsd?: number, lastReset?: number}} usage -
  *   Usage payload returned by the background worker.
+ * @returns {void}
  */
 function updateUsage(usage) {
   if (!usage) {
@@ -407,6 +413,8 @@ async function readAloud() {
 
 /**
  * Stops the active audio playback and resets player controls.
+ *
+ * @returns {void}
  */
 function stopPlayback() {
   if (state.audio) {
@@ -420,6 +428,8 @@ function stopPlayback() {
 
 /**
  * Pauses audio playback without resetting the position.
+ *
+ * @returns {void}
  */
 function pausePlayback() {
   if (state.audio) {
@@ -503,6 +513,7 @@ async function loadPreferences() {
  * Stops and cleans up the active MediaRecorder instance.
  *
  * @param {{cancel?: boolean}} [options] - Control whether to discard results.
+ * @returns {void}
  */
 function teardownRecorder({ cancel = true } = {}) {
   if (state.recorder) {
@@ -584,6 +595,7 @@ async function stopRecording() {
  * Reacts to completed transcripts by triggering summarise or read commands.
  *
  * @param {string} text - Transcript returned by the background worker.
+ * @returns {void}
  */
 function handleTranscript(text) {
   if (!text) {
@@ -622,6 +634,8 @@ async function refreshUsage() {
 
 /**
  * Attaches event listeners for the popup controls.
+ *
+ * @returns {void}
  */
 function bindEvents() {
   elements.apiForm.addEventListener('submit', withErrorHandling(saveApiKey));

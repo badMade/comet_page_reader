@@ -25,12 +25,14 @@ Comet Page Reader focuses on three responsibilities:
 ## Installation
 
 1. Clone or download this repository: `git clone https://github.com/<your-org>/comet_page_reader`.
-2. Generate an OpenAI API key and store it securely.
-3. Load the extension in your browser:
+2. (Optional for development) Install Node.js 20 or later and install the test dependencies: `npm install`.
+3. Generate an OpenAI API key and store it securely.
+4. Load the extension in your browser:
    - **Chromium (Chrome, Edge, Comet):** open `chrome://extensions`, enable **Developer Mode**, choose **Load unpacked**, and select the repository root.
    - **Firefox:** open `about:debugging#/runtime/this-firefox`, choose **Load Temporary Add-on**, and select the repository root (e.g. `manifest.json`).
 
-No additional build steps or package installations are required—the repository ships as a fully static WebExtension bundle.
+The extension itself is fully static—no bundler or build chain is required. Dependency installation is only necessary when you
+want to run automated tests or lint the source locally.
 
 ## Usage
 
@@ -89,6 +91,16 @@ To exercise the extension without incurring OpenAI costs:
 - Use your browser’s developer tools to inspect console logs from the popup, background service worker, and content script to verify message flow, caching, and cost tracking.
 
 The ES module structure enables lightweight unit tests. For example, you can import `extractVisibleText` or the cost tracker into Jest and provide DOM shims to validate behaviour without loading the full extension.
+
+### Command-line tests
+
+Install dependencies once (`npm install`) and then execute all automated checks via:
+
+```bash
+npm test
+```
+
+The test suite uses Node's built-in test runner plus JSDOM to exercise DOM utilities and the background service worker.
 
 ## Troubleshooting
 

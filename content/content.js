@@ -22,6 +22,8 @@
   /**
    * Rebuilds the list of text segments by traversing the document and informs
    * the background script of the latest segment metadata.
+   *
+   * @returns {void}
    */
   function buildSegments() {
     const texts = extractVisibleText(document.body, {
@@ -73,6 +75,8 @@
   /**
    * Ensures DOM mutation and scroll observers rebuild segments when the page
    * structure changes.
+   *
+   * @returns {void}
    */
   function ensureObservers() {
     if (observer) {

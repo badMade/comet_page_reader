@@ -5,8 +5,9 @@ This document supplements the main README with implementation details, known iss
 ## Environment Setup
 
 1. Install a Chromium-based browser and Firefox for manual testing.
-2. Clone the repository and load it as an unpacked extension (see README).
-3. When debugging, open the following developer tools:
+2. Install [Node.js](https://nodejs.org/) 20 or later and run `npm install` in the repository root to fetch the lightweight test dependencies (currently `jsdom`).
+3. Clone the repository and load it as an unpacked extension (see README).
+4. When debugging, open the following developer tools:
    - **Service worker** console via `chrome://extensions` → inspect views.
    - **Popup** developer tools via right-click → **Inspect** on the popup window.
    - **Content script** console in the active tab.
@@ -14,7 +15,7 @@ This document supplements the main README with implementation details, known iss
 ### Optional tooling
 
 - Use `web-ext` for live reloading in Firefox during development.
-- Employ Jest or Vitest with `jsdom` if you want automated tests around the modules in `utils/`.
+- The repository already includes Node's native test runner configuration. You can add Jest or Vitest if you prefer, but the existing `npm test` task runs quickly with no extra setup.
 
 ## Code Architecture
 
@@ -38,6 +39,7 @@ Refer to in-file JSDoc comments for argument and return types.
 - **Mock mode:** Toggle `MOCK_MODE` in `popup/script.js` to simulate successful responses without contacting OpenAI.
 - **Local API stubs:** Point `fetchWithAuth` in the service worker to a mock server to experiment with error handling.
 - **Unit tests:** Import `utils/dom.js`, `utils/cost.js`, or `utils/audio.js` into a test runner with DOM shims for targeted assertions.
+- **Automated checks:** Run `npm test` to execute the Node-based unit tests. The suite boots the background service worker inside a stubbed runtime and exercises DOM utilities via JSDOM.
 
 ## Known Issues & Workarounds
 
