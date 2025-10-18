@@ -52,6 +52,17 @@ label {
   margin-bottom: 0.25rem;
 }
 
+.field-hint {
+  font-size: 0.75rem;
+  color: #5f6368;
+  margin-top: 0.35rem;
+  min-height: 1em;
+}
+
+.field-hint[data-state='empty'] {
+  color: #d93025;
+}
+
 input,
 select,
 button {
@@ -165,5 +176,13 @@ button:disabled {
 
   .secondary {
     background: #303134;
+  }
+
+  .field-hint {
+    color: #a0a4b8;
+  }
+
+  .field-hint[data-state='empty'] {
+    color: #f28b82;
   }
 }

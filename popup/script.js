@@ -16,6 +16,8 @@ const usesBrowserPromises =
 const MOCK_MODE = false;
 const mockHandlers = {
   'comet:getApiKey': () => Promise.resolve('sk-mock-1234'),
+  'comet:getApiKeyDetails': () =>
+    Promise.resolve({ apiKey: 'sk-mock-1234', lastUpdated: Date.now() - 30 * 1000 }),
   'comet:setApiKey': () => Promise.resolve(null),
   'comet:getUsage': () =>
     Promise.resolve({ totalCostUsd: 0.0123, limitUsd: 5, lastReset: Date.now() - 3600 * 1000 }),
@@ -72,6 +74,7 @@ function qs(id) {
 function assignElements() {
   elements.apiForm = qs('api-form');
   elements.apiKey = qs('apiKey');
+  elements.apiKeyMeta = qs('apiKeyMeta');
   elements.language = qs('languageSelect');
   elements.voice = qs('voiceSelect');
   elements.summarise = qs('summariseBtn');
@@ -191,10 +194,8 @@ function sendMessage(type, payload) {
  * @returns {Promise<void>} Resolves once the value is populated.
  */
 async function loadApiKey() {
-  const apiKey = await sendMessage('comet:getApiKey');
-  if (apiKey) {
-    elements.apiKey.value = apiKey;
-  }
+  const response = await sendMessage('comet:getApiKeyDetails');
+  renderApiKeyDetails(response);
 }
 
 /**
@@ -205,7 +206,53 @@ async function loadApiKey() {
 async function saveApiKey(event) {
   const apiKey = elements.apiKey.value.trim();
   await sendMessage('comet:setApiKey', { apiKey });
+  await loadApiKey();
   setStatus('API key saved securely.');
+}
+
+/**
+ * Formats a timestamp for display using the runtime locale.
+ *
+ * @param {number|null|undefined} timestamp - Millisecond timestamp.
+ * @returns {string} Localised date string or empty string when unavailable.
+ */
+function formatLastUpdated(timestamp) {
+  if (typeof timestamp !== 'number') {
+    return '';
+  }
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+  return date.toLocaleString();
+}
+
+/**
+ * Updates the API key metadata hint based on the background response.
+ *
+ * @param {{apiKey?: string|null, lastUpdated?: number|null}|string} details -
+ *   Persisted API key payload.
+ */
+function renderApiKeyDetails(details) {
+  const normalised =
+    typeof details === 'string' || details instanceof String
+      ? { apiKey: String(details), lastUpdated: null }
+      : details || {};
+
+  const hasKey = Boolean(normalised.apiKey);
+  if (hasKey) {
+    elements.apiKey.value = normalised.apiKey;
+    const formatted = formatLastUpdated(normalised.lastUpdated);
+    elements.apiKeyMeta.textContent = formatted
+      ? `Last updated: ${formatted}`
+      : 'API key saved. Last update time unavailable.';
+    elements.apiKeyMeta.dataset.state = 'ready';
+    return;
+  }
+
+  elements.apiKey.value = '';
+  elements.apiKeyMeta.textContent = 'No API key saved.';
+  elements.apiKeyMeta.dataset.state = 'empty';
 }
 
 /**
