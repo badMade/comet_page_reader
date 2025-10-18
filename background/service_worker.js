@@ -49,7 +49,7 @@ async function ensureInitialised() {
   }
   const storedUsage = await getValue(USAGE_STORAGE_KEY);
   let limitUsd = DEFAULT_LIMIT_USD;
-  let usage = storedUsage;
+  let usage;
 
   if (storedUsage && typeof storedUsage === 'object') {
     const { limitUsd: savedLimit, ...snapshot } = storedUsage;
