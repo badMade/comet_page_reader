@@ -252,13 +252,17 @@ export async function setPersistentValues(entries) {
   return entries;
 }
 
-export async function setValueWithFallback(key, value) {
+export async function setPersistentValue(key, value) {
   await setValuesWithFallback({ [key]: value });
   return value;
 }
 
+export async function setValueWithFallback(key, value) {
+  return setPersistentValue(key, value);
+}
+
 export async function setValue(key, value) {
-  return setValueWithFallback(key, value);
+  return setPersistentValue(key, value);
 }
 
 /**
