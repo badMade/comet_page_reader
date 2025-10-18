@@ -47,11 +47,31 @@ async function ensureInitialised() {
   if (initialised) {
     return;
   }
-  const usage = await getValue(USAGE_STORAGE_KEY);
-  costTracker = createCostTracker(DEFAULT_LIMIT_USD, usage);
+  const storedUsage = await getValue(USAGE_STORAGE_KEY);
+  let limitUsd = DEFAULT_LIMIT_USD;
+  let usageSnapshot;
+
+  if (storedUsage && typeof storedUsage === 'object') {
+    const { limitUsd: savedLimitUsd, ...hydratedUsage } = storedUsage;
+    if (Number.isFinite(savedLimitUsd)) {
+      limitUsd = savedLimitUsd;
+    }
+    if (Object.keys(hydratedUsage).length > 0) {
+      usageSnapshot = hydratedUsage;
+    }
+  }
+
+  costTracker = createCostTracker(limitUsd, usageSnapshot);
   const cachedEntries = (await getSessionValue(CACHE_STORAGE_KEY)) || {};
   memoryCache = new Map(Object.entries(cachedEntries));
   initialised = true;
+}
+
+function getCostTrackerSnapshot() {
+  if (!costTracker) {
+    throw new Error('Cost tracker is unavailable.');
+  }
+  return costTracker.toJSON();
 }
 
 /**
@@ -428,6 +448,8 @@ runtime.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   return true;
 });
+
+export { ensureInitialised, getCostTrackerSnapshot };
 
 ensureInitialised().catch(error => {
   console.error('Failed to initialise service worker', error);
