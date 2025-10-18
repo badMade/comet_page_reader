@@ -23,26 +23,24 @@ const getBrowserApi = () => {
 
 const runtime = getBrowserApi();
 
-/**
- * Determines the most suitable persistent storage area available to the
- * extension.
- *
- * @returns {chrome.storage.StorageArea} Storage area instance.
- * @throws {Error} When storage APIs are unavailable.
- */
-const resolveStorageArea = () => {
-  if (runtime.storage && runtime.storage.sync) {
-    return runtime.storage.sync;
-  }
-  if (runtime.storage && runtime.storage.local) {
-    return runtime.storage.local;
-  }
-  throw new Error('Storage APIs are unavailable.');
-};
-
-const storageArea = resolveStorageArea();
+const syncArea = runtime.storage && runtime.storage.sync ? runtime.storage.sync : null;
+const localArea = runtime.storage && runtime.storage.local ? runtime.storage.local : null;
+let storageArea = syncArea || localArea;
 
 const sessionArea = runtime.storage && runtime.storage.session ? runtime.storage.session : null;
+
+/**
+ * Identifies whether the given storage area should fall back to local storage.
+ *
+ * @param {chrome.storage.StorageArea|null} area - Current persistent storage area.
+ * @returns {chrome.storage.StorageArea|null} Fallback storage area when available.
+ */
+const resolveFallbackArea = area => {
+  if (area === syncArea && localArea && localArea !== syncArea) {
+    return localArea;
+  }
+  return null;
+};
 
 /**
  * Promisified wrapper for Chrome-style callback APIs.
@@ -51,10 +49,10 @@ const sessionArea = runtime.storage && runtime.storage.session ? runtime.storage
  * @param {...*} args - Arguments forwarded to the API.
  * @returns {Promise<*>} Resolved API result.
  */
-const promisify = (fn, ...args) => {
+const promisify = (area, fn, ...args) => {
   return new Promise((resolve, reject) => {
     try {
-      fn.call(storageArea, ...args, result => {
+      fn.call(area, ...args, result => {
         const err = runtime.runtime && runtime.runtime.lastError;
         if (err) {
           reject(new Error(err.message || 'Unknown storage error'));
@@ -66,6 +64,47 @@ const promisify = (fn, ...args) => {
       reject(error);
     }
   });
+};
+
+/**
+ * Executes a storage operation against the active persistent area, falling
+ * back to local storage when sync storage is unavailable.
+ *
+ * @param {'get'|'set'|'remove'} method - Storage method to invoke.
+ * @param {...*} args - Arguments forwarded to the storage API.
+ * @returns {Promise<*>} Resolved storage result.
+ */
+const performPersistentOperation = async (method, ...args) => {
+  if (!storageArea) {
+    throw new Error('Storage APIs are unavailable.');
+  }
+
+  const fn = storageArea[method];
+  if (typeof fn !== 'function') {
+    throw new Error('Storage APIs are unavailable.');
+  }
+
+  try {
+    return await promisify(storageArea, fn, ...args);
+  } catch (error) {
+    const fallbackArea = resolveFallbackArea(storageArea);
+    if (!fallbackArea) {
+      throw error;
+    }
+
+    console.warn(
+      `Primary storage area failed for ${method}, switching to local storage.`,
+      error,
+    );
+
+    storageArea = fallbackArea;
+    const fallbackFn = storageArea[method];
+    if (typeof fallbackFn !== 'function') {
+      throw error;
+    }
+
+    return promisify(storageArea, fallbackFn, ...args);
+  }
 };
 
 /**
@@ -103,7 +142,7 @@ const promisifySession = (fn, ...args) => {
  * @returns {Promise<*>} Stored value or default.
  */
 export async function getValue(key, defaultValue = undefined) {
-  const data = await promisify(storageArea.get, key);
+  const data = await performPersistentOperation('get', key);
   if (data && Object.prototype.hasOwnProperty.call(data, key)) {
     return data[key];
   }
@@ -118,7 +157,7 @@ export async function getValue(key, defaultValue = undefined) {
  * @returns {Promise<*>} Stored value.
  */
 export async function setValue(key, value) {
-  await promisify(storageArea.set, { [key]: value });
+  await performPersistentOperation('set', { [key]: value });
   return value;
 }
 
@@ -129,7 +168,7 @@ export async function setValue(key, value) {
  * @returns {Promise<void>} Resolves once the key is removed.
  */
 export async function removeValue(key) {
-  await promisify(storageArea.remove, key);
+  await performPersistentOperation('remove', key);
 }
 
 /**
