@@ -1,0 +1,169 @@
+:root {
+  color-scheme: light dark;
+  font-family: 'Segoe UI', sans-serif;
+}
+
+body {
+  margin: 0;
+  padding: 1.2rem;
+  background: var(--background, #f7f7fb);
+  color: var(--foreground, #202124);
+  width: 320px;
+}
+
+header {
+  text-align: center;
+  margin-bottom: 1rem;
+}
+
+h1 {
+  font-size: 1.4rem;
+  margin: 0;
+}
+
+h2 {
+  font-size: 1.1rem;
+  margin-bottom: 0.5rem;
+}
+
+.tagline {
+  margin: 0;
+  color: #5f6368;
+  font-size: 0.85rem;
+}
+
+section {
+  margin-bottom: 1rem;
+  background: rgba(255, 255, 255, 0.8);
+  border-radius: 8px;
+  padding: 0.8rem;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+.two-column {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 0.75rem;
+}
+
+label {
+  display: block;
+  font-size: 0.85rem;
+  margin-bottom: 0.25rem;
+}
+
+input,
+select,
+button {
+  width: 100%;
+  padding: 0.5rem;
+  border-radius: 6px;
+  border: 1px solid #c7c7d1;
+  font-size: 0.95rem;
+  box-sizing: border-box;
+}
+
+button {
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.primary {
+  background: #1a73e8;
+  color: #fff;
+  border: none;
+}
+
+.primary:hover,
+.secondary:hover {
+  filter: brightness(1.05);
+}
+
+.secondary {
+  background: #f1f3f4;
+  color: #202124;
+  border: none;
+}
+
+.actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.actions button {
+  flex: 1;
+}
+
+.microphone {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.microphone button[aria-pressed='true'] {
+  background: #ea4335;
+  color: #fff;
+}
+
+.playback {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.usage {
+  margin: 0;
+}
+
+.usage-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.85rem;
+}
+
+.usage-row dt,
+.usage-row dd {
+  margin: 0.15rem 0;
+}
+
+.link {
+  background: none;
+  border: none;
+  color: #1a73e8;
+  text-align: left;
+  padding: 0;
+}
+
+.disclaimer {
+  font-size: 0.75rem;
+  color: #5f6368;
+}
+
+@media (prefers-color-scheme: dark) {
+  body {
+    background: #1f1f24;
+    color: #f1f3f4;
+  }
+
+  section {
+    background: rgba(32, 33, 36, 0.9);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+  }
+
+  input,
+  select,
+  button {
+    border-color: #3c4043;
+    background: #292a2d;
+    color: inherit;
+  }
+
+  .secondary {
+    background: #303134;
+  }
+}
