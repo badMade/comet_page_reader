@@ -1,4 +1,4 @@
-import { test } from 'node:test';
+import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 
 function loadApiKeyStoreModule() {
@@ -121,86 +121,88 @@ function installFailingSyncChromeStub() {
   };
 }
 
-test('Chrome sync errors fall back to local storage', async () => {
-  const { uninstall, syncInvocationCounts, localStore } = installFailingSyncChromeStub();
+describe('api key metadata storage', { concurrency: false }, () => {
+  test('Chrome sync errors fall back to local storage', async () => {
+    const { uninstall, syncInvocationCounts, localStore } = installFailingSyncChromeStub();
 
-  try {
-    const {
-      API_KEY_METADATA_STORAGE_KEY,
-      API_KEY_STORAGE_KEY,
-      fetchApiKeyDetails,
-      saveApiKey,
-    } = await loadApiKeyStoreModule();
+    try {
+      const {
+        API_KEY_METADATA_STORAGE_KEY,
+        API_KEY_STORAGE_KEY,
+        fetchApiKeyDetails,
+        saveApiKey,
+      } = await loadApiKeyStoreModule();
 
-    const before = Date.now();
-    await saveApiKey('fallback-key');
-    const details = await fetchApiKeyDetails();
+      const before = Date.now();
+      await saveApiKey('fallback-key');
+      const details = await fetchApiKeyDetails();
 
-    assert.ok(syncInvocationCounts.set >= 1);
-    assert.ok(syncInvocationCounts.get >= 1);
+      assert.ok(syncInvocationCounts.set >= 1);
+      assert.ok(syncInvocationCounts.get >= 1);
 
-    assert.equal(localStore.get(API_KEY_STORAGE_KEY), 'fallback-key');
-    const storedMeta = localStore.get(API_KEY_METADATA_STORAGE_KEY);
-    assert.ok(storedMeta);
-    assert.equal(typeof storedMeta.lastUpdated, 'number');
-    assert.ok(storedMeta.lastUpdated >= before);
+      assert.equal(localStore.get(API_KEY_STORAGE_KEY), 'fallback-key');
+      const storedMeta = localStore.get(API_KEY_METADATA_STORAGE_KEY);
+      assert.ok(storedMeta);
+      assert.equal(typeof storedMeta.lastUpdated, 'number');
+      assert.ok(storedMeta.lastUpdated >= before);
 
-    assert.equal(details.apiKey, 'fallback-key');
-    assert.equal(typeof details.lastUpdated, 'number');
-    assert.ok(details.lastUpdated >= before);
+      assert.equal(details.apiKey, 'fallback-key');
+      assert.equal(typeof details.lastUpdated, 'number');
+      assert.ok(details.lastUpdated >= before);
 
-    await saveApiKey('   ');
-    assert.ok(syncInvocationCounts.remove >= 1);
-    assert.equal(localStore.has(API_KEY_STORAGE_KEY), false);
-    assert.equal(localStore.has(API_KEY_METADATA_STORAGE_KEY), false);
-  } finally {
-    uninstall();
-  }
-});
+      await saveApiKey('   ');
+      assert.ok(syncInvocationCounts.remove >= 1);
+      assert.equal(localStore.has(API_KEY_STORAGE_KEY), false);
+      assert.equal(localStore.has(API_KEY_METADATA_STORAGE_KEY), false);
+    } finally {
+      uninstall();
+    }
+  });
 
-test('API key metadata is stored and cleared alongside the key', async () => {
-  const persistentStore = new Map();
+  test('API key metadata is stored and cleared alongside the key', async () => {
+    const persistentStore = new Map();
 
-  const overrides = {
-    getValue: async key => persistentStore.get(key),
-    setValue: async (key, value) => {
-      persistentStore.set(key, value);
-      return value;
-    },
-    removeValue: async key => {
-      persistentStore.delete(key);
-    },
-  };
+    const overrides = {
+      getValue: async key => persistentStore.get(key),
+      setValue: async (key, value) => {
+        persistentStore.set(key, value);
+        return value;
+      },
+      removeValue: async key => {
+        persistentStore.delete(key);
+      },
+    };
 
-  const uninstall = installChromeStub();
+    const uninstall = installChromeStub();
 
-  try {
-    const {
-      API_KEY_METADATA_STORAGE_KEY,
-      API_KEY_STORAGE_KEY,
-      fetchApiKeyDetails,
-      saveApiKey,
-    } = await loadApiKeyStoreModule();
+    try {
+      const {
+        API_KEY_METADATA_STORAGE_KEY,
+        API_KEY_STORAGE_KEY,
+        fetchApiKeyDetails,
+        saveApiKey,
+      } = await loadApiKeyStoreModule();
 
-    const before = Date.now();
-    await saveApiKey('test-key', overrides);
-    const details = await fetchApiKeyDetails(overrides);
-    assert.equal(details.apiKey, 'test-key');
-    assert.equal(typeof details.lastUpdated, 'number');
-    assert.ok(details.lastUpdated >= before);
+      const before = Date.now();
+      await saveApiKey('test-key', overrides);
+      const details = await fetchApiKeyDetails(overrides);
+      assert.equal(details.apiKey, 'test-key');
+      assert.equal(typeof details.lastUpdated, 'number');
+      assert.ok(details.lastUpdated >= before);
 
-    const storedMeta = persistentStore.get(API_KEY_METADATA_STORAGE_KEY);
-    assert.ok(storedMeta);
-    assert.equal(typeof storedMeta.lastUpdated, 'number');
-    assert.equal(persistentStore.get(API_KEY_STORAGE_KEY), 'test-key');
+      const storedMeta = persistentStore.get(API_KEY_METADATA_STORAGE_KEY);
+      assert.ok(storedMeta);
+      assert.equal(typeof storedMeta.lastUpdated, 'number');
+      assert.equal(persistentStore.get(API_KEY_STORAGE_KEY), 'test-key');
 
-    await saveApiKey('   ', overrides);
-    const cleared = await fetchApiKeyDetails(overrides);
-    assert.equal(cleared.apiKey, null);
-    assert.equal(cleared.lastUpdated, null);
-    assert.equal(persistentStore.has(API_KEY_METADATA_STORAGE_KEY), false);
-    assert.equal(persistentStore.has(API_KEY_STORAGE_KEY), false);
-  } finally {
-    uninstall();
-  }
+      await saveApiKey('   ', overrides);
+      const cleared = await fetchApiKeyDetails(overrides);
+      assert.equal(cleared.apiKey, null);
+      assert.equal(cleared.lastUpdated, null);
+      assert.equal(persistentStore.has(API_KEY_METADATA_STORAGE_KEY), false);
+      assert.equal(persistentStore.has(API_KEY_STORAGE_KEY), false);
+    } finally {
+      uninstall();
+    }
+  });
 });
