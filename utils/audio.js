@@ -1,4 +1,11 @@
 /**
+ * Audio helper utilities for encoding, playback, and media recorder
+ * management in the popup UI.
+ *
+ * @module utils/audio
+ */
+
+/**
  * Converts an AudioBuffer into a WAV blob that can be saved or uploaded.
  *
  * @param {AudioBuffer} buffer - Browser audio buffer.

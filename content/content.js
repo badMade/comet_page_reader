@@ -1,3 +1,10 @@
+/**
+ * Content script entry point that extracts readable text from the current page,
+ * synchronises segment metadata with the background service worker, and
+ * responds to highlight commands from the popup UI.
+ *
+ * @module content/content
+ */
 (async () => {
   const {
     extractVisibleText,
