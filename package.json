@@ -4,9 +4,14 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test"
+    "test": "node --test",
+    "verify:npm-registry": "node scripts/verifyNpmRegistry.js"
   },
   "devDependencies": {
     "jsdom": "^24.0.0"
+  },
+  "dependencies": {
+    "https-proxy-agent": "^7.0.2",
+    "http-proxy-agent": "^7.0.2"
   }
 }
