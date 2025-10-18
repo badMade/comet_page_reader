@@ -1,3 +1,7 @@
+/**
+ * Static localisation messages used across the popup UI. Extend the structure
+ * when adding new locales or strings.
+ */
 const MESSAGES = {
   en: {
     apiKeyLabel: 'OpenAI API key',
@@ -29,25 +33,54 @@ const MESSAGES = {
 
 let activeLocale = 'en';
 
+/**
+ * Updates the active locale if translations are available.
+ *
+ * @param {string} locale - ISO language code.
+ */
 export function setLocale(locale) {
   if (MESSAGES[locale]) {
     activeLocale = locale;
   }
 }
 
+/**
+ * Returns the currently active locale code.
+ *
+ * @returns {string} Selected locale.
+ */
 export function getLocale() {
   return activeLocale;
 }
 
+/**
+ * Resolves the translation for the provided key, falling back to English when
+ * necessary.
+ *
+ * @param {string} key - Translation key.
+ * @returns {string} Localised string or the key when missing.
+ */
 export function t(key) {
   const table = MESSAGES[activeLocale] || MESSAGES.en;
   return table[key] || key;
 }
 
+/**
+ * Lists all supported locale codes.
+ *
+ * @returns {string[]} Locale codes.
+ */
 export function availableLocales() {
   return Object.keys(MESSAGES);
 }
 
+/**
+ * Temporarily sets a locale for the duration of the provided function.
+ *
+ * @param {string} locale - Locale code to apply.
+ * @param {Function} fn - Function executed under the temporary locale.
+ * @returns {*} Result of the provided function.
+ */
 export function withLocale(locale, fn) {
   const previous = activeLocale;
   setLocale(locale);

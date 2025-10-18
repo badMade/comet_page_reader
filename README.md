@@ -1,58 +1,107 @@
 # Comet Page Reader
 
-Comet Page Reader is a cross-browser WebExtensions add-on that summarises web pages and reads them aloud using OpenAI services. It runs on Chrome, Edge, Firefox, and Comet, keeping the OpenAI API key inside the extension service worker and funnelling all network traffic through a single secure location.
+Comet Page Reader is a cross-browser WebExtensions add-on that summarises web pages and reads them aloud using OpenAI services. It keeps the API key and request pipeline inside the background service worker so sensitive data never reaches web pages.
 
-## Features
+## Table of Contents
 
-- **Secure background service worker** that stores the API key in `chrome.storage.sync` with Firefox fallbacks and enforces a configurable spend ceiling (defaults to USD 5.00 via `DEFAULT_LIMIT_USD` in `utils/cost.js`).
-- **Content intelligence** provided by a modular content script that extracts visible text, segments long pages, and responds to highlight or refresh requests.
-- **Popup dashboard** with API-key management, language and voice selectors, push-to-talk capture, audio playback controls, usage tracking, and a privacy disclaimer.
-- **Utility modules** for DOM parsing, localisation, cost accounting, and audio capture/playback to ensure the codebase stays maintainable and testable.
-- **Caching layer** keyed by URL/segment to avoid unnecessary OpenAI calls and keep running costs predictable.
+- [Project Overview](#project-overview)
+- [Installation](#installation)
+- [Usage](#usage)
+- [Architecture & File Structure](#architecture--file-structure)
+- [Configuration](#configuration)
+- [Testing & Mocking](#testing--mocking)
+- [Troubleshooting](#troubleshooting)
+- [Contributing](#contributing)
+- [Further Reading](#further-reading)
+
+## Project Overview
+
+Comet Page Reader focuses on three responsibilities:
+
+- **Summarise content:** A content script extracts readable text from the current tab, slices it into manageable segments, and forwards them to the service worker.
+- **Control spend:** The service worker maintains an internal cache and cost tracker, enforcing a configurable spend ceiling (defaults to USD 5.00 via `DEFAULT_LIMIT_USD` in `utils/cost.js`).
+- **Deliver an accessible UI:** The popup provides API key management, localisation controls, push-to-talk capture, and audio playback so users can hear the generated summaries immediately.
 
 ## Installation
 
-1. Clone or download this repository.
-2. Create an OpenAI API key and keep it handy.
+1. Clone or download this repository: `git clone https://github.com/<your-org>/comet_page_reader`.
+2. Generate an OpenAI API key and store it securely.
 3. Load the extension in your browser:
-   - **Chromium (Chrome, Edge, Comet):** open `chrome://extensions`, enable Developer Mode, choose **Load unpacked**, and select the repository root.
-   - **Firefox:** open `about:debugging#/runtime/this-firefox`, choose **Load Temporary Add-on**, and select the repository root.
+   - **Chromium (Chrome, Edge, Comet):** open `chrome://extensions`, enable **Developer Mode**, choose **Load unpacked**, and select the repository root.
+   - **Firefox:** open `about:debugging#/runtime/this-firefox`, choose **Load Temporary Add-on**, and select the repository root (e.g. `manifest.json`).
 
-The extension registers its popup automatically and will request permissions for storage, tabs, activeTab, and scripting on first run.
+No additional build steps or package installations are required—the repository ships as a fully static WebExtension bundle.
 
-## Configuration & Usage
+## Usage
 
-1. Open the popup from the browser toolbar.
-2. Paste your OpenAI API key and press **Save key**. The key is persisted in the background worker only.
-3. Pick a preferred language (for summaries and UI strings) and a voice preset.
-4. Use **Summarise current page** to request section-by-section summaries from the background worker.
-5. Press **Read highlighted segment** to generate speech for the first summary. The player controls support play, pause, and stop.
-6. Hold **Push to talk** to dictate commands; releasing the button triggers speech-to-text transcription. Commands containing “summary” trigger summarisation, and commands with “read” trigger playback automatically.
-7. Review the usage dashboard for real-time cost tracking and reset the cycle when required.
+1. Click the Comet Page Reader icon in your browser toolbar to open the popup.
+2. Paste your OpenAI API key and press **Save key**. The key lives in background storage only.
+3. Select your preferred **Language** (affects summaries and UI text) and **Voice** (used for speech synthesis).
+4. Choose one of the following interactions:
+   - **Summarise page:** Generates summaries for each extracted segment and lists them in the popup.
+   - **Read aloud:** Requests speech for the first summary and plays it inside the popup.
+   - **Push to talk:** Hold the button to dictate commands such as “summary this page” or “read the first result”. Speech-to-text responses automatically trigger matching actions.
+5. Monitor the **Usage** panel to see cumulative spend, limit, and the last reset time. Use **Reset usage** whenever you want to clear historical costs.
 
-## Privacy & Security
+### Programmatic access
 
-- API keys are stored with WebExtensions storage APIs and never injected into content pages.
-- All network traffic to OpenAI originates from the service worker, which validates cost ceilings before executing requests.
-- Page content is processed in-memory only for the duration of the request. Summaries are cached per URL/segment in session storage to minimise repeated uploads.
-- The popup displays a clear disclaimer reminding users that content is transmitted to OpenAI.
+While the extension is primarily UI-driven, its utility modules can be imported into tests or tooling thanks to ES module exports. For example:
 
-## Testing Without Live APIs
+```javascript
+import { createCostTracker } from './utils/cost.js';
+
+const tracker = createCostTracker(10);
+tracker.record('gpt-4o-mini', 2000, 500);
+console.log(tracker.toJSON());
+```
+
+This allows you to reuse the same cost-accounting logic when writing automated tests or companion scripts.
+
+## Architecture & File Structure
+
+```
+comet_page_reader/
+├── background/            # Service worker handling API calls and caching
+├── content/               # Content script that extracts and highlights page text
+├── popup/                 # Popup UI (HTML/CSS/JS) shown to end users
+├── utils/                 # Reusable modules for DOM parsing, cost tracking, audio, i18n, storage
+├── manifest.json          # WebExtension manifest configuration
+└── docs/DEVELOPMENT.md    # Developer notes, known issues, and maintenance tips
+```
+
+The [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) guide explains the message flow, how to update localisation strings, and debugging tips.
+
+## Configuration
+
+Key settings are embedded in source files so they remain easy to audit:
+
+- **Cost limit:** Adjust `DEFAULT_LIMIT_USD` in `utils/cost.js`.
+- **Model selection:** Tweak the defaults in `background/service_worker.js` (chat, transcription, speech synthesis models) if your account prefers alternates.
+- **Locales & strings:** Update the `MESSAGES` map inside `utils/i18n.js`.
+- **Permissions:** Modify `manifest.json` for additional scopes.
+
+## Testing & Mocking
 
 To exercise the extension without incurring OpenAI costs:
 
-- Replace the endpoints inside `background/service_worker.js` with a local mock server (e.g. using `http://localhost:3000`) that echoes deterministic responses. Because all network calls originate from the service worker, only a single URL needs to change.
-- Alternatively, stub the `sendMessage` calls in `popup/script.js` with mock responses by uncommenting the sample `MOCK_MODE` snippet in that file (placeholder hooks are provided near the top of the file for quick toggling).
-- Use browser devtools to inspect console logs from the popup, background worker, and content script to confirm message flow, caching, and cost tracking.
+- Switch the `MOCK_MODE` constant in `popup/script.js` to `true` to simulate all background requests.
+- Alternatively, point the fetch calls in `background/service_worker.js` to a local mock server (for example `http://localhost:3000`) to return deterministic responses.
+- Use your browser’s developer tools to inspect console logs from the popup, background service worker, and content script to verify message flow, caching, and cost tracking.
 
-Automated browser integration tests are not bundled, but the code is structured into small, easily testable modules (`utils/` directory) so you can import them into your preferred test runner without the extension runtime. For example, you can unit test `extractVisibleText` or the cost tracker using Jest by providing minimal DOM shims.
+The ES module structure enables lightweight unit tests. For example, you can import `extractVisibleText` or the cost tracker into Jest and provide DOM shims to validate behaviour without loading the full extension.
 
 ## Troubleshooting
 
-- If microphone access is denied, the popup will display the error in the status region. Grant the permission in browser settings and retry.
-- Cost-limit breaches return actionable error messages from the background worker; reset usage or raise the configured limit in code before reattempting.
-- Firefox currently lacks `chrome.storage.session`; the service worker falls back gracefully and keeps cache data in-memory.
+- **Microphone access denied:** The popup’s status area reports permission errors. Grant microphone access in browser settings and retry.
+- **Cost limit exceeded:** The service worker blocks expensive calls once the configured ceiling is reached. Lower the requested workload, reset usage from the popup, or increase `DEFAULT_LIMIT_USD`.
+- **Firefox session storage:** Firefox currently lacks `chrome.storage.session`. The service worker falls back to an in-memory cache which resets per session.
+- **No response from content script:** Ensure the site allows content scripts (e.g. some browser pages forbid injections). Refresh the tab and retry.
 
 ## Contributing
 
-Pull requests and issues are welcome. Please ensure additions remain modular, portable, and respectful of the privacy guarantees outlined above.
+Pull requests and issues are welcome. Please keep changes modular, portable, and aligned with the privacy expectations above. New features should include accompanying documentation updates.
+
+## Further Reading
+
+- [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for developer-oriented notes.
+- [MDN WebExtensions documentation](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions) for platform APIs.

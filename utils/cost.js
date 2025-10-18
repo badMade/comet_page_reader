@@ -1,5 +1,14 @@
+/**
+ * Default monthly spending limit enforced by the extension when tracking API
+ * usage. The value is intentionally conservative to provide safe defaults for
+ * new users.
+ */
 const DEFAULT_LIMIT_USD = 5;
 
+/**
+ * Pricing table expressed in USD per 1K tokens for prompt and completion usage
+ * alongside flat rates used by speech subsystems.
+ */
 const MODEL_PRICING = {
   'gpt-4o-mini': { prompt: 0.00015, completion: 0.0006 },
   'gpt-4o-realtime-preview': { prompt: 0.0005, completion: 0.0015 },
@@ -8,6 +17,10 @@ const MODEL_PRICING = {
   tts: { prompt: 0.0004, completion: 0 },
 };
 
+/**
+ * Tracks OpenAI usage across multiple API calls to enforce a configurable cost
+ * ceiling. The tracker records every request for display in the popup UI.
+ */
 export class CostTracker {
   constructor(limitUsd = DEFAULT_LIMIT_USD, usage = undefined) {
     this.limitUsd = limitUsd;
@@ -18,10 +31,27 @@ export class CostTracker {
     };
   }
 
+  /**
+   * Determines whether the requested amount can be spent without breaching the
+   * configured cost ceiling.
+   *
+   * @param {number} amountUsd - Additional cost in USD.
+   * @returns {boolean} True when the spend is permitted.
+   */
   canSpend(amountUsd) {
     return this.usage.totalCostUsd + amountUsd <= this.limitUsd;
   }
 
+  /**
+   * Records a usage event for a token-based model and accumulates the
+   * calculated cost.
+   *
+   * @param {string} model - Model identifier used for lookup in MODEL_PRICING.
+   * @param {number} promptTokens - Tokens submitted in the request.
+   * @param {number} completionTokens - Tokens returned by the response.
+   * @param {Object} [metadata={}] - Additional contextual information.
+   * @returns {number} USD amount recorded for the event.
+   */
   record(model, promptTokens, completionTokens, metadata = {}) {
     const pricing = MODEL_PRICING[model] || MODEL_PRICING['gpt-4o-mini'];
     const promptCost = (promptTokens / 1000) * (pricing.prompt || 0);
@@ -39,6 +69,15 @@ export class CostTracker {
     return amount;
   }
 
+  /**
+   * Records a usage event for models that bill on a flat-fee basis such as
+   * speech synthesis and transcription.
+   *
+   * @param {string} model - Logical model group to attribute the cost to.
+   * @param {number} amountUsd - Flat USD amount spent.
+   * @param {Object} [metadata={}] - Additional contextual metadata.
+   * @returns {number} Recorded USD amount.
+   */
   recordFlat(model, amountUsd, metadata = {}) {
     this.usage.totalCostUsd += amountUsd;
     this.usage.requests.push({
@@ -52,12 +91,23 @@ export class CostTracker {
     return amountUsd;
   }
 
+  /**
+   * Resets accumulated usage and timestamps the reset moment for audit
+   * purposes.
+   */
   reset() {
     this.usage.totalCostUsd = 0;
     this.usage.requests = [];
     this.usage.lastReset = Date.now();
   }
 
+  /**
+   * Provides a rough token estimate based on the word count. Used for
+   * projecting costs when OpenAI does not return token usage data.
+   *
+   * @param {string} text - Input text.
+   * @returns {number} Estimated token count.
+   */
   estimateTokensFromText(text) {
     if (!text) {
       return 0;
@@ -66,6 +116,15 @@ export class CostTracker {
     return Math.max(1, Math.round(words * 1.3));
   }
 
+  /**
+   * Estimates the cost for generating a summary when only the source text is
+   * known.
+   *
+   * @param {string} model - Model identifier used for pricing lookup.
+   * @param {string} text - Source text that will be summarised.
+   * @param {number} [responseLength=400] - Expected completion length in tokens.
+   * @returns {number} Estimated USD amount.
+   */
   estimateCostForText(model, text, responseLength = 400) {
     const promptTokens = this.estimateTokensFromText(text);
     const completionTokens = responseLength;
@@ -76,11 +135,23 @@ export class CostTracker {
     );
   }
 
+  /**
+   * Serialises the tracker state so it can be persisted.
+   *
+   * @returns {Object} Plain JSON representation of the usage snapshot.
+   */
   toJSON() {
     return { ...this.usage, limitUsd: this.limitUsd };
   }
 }
 
+/**
+ * Factory helper used by the service worker to create a tracker instance.
+ *
+ * @param {number} limitUsd - Spending limit.
+ * @param {Object} [usage] - Pre-populated usage state.
+ * @returns {CostTracker} Configured tracker instance.
+ */
 export function createCostTracker(limitUsd, usage) {
   return new CostTracker(limitUsd, usage);
 }
