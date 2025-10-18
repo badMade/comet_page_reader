@@ -8,10 +8,11 @@ import { createRecorder } from '../utils/audio.js';
  * @module popup/script
  */
 
-const runtime = chrome?.runtime || browser?.runtime;
-const tabsApi = chrome?.tabs || browser?.tabs;
+const browserApi = globalThis.browser;
+const runtime = chrome?.runtime || browserApi?.runtime;
+const tabsApi = chrome?.tabs || browserApi?.tabs;
 const usesBrowserPromises =
-  typeof browser !== 'undefined' && runtime === browser.runtime && tabsApi === browser.tabs;
+  !!browserApi && runtime === browserApi.runtime && tabsApi === browserApi.tabs;
 
 const MOCK_MODE = false;
 const mockHandlers = {
@@ -170,7 +171,7 @@ function sendMessage(type, payload) {
 
   return new Promise((resolve, reject) => {
     runtime.sendMessage(payloadMessage, response => {
-      const lastError = chrome?.runtime?.lastError || browser?.runtime?.lastError;
+      const lastError = chrome?.runtime?.lastError || browserApi?.runtime?.lastError;
       if (lastError) {
         reject(new Error(lastError.message));
         return;
@@ -265,7 +266,7 @@ function queryTabs(options) {
   return new Promise((resolve, reject) => {
     try {
       tabsApi.query(options, tabs => {
-        const lastError = chrome?.runtime?.lastError || browser?.runtime?.lastError;
+        const lastError = chrome?.runtime?.lastError || browserApi?.runtime?.lastError;
         if (lastError) {
           reject(new Error(lastError.message));
           return;
@@ -292,7 +293,7 @@ function sendMessageToTab(tabId, message) {
   return new Promise((resolve, reject) => {
     try {
       tabsApi.sendMessage(tabId, message, response => {
-        const lastError = chrome?.runtime?.lastError || browser?.runtime?.lastError;
+        const lastError = chrome?.runtime?.lastError || browserApi?.runtime?.lastError;
         if (lastError) {
           reject(new Error(lastError.message));
           return;
