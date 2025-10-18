@@ -185,7 +185,9 @@ export async function withLock(key, fn) {
     }
 
     attempt += 1;
-    await delay(50 * attempt);
+    if (attempt < maxAttempts) {
+      await delay(50 * attempt);
+    }
   }
   throw new Error('Failed to acquire storage lock.');
 }
