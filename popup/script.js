@@ -10,8 +10,8 @@ import { createRecorder } from '../utils/audio.js';
 
 const hasBrowserApi = typeof browser !== 'undefined';
 const browserApi = hasBrowserApi ? browser : undefined;
-const runtime = chrome?.runtime || (hasBrowserApi ? browser.runtime : undefined);
-const tabsApi = chrome?.tabs || (hasBrowserApi ? browser.tabs : undefined);
+const runtime = chrome?.runtime || browserApi?.runtime;
+const tabsApi = chrome?.tabs || browserApi?.tabs;
 const usesBrowserPromises =
   !!browserApi && runtime === browserApi.runtime && tabsApi === browserApi.tabs;
 
