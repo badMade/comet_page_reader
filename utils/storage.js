@@ -23,6 +23,8 @@ const getBrowserApi = () => {
 
 const runtime = getBrowserApi();
 
+const LOCK_STALE_THRESHOLD_MS = 10_000;
+
 /**
  * Determines the most suitable persistent storage area available to the
  * extension.
@@ -144,17 +146,48 @@ export async function withLock(key, fn) {
   const lockKey = `lock:${key}`;
   const maxAttempts = 5;
   const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+
+  const resolveTimestamp = value => {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value;
+    }
+    if (value && typeof value === 'object') {
+      const timestamp = value.timestamp ?? value.time ?? value.ts;
+      if (typeof timestamp === 'number' && Number.isFinite(timestamp)) {
+        return timestamp;
+      }
+    }
+    return null;
+  };
+
+  let attempt = 0;
+  while (attempt < maxAttempts) {
     const current = await getValue(lockKey);
+    const timestamp = resolveTimestamp(current);
+
+    if (timestamp !== null && Date.now() - timestamp > LOCK_STALE_THRESHOLD_MS) {
+      await removeValue(lockKey);
+      continue;
+    }
+
+    if (timestamp === null && current) {
+      await removeValue(lockKey);
+      continue;
+    }
+
     if (!current) {
-      await setValue(lockKey, Date.now());
+      await setValue(lockKey, { timestamp: Date.now() });
       try {
         return await fn();
       } finally {
         await removeValue(lockKey);
       }
     }
-    await delay(50 * (attempt + 1));
+
+    attempt += 1;
+    if (attempt < maxAttempts) {
+      await delay(50 * attempt);
+    }
   }
   throw new Error('Failed to acquire storage lock.');
 }
