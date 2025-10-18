@@ -20,10 +20,10 @@
   let activeHighlightId = null;
 
   const runtime = (() => {
-    if (typeof chrome !== 'undefined' && typeof chrome.runtime !== 'undefined') {
+    if (typeof chrome === 'object' && chrome && chrome.runtime) {
       return chrome.runtime;
     }
-    if (typeof browser !== 'undefined' && typeof browser.runtime !== 'undefined') {
+    if (typeof browser === 'object' && browser && browser.runtime) {
       return browser.runtime;
     }
     return null;
