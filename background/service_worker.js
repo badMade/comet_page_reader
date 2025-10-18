@@ -1,13 +1,6 @@
 import { createCostTracker, DEFAULT_LIMIT_USD } from '../utils/cost.js';
-import {
-  getValue,
-  setValue,
-  removeValue,
-  withLock,
-  getSessionValue,
-  setSessionValue,
-  runtime,
-} from '../utils/storage.js';
+import { fetchApiKeyDetails, readApiKey, saveApiKey } from '../utils/apiKeyStore.js';
+import { getValue, setValue, withLock, getSessionValue, setSessionValue, runtime } from '../utils/storage.js';
 
 /**
  * Background service worker responsible for orchestrating OpenAI requests,
@@ -20,7 +13,6 @@ import {
  * @module background/service_worker
  */
 
-const API_KEY_STORAGE_KEY = 'comet:openaiApiKey';
 const USAGE_STORAGE_KEY = 'comet:usage';
 const CACHE_STORAGE_KEY = 'comet:cache';
 
@@ -96,7 +88,7 @@ async function persistCache() {
  * @returns {Promise<string|null>} The API key if present, otherwise null.
  */
 async function getApiKey() {
-  return getValue(API_KEY_STORAGE_KEY);
+  return readApiKey();
 }
 
 /**
@@ -106,11 +98,16 @@ async function getApiKey() {
  * @returns {Promise<string|null>} The persisted API key or null when removed.
  */
 async function setApiKey(apiKey) {
-  if (!apiKey) {
-    await removeValue(API_KEY_STORAGE_KEY);
-    return null;
-  }
-  return setValue(API_KEY_STORAGE_KEY, apiKey);
+  return saveApiKey(apiKey);
+}
+
+/**
+ * Retrieves the stored API key alongside metadata for UI display.
+ *
+ * @returns {Promise<{apiKey: string|null, lastUpdated: number|null}>} Key details.
+ */
+async function getApiKeyDetails() {
+  return fetchApiKeyDetails();
 }
 
 /**
@@ -418,6 +415,7 @@ async function handleSegmentsUpdated(message) {
 const handlers = {
   'comet:setApiKey': ({ payload }) => setApiKey(payload.apiKey),
   'comet:getApiKey': () => getApiKey(),
+  'comet:getApiKeyDetails': () => getApiKeyDetails(),
   'comet:summarise': handleSummariseRequest,
   'comet:transcribe': handleTranscriptionRequest,
   'comet:synthesise': handleSpeechRequest,
@@ -442,7 +440,7 @@ runtime.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 
-export { ensureInitialised, handleUsageRequest };
+export { ensureInitialised, getApiKeyDetails, handleUsageRequest, setApiKey };
 
 ensureInitialised().catch(error => {
   console.error('Failed to initialise service worker', error);
