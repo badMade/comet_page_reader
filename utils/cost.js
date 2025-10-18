@@ -33,8 +33,10 @@ export class CostTracker {
    * snapshot.
    *
    * @param {number} [limitUsd=DEFAULT_LIMIT_USD] - Spending ceiling in USD.
-   * @param {{totalCostUsd?: number, requests?: Array, lastReset?: number}} [usage]
-   *   - Previously persisted usage state.
+   * @param {object} [usage] - Previously persisted usage state.
+   * @param {number} [usage.totalCostUsd] - The total accumulated cost in USD.
+   * @param {Array<object>} [usage.requests] - A list of recorded API requests.
+   * @param {number} [usage.lastReset] - Timestamp of the last usage reset.
    */
   constructor(limitUsd = DEFAULT_LIMIT_USD, usage = undefined) {
     this.limitUsd = limitUsd;
