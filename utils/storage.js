@@ -44,9 +44,10 @@ const resolveStorageArea = () => {
 
 const storageArea = resolveStorageArea();
 const fallbackStorageArea =
-  storageArea === (runtime.storage && runtime.storage.sync) && runtime.storage && runtime.storage.local
-    ? runtime.storage.local
-    : null;
+  (storageArea === (runtime.storage && runtime.storage.sync) &&
+    runtime.storage &&
+    runtime.storage.local) ||
+  null;
 
 const sessionArea = runtime.storage && runtime.storage.session ? runtime.storage.session : null;
 
