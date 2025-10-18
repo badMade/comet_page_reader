@@ -1,0 +1,42 @@
+name: Codex Auto Fix
+
+on:
+  workflow_run:
+    workflows:
+      - CI
+    types:
+      - completed
+
+jobs:
+  codex-auto-fix:
+    name: Run Codex CLI auto-fix
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion != 'cancelled' }}
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: read
+    steps:
+      - name: Checkout triggering revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+
+      - name: Run Codex CLI
+        id: run_codex
+        uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          prompt: |
+            You are running after the CI workflow "${{ github.event.workflow_run.name }}" completed with the conclusion "${{ github.event.workflow_run.conclusion }}" for commit ${{ github.event.workflow_run.head_sha }}.
+            The CI run URL is: ${{ github.event.workflow_run.html_url }}.
+
+            Analyse the repository and attempt to repair any issues that caused the failure. If the CI concluded successfully, produce a short maintenance summary instead of making changes.
+            Keep the adjustments minimal, safe, and well-tested. Update or add tests when you change behaviour.
+
+      - name: Summarise Codex run
+        if: steps.run_codex.outputs.final-message != ''
+        run: |
+          echo "Codex summary:" >> "$GITHUB_STEP_SUMMARY"
+          echo "${{ steps.run_codex.outputs.final-message }}" >> "$GITHUB_STEP_SUMMARY"
