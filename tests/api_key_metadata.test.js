@@ -207,3 +207,57 @@ test('API key writes fall back to local storage when sync storage fails', async 
     uninstall();
   }
 });
+
+test('saveApiKey falls back to local storage when sync set reports disabled sync', async () => {
+  const localSetCalls = [];
+  const disabledSyncMessage =
+    'This operation is not allowed. Usually because the "Sync" feature is disabled.';
+
+  const syncArea = {
+    set(_items, callback) {
+      if (globalThis.chrome?.runtime) {
+        globalThis.chrome.runtime.lastError = { message: disabledSyncMessage };
+      }
+      if (typeof callback === 'function') {
+        callback();
+      }
+    },
+  };
+
+  const localArea = {
+    set(items, callback) {
+      localSetCalls.push({ ...items });
+      if (typeof callback === 'function') {
+        callback();
+      }
+    },
+  };
+
+  globalThis.chrome = {
+    storage: { sync: syncArea, local: localArea },
+    runtime: { lastError: null, onMessage: { addListener: () => {} } },
+  };
+
+  try {
+    const moduleUrl = new URL('../utils/apiKeyStore.js', import.meta.url);
+    moduleUrl.searchParams.set('cacheBust', `${Date.now()}-${Math.random()}`);
+    const { saveApiKey, API_KEY_STORAGE_KEY, API_KEY_METADATA_STORAGE_KEY } = await import(
+      moduleUrl.href
+    );
+
+    const storedKey = await saveApiKey('sample-key');
+    assert.equal(storedKey, 'sample-key');
+
+    assert.equal(localSetCalls.length, 2);
+    const keyWrite = localSetCalls.find(call => API_KEY_STORAGE_KEY in call);
+    assert.deepEqual(keyWrite, { [API_KEY_STORAGE_KEY]: 'sample-key' });
+
+    const metadataWrite = localSetCalls.find(call => API_KEY_METADATA_STORAGE_KEY in call);
+    assert.ok(metadataWrite);
+    const metadata = metadataWrite[API_KEY_METADATA_STORAGE_KEY];
+    assert.equal(typeof metadata, 'object');
+    assert.equal(typeof metadata.lastUpdated, 'number');
+  } finally {
+    delete globalThis.chrome;
+  }
+});
