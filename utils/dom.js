@@ -1,4 +1,11 @@
 /**
+ * DOM utilities used by the content script for text extraction, highlighting,
+ * and resilient snippet-to-range lookups.
+ *
+ * @module utils/dom
+ */
+
+/**
  * Cache of recently evaluated element visibility checks to avoid repeated
  * layout work during DOM traversals.
  * @type {WeakMap<Element, boolean>}

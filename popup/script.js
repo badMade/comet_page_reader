@@ -4,6 +4,8 @@ import { createRecorder } from '../utils/audio.js';
 /**
  * Popup controller responsible for coordinating UI state, background messages,
  * and media capture for the Comet Page Reader extension.
+ *
+ * @module popup/script
  */
 
 const runtime = chrome?.runtime || browser?.runtime;

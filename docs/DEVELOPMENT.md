@@ -5,8 +5,9 @@ This document supplements the main README with implementation details, known iss
 ## Environment Setup
 
 1. Install a Chromium-based browser and Firefox for manual testing.
-2. Clone the repository and load it as an unpacked extension (see README).
-3. When debugging, open the following developer tools:
+2. Install Node.js 20+ and run `npm install` to fetch the optional dev dependencies (currently `jsdom` for DOM-focused unit tests).
+3. Clone the repository and load it as an unpacked extension (see README).
+4. When debugging, open the following developer tools:
    - **Service worker** console via `chrome://extensions` → inspect views.
    - **Popup** developer tools via right-click → **Inspect** on the popup window.
    - **Content script** console in the active tab.
@@ -14,7 +15,8 @@ This document supplements the main README with implementation details, known iss
 ### Optional tooling
 
 - Use `web-ext` for live reloading in Firefox during development.
-- Employ Jest or Vitest with `jsdom` if you want automated tests around the modules in `utils/`.
+- Run `npm test` (Node’s built-in test runner) to execute the utility tests under jsdom.
+- Employ Jest or Vitest with `jsdom` if you want more elaborate automated tests around the modules in `utils/`.
 
 ## Code Architecture
 

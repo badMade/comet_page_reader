@@ -24,13 +24,21 @@ Comet Page Reader focuses on three responsibilities:
 
 ## Installation
 
+### Prerequisites
+
+- Chrome, Edge, or another Chromium-based browser for day-to-day usage.
+- Firefox for parity testing (recommended).
+- Node.js 20 or newer and npm when you want to run the automated tests.
+
+### Steps
+
 1. Clone or download this repository: `git clone https://github.com/<your-org>/comet_page_reader`.
 2. Generate an OpenAI API key and store it securely.
 3. Load the extension in your browser:
    - **Chromium (Chrome, Edge, Comet):** open `chrome://extensions`, enable **Developer Mode**, choose **Load unpacked**, and select the repository root.
    - **Firefox:** open `about:debugging#/runtime/this-firefox`, choose **Load Temporary Add-on**, and select the repository root (e.g. `manifest.json`).
 
-No additional build steps or package installations are required—the repository ships as a fully static WebExtension bundle.
+The extension is fully static, so no bundling step is required. If you plan to execute the test suite, install the dev dependencies once via `npm install`.
 
 ## Usage
 
@@ -57,6 +65,16 @@ console.log(tracker.toJSON());
 
 This allows you to reuse the same cost-accounting logic when writing automated tests or companion scripts.
 
+### Command-line usage
+
+Automated tests validate the reusable modules with Node’s test runner. After installing dev dependencies, run:
+
+```bash
+npm test
+```
+
+The tests execute against a jsdom-powered DOM shim so they can run in any environment that supports Node.js 20+.
+
 ## Architecture & File Structure
 
 ```
@@ -65,8 +83,10 @@ comet_page_reader/
 ├── content/               # Content script that extracts and highlights page text
 ├── popup/                 # Popup UI (HTML/CSS/JS) shown to end users
 ├── utils/                 # Reusable modules for DOM parsing, cost tracking, audio, i18n, storage
+├── tests/                 # Node.js tests that exercise the reusable utility modules
+├── docs/DEVELOPMENT.md    # Developer notes, known issues, and maintenance tips
 ├── manifest.json          # WebExtension manifest configuration
-└── docs/DEVELOPMENT.md    # Developer notes, known issues, and maintenance tips
+└── package.json           # Dev tooling and test dependencies
 ```
 
 The [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) guide explains the message flow, how to update localisation strings, and debugging tips.

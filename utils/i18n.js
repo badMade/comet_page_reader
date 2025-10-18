@@ -1,4 +1,10 @@
 /**
+ * Lightweight internationalisation helpers powering the popup interface.
+ *
+ * @module utils/i18n
+ */
+
+/**
  * Static localisation messages used across the popup UI. Extend the structure
  * when adding new locales or strings.
  */

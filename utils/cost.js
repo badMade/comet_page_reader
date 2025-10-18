@@ -1,4 +1,10 @@
 /**
+ * Cost tracking helpers shared by the background worker and popup UI.
+ *
+ * @module utils/cost
+ */
+
+/**
  * Default monthly spending limit enforced by the extension when tracking API
  * usage. The value is intentionally conservative to provide safe defaults for
  * new users.
@@ -22,6 +28,14 @@ const MODEL_PRICING = {
  * ceiling. The tracker records every request for display in the popup UI.
  */
 export class CostTracker {
+  /**
+   * Constructs a cost tracker instance with an optional pre-populated usage
+   * snapshot.
+   *
+   * @param {number} [limitUsd=DEFAULT_LIMIT_USD] - Spending ceiling in USD.
+   * @param {{totalCostUsd?: number, requests?: Array, lastReset?: number}} [usage]
+   *   - Previously persisted usage state.
+   */
   constructor(limitUsd = DEFAULT_LIMIT_USD, usage = undefined) {
     this.limitUsd = limitUsd;
     this.usage = usage || {

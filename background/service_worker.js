@@ -16,6 +16,8 @@ import {
  * The worker exposes a message-based API consumed by the popup UI and content
  * scripts. It keeps secrets inside the background context to avoid leaking the
  * OpenAI API key to content pages.
+ *
+ * @module background/service_worker
  */
 
 const API_KEY_STORAGE_KEY = 'comet:openaiApiKey';

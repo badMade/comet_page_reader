@@ -1,4 +1,11 @@
 /**
+ * Storage abstraction helpers that normalise Chrome and Firefox runtime APIs
+ * for use across the extension.
+ *
+ * @module utils/storage
+ */
+
+/**
  * Resolves the runtime-specific browser API object (Chrome/Firefox compatible).
  *
  * @returns {typeof chrome|typeof browser} Browser API namespace.
