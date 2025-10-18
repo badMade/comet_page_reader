@@ -72,7 +72,13 @@ function installChromeStub(persistent = {}, session = {}) {
   };
 }
 
-test('ensureInitialised preserves stored limit for the cost tracker', async () => {
+async function importServiceWorker() {
+  const moduleUrl = new URL('../background/service_worker.js', import.meta.url);
+  moduleUrl.searchParams.set('cacheBust', `${Date.now()}-${Math.random()}`);
+  return import(moduleUrl.href);
+}
+
+test('ensureInitialised hydrates stored limit for the cost tracker', async () => {
   const storedUsage = {
     totalCostUsd: 12.5,
     requests: [
@@ -91,10 +97,11 @@ test('ensureInitialised preserves stored limit for the cost tracker', async () =
   const uninstall = installChromeStub({ [USAGE_STORAGE_KEY]: storedUsage });
 
   try {
-    const { handleUsageRequest } = await import('../background/service_worker.js');
+    const { ensureInitialised, handleUsageRequest } = await importServiceWorker();
+    await ensureInitialised();
     const usage = await handleUsageRequest();
 
-    assert.equal(usage.limitUsd, 42);
+    assert.equal(usage.limitUsd, storedUsage.limitUsd);
     assert.equal(usage.totalCostUsd, storedUsage.totalCostUsd);
     assert.equal(usage.requests.length, storedUsage.requests.length);
     assert.equal(usage.lastReset, storedUsage.lastReset);
