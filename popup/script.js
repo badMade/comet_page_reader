@@ -234,10 +234,7 @@ function formatLastUpdated(timestamp) {
  *   Persisted API key payload.
  */
 function renderApiKeyDetails(details) {
-  const normalised =
-    typeof details === 'string' || details instanceof String
-      ? { apiKey: String(details), lastUpdated: null }
-      : details || {};
+  const normalised = details || {};
 
   const hasKey = Boolean(normalised.apiKey);
   if (hasKey) {
