@@ -1,11 +1,11 @@
-import { getValue, setValue, removeValue } from './storage.js';
+import { getValue, setValueWithFallback, removeValue } from './storage.js';
 
 export const API_KEY_STORAGE_KEY = 'comet:openaiApiKey';
 export const API_KEY_METADATA_STORAGE_KEY = 'comet:openaiApiKeyMeta';
 
 const defaultDeps = {
   getValue,
-  setValue,
+  setValue: setValueWithFallback,
   removeValue,
 };
 
