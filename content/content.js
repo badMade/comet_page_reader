@@ -19,7 +19,15 @@
   let observer;
   let activeHighlightId = null;
 
-  const runtime = chrome?.runtime || browser?.runtime;
+  const runtime = (() => {
+    if (typeof chrome !== 'undefined' && typeof chrome.runtime !== 'undefined') {
+      return chrome.runtime;
+    }
+    if (typeof browser !== 'undefined' && typeof browser.runtime !== 'undefined') {
+      return browser.runtime;
+    }
+    return null;
+  })();
 
   if (!runtime) {
     console.warn('Comet Page Reader: runtime API unavailable.');
