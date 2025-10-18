@@ -43,23 +43,33 @@ const resolveStorageArea = () => {
 };
 
 const storageArea = resolveStorageArea();
+const fallbackStorageArea =
+  storageArea === (runtime.storage && runtime.storage.sync) && runtime.storage && runtime.storage.local
+    ? runtime.storage.local
+    : null;
 
 const sessionArea = runtime.storage && runtime.storage.session ? runtime.storage.session : null;
 
 /**
  * Promisified wrapper for Chrome-style callback APIs.
  *
- * @param {Function} fn - Storage API function.
+ * @param {string} method - Storage API method name.
  * @param {...*} args - Arguments forwarded to the API.
  * @returns {Promise<*>} Resolved API result.
  */
-const promisify = (fn, ...args) => {
+const callStorageArea = (area, method, args) => {
+  if (!area || typeof area[method] !== 'function') {
+    return Promise.reject(new Error(`Storage method "${method}" is unavailable.`));
+  }
+
   return new Promise((resolve, reject) => {
     try {
-      fn.call(storageArea, ...args, result => {
+      area[method](...args, result => {
         const err = runtime.runtime && runtime.runtime.lastError;
         if (err) {
-          reject(new Error(err.message || 'Unknown storage error'));
+          const storageError = new Error(err.message || 'Unknown storage error');
+          storageError.isRuntimeError = true;
+          reject(storageError);
           return;
         }
         resolve(result);
@@ -68,6 +78,17 @@ const promisify = (fn, ...args) => {
       reject(error);
     }
   });
+};
+
+const promisify = async (method, ...args) => {
+  try {
+    return await callStorageArea(storageArea, method, args);
+  } catch (error) {
+    if (error && error.isRuntimeError && fallbackStorageArea) {
+      return callStorageArea(fallbackStorageArea, method, args);
+    }
+    throw error;
+  }
 };
 
 /**
@@ -105,7 +126,7 @@ const promisifySession = (fn, ...args) => {
  * @returns {Promise<*>} Stored value or default.
  */
 export async function getValue(key, defaultValue = undefined) {
-  const data = await promisify(storageArea.get, key);
+  const data = await promisify('get', key);
   if (data && Object.prototype.hasOwnProperty.call(data, key)) {
     return data[key];
   }
@@ -120,7 +141,7 @@ export async function getValue(key, defaultValue = undefined) {
  * @returns {Promise<*>} Stored value.
  */
 export async function setValue(key, value) {
-  await promisify(storageArea.set, { [key]: value });
+  await promisify('set', { [key]: value });
   return value;
 }
 
@@ -131,7 +152,7 @@ export async function setValue(key, value) {
  * @returns {Promise<void>} Resolves once the key is removed.
  */
 export async function removeValue(key) {
-  await promisify(storageArea.remove, key);
+  await promisify('remove', key);
 }
 
 /**
