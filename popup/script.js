@@ -8,9 +8,10 @@ import { createRecorder } from '../utils/audio.js';
  * @module popup/script
  */
 
-const browserApi = globalThis.browser;
-const runtime = chrome?.runtime || browserApi?.runtime;
-const tabsApi = chrome?.tabs || browserApi?.tabs;
+const hasBrowserApi = typeof browser !== 'undefined';
+const browserApi = hasBrowserApi ? browser : undefined;
+const runtime = chrome?.runtime || (hasBrowserApi ? browser.runtime : undefined);
+const tabsApi = chrome?.tabs || (hasBrowserApi ? browser.tabs : undefined);
 const usesBrowserPromises =
   !!browserApi && runtime === browserApi.runtime && tabsApi === browserApi.tabs;
 
@@ -138,6 +139,17 @@ function withErrorHandling(handler) {
   };
 }
 
+function getRuntimeLastError() {
+  const chromeLastError = chrome?.runtime?.lastError;
+  if (chromeLastError) {
+    return chromeLastError;
+  }
+  if (!hasBrowserApi) {
+    return undefined;
+  }
+  return browserApi?.runtime?.lastError;
+}
+
 /**
  * Sends a message to the background service worker, supporting both Chrome
  * callbacks and Firefox promises. Falls back to local mocks when MOCK_MODE is
@@ -171,7 +183,7 @@ function sendMessage(type, payload) {
 
   return new Promise((resolve, reject) => {
     runtime.sendMessage(payloadMessage, response => {
-      const lastError = chrome?.runtime?.lastError || browserApi?.runtime?.lastError;
+      const lastError = getRuntimeLastError();
       if (lastError) {
         reject(new Error(lastError.message));
         return;
@@ -266,7 +278,7 @@ function queryTabs(options) {
   return new Promise((resolve, reject) => {
     try {
       tabsApi.query(options, tabs => {
-        const lastError = chrome?.runtime?.lastError || browserApi?.runtime?.lastError;
+        const lastError = getRuntimeLastError();
         if (lastError) {
           reject(new Error(lastError.message));
           return;
@@ -293,7 +305,7 @@ function sendMessageToTab(tabId, message) {
   return new Promise((resolve, reject) => {
     try {
       tabsApi.sendMessage(tabId, message, response => {
-        const lastError = chrome?.runtime?.lastError || browserApi?.runtime?.lastError;
+        const lastError = getRuntimeLastError();
         if (lastError) {
           reject(new Error(lastError.message));
           return;
