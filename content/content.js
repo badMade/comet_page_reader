@@ -125,7 +125,13 @@
 
     if (message.type === 'comet:refreshSegments') {
       buildSegments();
-      sendResponse({ ok: true, segments });
+      sendResponse({
+        ok: true,
+        result: {
+          url: window.location.href,
+          segments,
+        },
+      });
       return true;
     }
 
