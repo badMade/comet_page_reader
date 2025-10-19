@@ -1,4 +1,4 @@
-import YAML from 'yaml';
+import YAML from './yamlLoader.js';
 
 const DEFAULT_PROVIDER_CONFIG = Object.freeze({
   provider: 'openai',
