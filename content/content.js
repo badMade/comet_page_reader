@@ -1,5 +1,3 @@
-import createLogger, { loadLoggingConfig, setGlobalContext } from '../utils/logger.js';
-
 /**
  * Content script entry point that extracts readable text from the current page,
  * synchronises segment metadata with the background service worker, and
@@ -8,18 +6,6 @@ import createLogger, { loadLoggingConfig, setGlobalContext } from '../utils/logg
  * @module content/content
  */
 (async () => {
-  await loadLoggingConfig().catch(() => {});
-
-  const logger = createLogger({
-    name: 'content-script',
-    context: {
-      location: typeof window !== 'undefined' ? window.location.href : undefined,
-    },
-  });
-  setGlobalContext({ runtime: 'content-script' });
-
-  await logger.info('Content script initialising.');
-
   const CONTEXT_INVALIDATED_PATTERN = /Extension context invalidated/i;
 
   function isContextInvalidated(error) {
@@ -41,7 +27,7 @@ import createLogger, { loadLoggingConfig, setGlobalContext } from '../utils/logg
   })();
 
   if (!runtime) {
-    await logger.warn('Runtime API unavailable. Aborting content script initialisation.');
+    console.warn('Runtime API unavailable. Aborting content script initialisation.');
     return;
   }
 
@@ -59,9 +45,43 @@ import createLogger, { loadLoggingConfig, setGlobalContext } from '../utils/logg
   })();
 
   if (!resolveRuntimeUrl) {
-    await logger.warn('runtime.getURL unavailable. Content script cannot continue.');
+    console.warn('runtime.getURL unavailable. Content script cannot continue.');
     return;
   }
+
+  const loggerModulePromise = import(resolveRuntimeUrl('utils/logger.js'));
+  const domModulePromise = import(resolveRuntimeUrl('utils/dom.js'));
+
+  let createLogger;
+  let loadLoggingConfig;
+  let setGlobalContext;
+
+  try {
+    ({
+      default: createLogger,
+      loadLoggingConfig,
+      setGlobalContext,
+    } = await loggerModulePromise);
+  } catch (error) {
+    if (isContextInvalidated(error)) {
+      console.debug('Extension context invalidated before logger initialised.', error);
+      return;
+    }
+    console.error('Failed to load logger utilities for content script.', error);
+    return;
+  }
+
+  const logger = createLogger({
+    name: 'content-script',
+    context: {
+      location: typeof window !== 'undefined' ? window.location.href : undefined,
+    },
+  });
+  setGlobalContext({ runtime: 'content-script' });
+
+  loadLoggingConfig().catch(() => {});
+
+  await logger.info('Content script initialising.');
 
   let extractVisibleText;
   let createSegmentMap;
@@ -78,7 +98,7 @@ import createLogger, { loadLoggingConfig, setGlobalContext } from '../utils/logg
       findTextRange,
       observeMutations,
       throttle,
-    } = await import(resolveRuntimeUrl('utils/dom.js')));
+    } = await domModulePromise);
   } catch (error) {
     if (isContextInvalidated(error)) {
       await logger.debug(

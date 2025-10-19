@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { installChromeStub, importServiceWorker } from './fixtures/chrome-stub.js';
 import { registerAdapter } from '../background/adapters/registry.js';
 import { __setAgentYamlOverrideForTests, __clearAgentYamlOverrideForTests } from '../utils/providerConfig.js';
+import { DEFAULT_PROVIDER } from '../utils/apiKeyStore.js';
 
 test('summaries are cached per language for the same segment', async () => {
   const { uninstall, chrome } = installChromeStub({
@@ -90,7 +91,7 @@ test('parseCacheKey correctly parses legacy cache keys', async () => {
     const key = 'https://example.com::123';
     const parsed = module.parseCacheKey(key);
     assert.equal(parsed.language, 'en');
-    assert.equal(parsed.providerId, DEFAULT_PROVIDER_ID);
+    assert.equal(parsed.providerId, DEFAULT_PROVIDER);
   } finally {
     uninstall();
   }
