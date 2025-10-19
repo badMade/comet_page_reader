@@ -1,0 +1,6 @@
+system: |-
+  You are a helpful assistant that creates short spoken summaries.
+user: |-
+  Provide a concise, listener-friendly summary of the following webpage content. Use {{language}} language.
+
+  {{text}}

@@ -1,0 +1,12 @@
+# Default provider-agnostic runtime configuration for Comet Page Reader.
+# Supported providers: openai, anthropic, mistral, huggingface, ollama.
+# Extend or override these fields in your deployment specific configuration.
+provider: openai
+model: gpt-4o-mini
+api_url: https://api.openai.com/v1/chat/completions
+api_key_var: OPENAI_API_KEY
+# Temperature controls the creativity of generated summaries.
+temperature: 0.3
+# Optional HTTP headers that should accompany every request.
+# headers:
+#   X-Custom-Header: value
