@@ -407,7 +407,7 @@ async function handleSegmentsUpdated(message) {
   const { url, segments } = message.payload;
   const validSegmentIds = new Set((segments || []).map(segment => segment.id));
 
-  for (const key of Array.from(memoryCache.keys())) {
+  for (const key of memoryCache.keys()) {
     const entry = parseCacheKey(key);
     if (!entry || entry.url !== url) {
       continue;
