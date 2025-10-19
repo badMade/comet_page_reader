@@ -1,16 +1,29 @@
+import browserYamlModule from './vendor/yamlBrowser.js';
+
 let cachedYamlModule;
 let yamlModulePromise;
+
+function isNodeEnvironment() {
+  return (
+    typeof process !== 'undefined' &&
+    typeof process.release === 'object' &&
+    process.release?.name === 'node'
+  );
+}
+
+function getBrowserYamlModule() {
+  return browserYamlModule?.default || browserYamlModule;
+}
 
 function getYamlModulePromise() {
   if (!yamlModulePromise) {
     yamlModulePromise = (async () => {
-      if (typeof process !== 'undefined' && process.versions && process.versions.node) {
+      if (isNodeEnvironment()) {
         const module = await import('yaml');
         return module.default || module;
       }
 
-      const module = await import('./vendor/yamlBrowser.js');
-      return module.default || module;
+      return getBrowserYamlModule();
     })();
   }
 
