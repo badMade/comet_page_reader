@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Comet Page Reader",
-  "description": "Summarise and read webpages aloud using OpenAI services.",
+  "description": "Summarise and read webpages aloud using multiple LLM providers, including OpenAI.",
   "version": "0.1.0",
   "minimum_chrome_version": "109",
   "permissions": [
@@ -12,7 +12,11 @@
   ],
   "host_permissions": [
     "<all_urls>",
-    "https://api.openai.com/*"
+    "https://api.openai.com/*",
+    "https://api.anthropic.com/*",
+    "https://api.mistral.ai/*",
+    "https://api-inference.huggingface.co/*",
+    "http://localhost/*"
   ],
   "background": {
     "service_worker": "background/service_worker.js",
