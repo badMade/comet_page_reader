@@ -13,4 +13,12 @@ export class OllamaAdapter extends PlaceholderAdapter {
   constructor(config) {
     super('ollama', config);
   }
+
+  /**
+   * Overrides the default key guard so local Ollama installs can operate
+   * without an API token.
+   */
+  ensureKey() {
+    // Local Ollama instances do not require an API key.
+  }
 }
