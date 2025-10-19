@@ -49,8 +49,25 @@
     return;
   }
 
-  const loggerModulePromise = import(resolveRuntimeUrl('utils/logger.js'));
-  const domModulePromise = import(resolveRuntimeUrl('utils/dom.js'));
+  let loggerModulePromise;
+  let domModulePromise;
+
+  try {
+    const loggerModuleUrl = resolveRuntimeUrl('utils/logger.js');
+    const domModuleUrl = resolveRuntimeUrl('utils/dom.js');
+    loggerModulePromise = import(loggerModuleUrl);
+    domModulePromise = import(domModuleUrl);
+  } catch (error) {
+    if (isContextInvalidated(error)) {
+      console.debug(
+        'Extension context invalidated before utilities could be resolved.',
+        error,
+      );
+      return;
+    }
+    console.error('Failed to resolve utility module URLs.', error);
+    return;
+  }
 
   let createLogger;
   let loadLoggingConfig;
