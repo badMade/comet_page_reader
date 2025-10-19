@@ -154,7 +154,7 @@ function resolveStatusMessage(error, fallbackMessage = 'Something went wrong.') 
 
   const isDomException =
     typeof DOMException !== 'undefined' &&
-    (error instanceof DOMException || error?.name?.endsWith('Error'));
+    error instanceof DOMException;
   if (isDomException) {
     const friendly = DOM_EXCEPTION_FRIENDLY_MESSAGES[error.name];
     if (friendly) {
