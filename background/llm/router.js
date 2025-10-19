@@ -6,6 +6,7 @@ import {
 } from '../../utils/providerConfig.js';
 import { resolveAlias, getProviderDisplayName, normaliseProviderId } from '../../utils/providers.js';
 import { readApiKey } from '../../utils/apiKeyStore.js';
+import createLogger from '../../utils/logger.js';
 import { createAdapter } from '../adapters/registry.js';
 
 const PROVIDER_TIERS = Object.freeze({
@@ -81,7 +82,7 @@ function getLogger(logger) {
   if (logger && typeof logger.info === 'function') {
     return logger;
   }
-  return console;
+  return createLogger({ name: 'llm-router' });
 }
 
 function getFetch(fetchImpl) {
@@ -577,11 +578,11 @@ export class LLMRouter {
         continue;
       }
       if (disablePaid && metadataEntry.tier === PROVIDER_TIERS.PAID) {
-        this.logger.info(`[LLMRouter] ${resolved} skipped (paid disabled).`);
+        this.logger.info('Provider skipped because paid providers are disabled.', { provider: resolved });
         continue;
       }
       if (this.isBlocked(resolved)) {
-        this.logger.warn(`[LLMRouter] ${resolved} circuit open, skipping.`);
+        this.logger.warn('Provider skipped because circuit breaker is open.', { provider: resolved });
         continue;
       }
 
@@ -589,13 +590,13 @@ export class LLMRouter {
       const model = config.model || metadataEntry.adapterKey || 'unknown-model';
       const canSpend = await this.ensureCostBudget(model, text);
       if (!canSpend) {
-        this.logger.warn(`[LLMRouter] ${resolved} skipped (cost cap reached).`);
+        this.logger.warn('Provider skipped due to cost cap.', { provider: resolved, model });
         failures.push({ provider: resolved, reason: 'cost_cap' });
         continue;
       }
 
       if (routing.dryRun) {
-        this.logger.info(`[LLMRouter] DRY_RUN → ${resolved} selected.`);
+        this.logger.info('Dry run routing selected provider.', { provider: resolved });
         return {
           text: '[dry-run] no request sent',
           tokensIn: 0,
@@ -609,7 +610,7 @@ export class LLMRouter {
 
       try {
         const result = await this.invokeProvider(resolved, { text, language, metadata });
-        this.logger.info(`[LLMRouter] ${resolved} selected (${metadataEntry.tier}).`);
+        this.logger.info('Provider selected.', { provider: resolved, tier: metadataEntry.tier });
         return {
           text: result.text,
           tokens_in: result.tokensIn,
@@ -620,7 +621,7 @@ export class LLMRouter {
         };
       } catch (error) {
         this.markProviderFailure(resolved, error);
-        this.logger.warn(`[LLMRouter] ${resolved} failed: ${error.message}`);
+        this.logger.warn('Provider invocation failed.', { provider: resolved, error });
         failures.push({ provider: resolved, error });
       }
     }

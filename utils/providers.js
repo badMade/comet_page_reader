@@ -1,3 +1,7 @@
+import createLogger from './logger.js';
+
+const logger = createLogger({ name: 'providers-registry' });
+
 const DEFAULT_PROVIDER_ID = 'auto';
 
 const PROVIDER_ALIASES = Object.freeze({
@@ -35,12 +39,17 @@ function normaliseProviderId(value, fallback = DEFAULT_PROVIDER_ID) {
 }
 
 function listProviders() {
+  logger.trace('Listing providers.', { count: PROVIDERS.length });
   return PROVIDERS.map(provider => ({ ...provider }));
 }
 
 function findProvider(providerId) {
   const normalised = normaliseProviderId(providerId, providerId);
-  return PROVIDERS.find(provider => provider.id === normalised) || null;
+  const provider = PROVIDERS.find(candidate => candidate.id === normalised) || null;
+  if (!provider) {
+    logger.debug('Requested provider not found.', { providerId, normalised });
+  }
+  return provider;
 }
 
 function resolveAlias(providerId) {
@@ -48,12 +57,17 @@ function resolveAlias(providerId) {
     return providerId;
   }
   const normalised = normaliseProviderId(providerId, providerId);
-  return PROVIDER_ALIASES[normalised] || normalised;
+  const resolved = PROVIDER_ALIASES[normalised] || normalised;
+  if (resolved !== normalised) {
+    logger.debug('Resolved provider alias.', { providerId, resolved });
+  }
+  return resolved;
 }
 
 function providerRequiresApiKey(providerId) {
   const provider = findProvider(providerId);
   if (!provider) {
+    logger.error('Checking API key requirement for unknown provider.', { providerId });
     return true;
   }
   return provider.requiresApiKey !== false;
@@ -69,14 +83,18 @@ function getProviderDisplayName(providerId) {
   }
   const provider = findProvider(providerId);
   if (provider && provider.label) {
+    logger.trace('Using provider display label.', { providerId: provider.id });
     return provider.label;
   }
   const normalised = normaliseProviderId(providerId, providerId);
+  logger.debug('Falling back to generated provider name.', { providerId, normalised });
   return capitaliseWords(normalised);
 }
 
 function isSupportedProvider(providerId) {
-  return Boolean(findProvider(providerId));
+  const supported = Boolean(findProvider(providerId));
+  logger.trace('Provider support check.', { providerId, supported });
+  return supported;
 }
 
 export {

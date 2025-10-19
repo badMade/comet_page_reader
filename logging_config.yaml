@@ -1,0 +1,9 @@
+level: info
+console:
+  enabled: true
+file:
+  enabled: false
+  path: comet_page_reader.log
+context:
+  application: comet_page_reader
+  service: core

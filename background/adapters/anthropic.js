@@ -1,7 +1,7 @@
 import { PlaceholderAdapter } from './placeholder.js';
 
 export class AnthropicAdapter extends PlaceholderAdapter {
-  constructor(config) {
-    super('anthropic', config);
+  constructor(config, options = {}) {
+    super('anthropic', config, options);
   }
 }

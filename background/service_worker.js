@@ -1,3 +1,4 @@
+import createLogger, { loadLoggingConfig, setGlobalContext } from '../utils/logger.js';
 import { createCostTracker, DEFAULT_LIMIT_USD } from '../utils/cost.js';
 import { ensureNotesFile } from '../utils/notes.js';
 import { DEFAULT_PROVIDER, fetchApiKeyDetails, readApiKey, saveApiKey } from '../utils/apiKeyStore.js';
@@ -25,15 +26,20 @@ import { OllamaAdapter } from './adapters/ollama.js';
 import { GeminiAdapter } from './adapters/gemini.js';
 import { LLMRouter } from './llm/router.js';
 
-registerAdapter('openai', config => new OpenAIAdapter(config));
-registerAdapter('anthropic', config => new AnthropicAdapter(config));
-registerAdapter('mistral', config => new MistralAdapter(config));
-registerAdapter('huggingface', config => new HuggingFaceAdapter(config));
-registerAdapter('ollama', config => new OllamaAdapter(config));
-registerAdapter('gemini', config => new GeminiAdapter(config));
+const logger = createLogger({ name: 'background-service' });
+setGlobalContext({ runtime: 'background-service' });
+
+const adapterLogger = logger.child({ subsystem: 'adapter' });
+
+registerAdapter('openai', config => new OpenAIAdapter(config, { logger: adapterLogger.child({ provider: 'openai' }) }));
+registerAdapter('anthropic', config => new AnthropicAdapter(config, { logger: adapterLogger.child({ provider: 'anthropic' }) }));
+registerAdapter('mistral', config => new MistralAdapter(config, { logger: adapterLogger.child({ provider: 'mistral' }) }));
+registerAdapter('huggingface', config => new HuggingFaceAdapter(config, { logger: adapterLogger.child({ provider: 'huggingface' }) }));
+registerAdapter('ollama', config => new OllamaAdapter(config, { logger: adapterLogger.child({ provider: 'ollama' }) }));
+registerAdapter('gemini', config => new GeminiAdapter(config, { logger: adapterLogger.child({ provider: 'gemini' }) }));
 
 ensureNotesFile().catch(error => {
-  console.warn('Comet Page Reader: unable to refresh notes.txt', error);
+  logger.warn('Unable to refresh notes.txt.', { error });
 });
 
 const USAGE_STORAGE_KEY = 'comet:usage';
@@ -53,6 +59,15 @@ let loadingProviderId = null;
 let activeProviderId = providerConfig.provider || DEFAULT_PROVIDER;
 let routingSettings = DEFAULT_ROUTING_CONFIG;
 let llmRouter = null;
+let loggingConfigured = false;
+
+function createCorrelationId(prefix = 'bg') {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  const random = Math.random().toString(36).slice(2, 8);
+  return `${prefix}-${Date.now().toString(36)}-${random}`;
+}
 
 const PROVIDER_ADAPTER_KEYS = Object.freeze({
   openai_paid: 'openai',
@@ -113,13 +128,18 @@ function createFallbackAgentConfig() {
 }
 
 async function ensureAgentConfig() {
+  logger.debug('Ensuring agent configuration.');
   if (agentConfigSnapshot) {
+    logger.debug('Using cached agent configuration.');
     return agentConfigSnapshot;
   }
   try {
     agentConfigSnapshot = await loadAgentConfiguration();
+    logger.info('Agent configuration loaded.', {
+      providers: Object.keys(agentConfigSnapshot?.providers || {}),
+    });
   } catch (error) {
-    console.error('Failed to load agent configuration. Using defaults.', error);
+    logger.error('Failed to load agent configuration. Using defaults.', { error });
     agentConfigSnapshot = createFallbackAgentConfig();
   }
   routingSettings = agentConfigSnapshot.routing || DEFAULT_ROUTING_CONFIG;
@@ -129,12 +149,14 @@ async function ensureAgentConfig() {
 async function ensureRouter() {
   await ensureAgentConfig();
   if (!llmRouter) {
+    logger.info('Creating LLM router instance.');
     llmRouter = new LLMRouter({
       costTracker,
       agentConfig: agentConfigSnapshot,
       environment: typeof process !== 'undefined' ? process.env : {},
     });
   } else {
+    logger.debug('Refreshing existing LLM router configuration.');
     llmRouter.setAgentConfig(agentConfigSnapshot);
     if (costTracker) {
       llmRouter.setCostTracker(costTracker);
@@ -163,29 +185,42 @@ async function ensureAdapter(providerId) {
     : requestedProviderRaw
       ? resolveAlias(requestedProviderRaw)
       : null;
+  logger.debug('Ensuring provider adapter.', {
+    requestedProvider: requestedProviderRaw,
+    activeProvider: activeProviderId,
+    preferredProvider: preferredProviderId,
+  });
   if (requestedProviderRaw && requestedProviderRaw !== 'auto') {
     const preferredCandidate = resolveAlias(requestedProviderRaw) || requestedProviderRaw;
     updatePreferredProvider(preferredCandidate);
   }
 
   if (adapterInstance && (!requestedProvider || activeProviderId === requestedProvider)) {
+    logger.debug('Reusing existing adapter instance.', { activeProvider: activeProviderId });
     return adapterInstance;
   }
 
   if (adapterLoadPromise) {
+    logger.debug('Adapter load already in progress.', {
+      loadingProvider: loadingProviderId,
+      requestedProvider,
+    });
     if (loadingProviderId && (!requestedProvider || loadingProviderId === requestedProvider)) {
       return adapterLoadPromise;
     }
     await adapterLoadPromise;
     if (adapterInstance && (!requestedProvider || activeProviderId === requestedProvider)) {
+      logger.debug('Adapter instance became available after awaiting existing load.');
       return adapterInstance;
     }
   }
 
   const storedPreference = await getValue(PROVIDER_STORAGE_KEY);
   if (storedPreference === 'auto') {
-    preferredProviderId = 'auto';
-  } else if (typeof storedPreference === 'string') {
+    if (!requestedProviderRaw) {
+      preferredProviderId = 'auto';
+    }
+  } else if (typeof storedPreference === 'string' && !requestedProviderRaw) {
     updatePreferredProvider(storedPreference);
   }
   const resolvedPreference =
@@ -210,6 +245,10 @@ async function ensureAdapter(providerId) {
     ? DEFAULT_PROVIDER_ID
     : resolveAlias(baseFallbackProvider);
   const preferredProvider = overrideProvider || fallbackProvider;
+  logger.info('Loading adapter.', {
+    preferredProvider,
+    fallbackProvider,
+  });
 
   loadingProviderId = preferredProvider;
   adapterInstance = null;
@@ -219,10 +258,9 @@ async function ensureAdapter(providerId) {
     try {
       config = buildProviderConfig(agentConfigSnapshot, preferredProvider);
     } catch (error) {
-      console.error(
-        `Failed to resolve configuration for provider "${preferredProvider}". Falling back to default.`,
+      logger.error(`Failed to resolve configuration for provider "${preferredProvider}". Falling back to default.`, {
         error,
-      );
+      });
       config = getFallbackProviderConfig({ provider: preferredProvider });
     }
 
@@ -231,10 +269,9 @@ async function ensureAdapter(providerId) {
       const adapterKey = getAdapterKey(config.provider);
       adapter = createAdapter(adapterKey, config);
     } catch (error) {
-      console.error(
-        `Adapter for provider "${config.provider}" unavailable. Falling back to default.`,
+      logger.error(`Adapter for provider "${config.provider}" unavailable. Falling back to default.`, {
         error,
-      );
+      });
       config = getFallbackProviderConfig();
       const fallbackAdapterKey = getAdapterKey(config.provider);
       if (preferredProviderId === DEFAULT_PROVIDER_ID) {
@@ -252,18 +289,20 @@ async function ensureAdapter(providerId) {
     if (llmRouter) {
       llmRouter.setAgentConfig(agentConfigSnapshot);
     }
+    logger.info('Adapter initialised.', { activeProvider: activeProviderId });
     return adapter;
   })()
     .catch(error => {
       providerConfig = getFallbackProviderConfig();
       activeProviderId = providerConfig.provider || DEFAULT_PROVIDER_ID;
-      console.error('Falling back to default adapter due to unexpected error.', error);
+      logger.error('Falling back to default adapter due to unexpected error.', { error });
       const fallbackAdapterKey = getAdapterKey(activeProviderId);
       return createAdapter(fallbackAdapterKey, providerConfig);
     })
     .finally(() => {
       adapterLoadPromise = null;
       loadingProviderId = null;
+      logger.debug('Adapter load complete.');
     });
 
   adapterInstance = await adapterLoadPromise;
@@ -277,12 +316,21 @@ async function getActiveProviderId(providerId) {
 
 async function ensureInitialised(providerId) {
   const previousProvider = activeProviderId;
+  if (!loggingConfigured) {
+    await loadLoggingConfig().catch(() => {});
+    loggingConfigured = true;
+    logger.debug('Logging configuration applied in background service worker.');
+  }
   await ensureAgentConfig();
   await ensureAdapter(providerId);
   const providerChanged = previousProvider && previousProvider !== activeProviderId;
 
   if (initialised) {
     if (providerChanged) {
+      logger.info('Provider changed; clearing summary cache.', {
+        previousProvider,
+        activeProvider: activeProviderId,
+      });
       memoryCache.clear();
       await persistCache();
     }
@@ -310,8 +358,13 @@ async function ensureInitialised(providerId) {
   }
   const cachedEntries = (await getSessionValue(CACHE_STORAGE_KEY)) || {};
   memoryCache = new Map(Object.entries(cachedEntries));
+  logger.info('Initialising background state.', {
+    limitUsd,
+    cachedEntries: memoryCache.size,
+  });
   await ensureRouter();
   initialised = true;
+  logger.info('Background service worker initialised.');
 }
 
 async function setActiveProvider(providerId) {
@@ -322,8 +375,17 @@ async function setActiveProvider(providerId) {
     ? DEFAULT_PROVIDER_ID
     : resolveAlias(normalised);
   const previousProvider = activeProviderId;
+  logger.info('Setting active provider.', {
+    requested: providerId,
+    normalised,
+    desiredProvider,
+  });
   await ensureAdapter(desiredProvider);
   if (previousProvider && previousProvider !== activeProviderId) {
+    logger.info('Active provider changed; resetting cache.', {
+      previousProvider,
+      activeProvider: activeProviderId,
+    });
     memoryCache.clear();
     await persistCache();
   }
@@ -334,6 +396,7 @@ async function setActiveProvider(providerId) {
 }
 
 async function persistUsage() {
+  logger.debug('Persisting usage snapshot.');
   await withLock(USAGE_STORAGE_KEY, async () => {
     await setValue(USAGE_STORAGE_KEY, costTracker.toJSON());
   });
@@ -341,6 +404,7 @@ async function persistUsage() {
 
 async function persistCache() {
   const entries = Object.fromEntries(memoryCache.entries());
+  logger.debug('Persisting cache snapshot.', { entryCount: Object.keys(entries).length });
   await setSessionValue(CACHE_STORAGE_KEY, entries);
 }
 
@@ -386,11 +450,16 @@ async function resolveApiKey(providerId) {
 
 async function getApiKey(options = {}) {
   const providerId = await getActiveProviderId(options?.provider);
+  logger.debug('Retrieving API key.', { providerId });
   return readApiKey({ provider: providerId });
 }
 
 async function setApiKey(apiKey, options = {}) {
   const providerId = await getActiveProviderId(options?.provider);
+  logger.info('Saving API key.', {
+    providerId,
+    provided: Boolean(apiKey),
+  });
   return saveApiKey(apiKey, { provider: providerId });
 }
 
@@ -402,6 +471,7 @@ async function getApiKeyDetails(options = {}) {
     : options?.provider
       ? normaliseProviderId(options.provider, providerId)
       : providerId;
+  logger.debug('Returning API key details.', { providerId, requestedProvider });
   return { ...details, provider: providerId, requestedProvider };
 }
 
@@ -434,6 +504,12 @@ function getCostMetadata(adapter) {
 
 async function requestSummary({ url, segment, language, provider }) {
   const router = await ensureRouter();
+  logger.debug('Requesting summary from router.', {
+    url,
+    segmentId: segment.id,
+    language,
+    provider,
+  });
   const result = await router.generate({
     text: segment.text,
     language,
@@ -441,10 +517,19 @@ async function requestSummary({ url, segment, language, provider }) {
     metadata: { url, segmentId: segment.id, type: 'summary' },
   });
   await persistUsage();
+  logger.debug('Summary generated.', {
+    provider: result?.provider,
+    model: result?.model,
+  });
   return result;
 }
 
 async function transcribeAudio({ base64, filename = 'speech.webm', mimeType = 'audio/webm', provider }) {
+  logger.info('Transcription request received.', {
+    filename,
+    mimeType,
+    provider,
+  });
   const adapter = await ensureAdapter(provider);
   const costMetadata = getCostMetadata(adapter);
   const transcribeMeta = costMetadata.transcribe || {};
@@ -452,6 +537,7 @@ async function transcribeAudio({ base64, filename = 'speech.webm', mimeType = 'a
     ? transcribeMeta.flatCost
     : 0.005;
   if (!costTracker.canSpend(estimatedCost)) {
+    logger.warn('Transcription aborted due to cost limit.', { estimatedCost });
     throw new Error('Cost limit reached for transcription.');
   }
   const { apiKey, providerId } = await resolveApiKey(provider);
@@ -466,10 +552,16 @@ async function transcribeAudio({ base64, filename = 'speech.webm', mimeType = 'a
 
   costTracker.recordFlat(transcribeMeta.label || 'stt', estimatedCost, { type: transcribeMeta.label || 'stt' });
   await persistUsage();
+  logger.info('Transcription completed.', { provider: providerId, model: transcribeMeta.model });
   return result.text;
 }
 
 async function synthesiseSpeech({ text, voice = 'alloy', format = 'mp3', provider }) {
+  logger.info('Speech synthesis request received.', {
+    voice,
+    format,
+    provider,
+  });
   const adapter = await ensureAdapter(provider);
   const costMetadata = getCostMetadata(adapter);
   const synthMeta = costMetadata.synthesise || {};
@@ -477,6 +569,7 @@ async function synthesiseSpeech({ text, voice = 'alloy', format = 'mp3', provide
     ? synthMeta.flatCost
     : 0.01;
   if (!costTracker.canSpend(estimatedCost)) {
+    logger.warn('Speech synthesis aborted due to cost limit.', { estimatedCost });
     throw new Error('Cost limit reached for speech synthesis.');
   }
   const { apiKey, providerId } = await resolveApiKey(provider);
@@ -491,6 +584,10 @@ async function synthesiseSpeech({ text, voice = 'alloy', format = 'mp3', provide
 
   costTracker.recordFlat(synthMeta.label || 'tts', estimatedCost, { type: synthMeta.label || 'tts' });
   await persistUsage();
+  logger.info('Speech synthesis completed.', {
+    provider: providerId,
+    model: synthMeta.model,
+  });
   return {
     base64: toBase64(result.arrayBuffer),
     mimeType: result.mimeType || `audio/${format}`,
@@ -508,12 +605,15 @@ async function getSummary({ url, segment, language, provider }) {
   if (memoryCache.has(cacheKey)) {
     const cached = memoryCache.get(cacheKey);
     if (typeof cached === 'string') {
+      logger.debug('Summary cache hit (string).', { segmentId: segment.id });
       return cached;
     }
     if (cached && typeof cached === 'object' && typeof cached.summary === 'string') {
+      logger.debug('Summary cache hit.', { segmentId: segment.id });
       return cached.summary;
     }
   }
+  logger.debug('Summary cache miss.', { segmentId: segment.id });
   const result = await requestSummary({ url, segment, language, provider });
   const summary = typeof result?.text === 'string' ? result.text : '';
   memoryCache.set(cacheKey, {
@@ -528,33 +628,50 @@ async function getSummary({ url, segment, language, provider }) {
 
 async function handleSummariseRequest(message) {
   const { url, segments, language = 'en', provider } = message.payload;
+  logger.info('Handling summarise request.', {
+    url,
+    segmentCount: segments?.length,
+    language,
+    provider,
+  });
   await ensureInitialised(provider);
   const summaries = [];
   for (const segment of segments) {
     const summary = await getSummary({ url, segment, language, provider });
     summaries.push({ id: segment.id, summary });
   }
+  logger.info('Summarise request completed.', { count: summaries.length });
   return { summaries, usage: costTracker.toJSON() };
 }
 
 async function handleTranscriptionRequest(message) {
+  logger.info('Handling transcription request.', {
+    provider: message.payload?.provider,
+    mimeType: message.payload?.mimeType,
+  });
   await ensureInitialised(message.payload?.provider);
   const result = await transcribeAudio(message.payload);
   return { text: result, usage: costTracker.toJSON() };
 }
 
 async function handleSpeechRequest(message) {
+  logger.info('Handling speech synthesis request.', {
+    provider: message.payload?.provider,
+    voice: message.payload?.voice,
+  });
   await ensureInitialised(message.payload?.provider);
   const result = await synthesiseSpeech(message.payload);
   return { audio: result, usage: costTracker.toJSON() };
 }
 
 async function handleUsageRequest() {
+  logger.debug('Handling usage request.');
   await ensureInitialised();
   return costTracker.toJSON();
 }
 
 async function handleResetUsage() {
+  logger.info('Handling usage reset request.');
   await ensureInitialised();
   costTracker.reset();
   await persistUsage();
@@ -563,6 +680,10 @@ async function handleResetUsage() {
 
 async function handleSegmentsUpdated(message) {
   const { url, segments } = message.payload;
+  logger.debug('Handling segments updated event.', {
+    url,
+    segmentCount: segments?.length,
+  });
   const validSegmentIds = new Set((segments || []).map(segment => segment.id));
 
   for (const key of memoryCache.keys()) {
@@ -594,14 +715,30 @@ const handlers = {
 
 runtime.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || !message.type || !handlers[message.type]) {
+    logger.warn('Received unsupported message.', { messageType: message?.type });
     return false;
   }
 
+  const correlationId = createCorrelationId('bg-handler');
+  logger.debug('Received background message.', {
+    type: message.type,
+    correlationId,
+  });
   const handler = handlers[message.type];
   Promise.resolve(handler(message, sender))
-    .then(result => sendResponse({ ok: true, result }))
+    .then(result => {
+      logger.debug('Background message handled successfully.', {
+        type: message.type,
+        correlationId,
+      });
+      sendResponse({ ok: true, result });
+    })
     .catch(error => {
-      console.error('Comet background error', error);
+      logger.error('Background message handler failed.', {
+        type: message.type,
+        correlationId,
+        error,
+      });
       sendResponse({ ok: false, error: error.message });
     });
 
@@ -611,5 +748,5 @@ runtime.runtime.onMessage.addListener((message, sender, sendResponse) => {
 export { ensureInitialised, getApiKeyDetails, handleUsageRequest, setActiveProvider, setApiKey };
 
 ensureInitialised().catch(error => {
-  console.error('Failed to initialise service worker', error);
+  logger.error('Failed to initialise service worker.', { error });
 });

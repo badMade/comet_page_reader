@@ -1,7 +1,7 @@
 import { PlaceholderAdapter } from './placeholder.js';
 
 export class MistralAdapter extends PlaceholderAdapter {
-  constructor(config) {
-    super('mistral', config);
+  constructor(config, options = {}) {
+    super('mistral', config, options);
   }
 }

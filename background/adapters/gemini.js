@@ -1,3 +1,5 @@
+import createLogger from '../../utils/logger.js';
+
 const DEFAULT_GEMINI_MODEL = 'gemini-1.5-flash-latest';
 const DEFAULT_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 
@@ -62,10 +64,18 @@ export class GeminiAdapter {
     this.config = config || {};
     this.fetch = ensureFetch(options);
     this.headers = { 'Content-Type': 'application/json', ...(this.config.headers || {}) };
+    this.logger = options.logger && typeof options.logger.child === 'function'
+      ? options.logger.child({ adapter: 'gemini' })
+      : createLogger({ name: 'adapter-gemini', context: { adapter: 'gemini' } });
+    this.logger.debug('Gemini adapter initialised.', {
+      hasCustomFetch: typeof options.fetchImpl === 'function',
+      hasHeaders: Object.keys(this.config.headers || {}).length > 0,
+    });
   }
 
   getCostMetadata() {
     const model = this.config.model || DEFAULT_GEMINI_MODEL;
+    this.logger.trace('Providing Gemini cost metadata.', { model });
     return {
       summarise: { model },
       transcribe: { label: 'stt', flatCost: 0, model: null },
@@ -78,6 +88,16 @@ export class GeminiAdapter {
     const prompt = `Provide a concise, listener-friendly summary of the following webpage content. Use ${language} language.\n\n${text}`;
     let url;
     const headers = { ...this.headers };
+    const operationContext = {
+      model: modelToUse,
+      language,
+      textLength: typeof text === 'string' ? text.length : 0,
+      usingVertex: Boolean(accessToken),
+      project: accessToken ? project : undefined,
+      location: accessToken ? location : undefined,
+    };
+
+    this.logger.debug('Gemini summarise request started.', operationContext);
 
     if (accessToken) {
       headers.Authorization = `Bearer ${accessToken}`;
@@ -89,6 +109,7 @@ export class GeminiAdapter {
       });
     } else {
       if (!apiKey) {
+        this.logger.error('Gemini API key missing for AI Studio request.');
         throw new Error('Missing Gemini API key.');
       }
       url = buildAiStudioEndpoint(this.config.apiUrl, modelToUse, apiKey);
@@ -111,42 +132,59 @@ export class GeminiAdapter {
       body.generationConfig = generationConfig;
     }
 
-    const response = await this.fetch(url, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body),
-    });
+    try {
+      const response = await this.fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+      });
 
-    if (!response.ok) {
-      let message;
-      try {
-        const errorBody = await response.text();
-        message = errorBody || response.statusText;
-      } catch (error) {
-        message = response.statusText;
+      if (!response.ok) {
+        let message;
+        try {
+          const errorBody = await response.text();
+          message = errorBody || response.statusText;
+        } catch (readError) {
+          message = response.statusText;
+          this.logger.warn('Failed to read Gemini error body.', { error: readError });
+        }
+        const error = new Error(`Gemini error (${response.status} ${response.statusText}): ${message}`);
+        error.status = response.status;
+        throw error;
       }
-      const error = new Error(`Gemini error (${response.status} ${response.statusText}): ${message}`);
-      error.status = response.status;
+
+      const data = await response.json();
+      const summary = extractSummary(data);
+      const usage = normaliseUsage(data?.usageMetadata);
+
+      const result = {
+        summary,
+        model: data?.model || modelToUse,
+        promptTokens: typeof usage.promptTokens === 'number' ? usage.promptTokens : undefined,
+        completionTokens: typeof usage.completionTokens === 'number' ? usage.completionTokens : undefined,
+      };
+
+      this.logger.info('Gemini summarise request completed.', {
+        model: result.model,
+        promptTokens: result.promptTokens,
+        completionTokens: result.completionTokens,
+        usingVertex: Boolean(accessToken),
+      });
+
+      return result;
+    } catch (error) {
+      this.logger.error('Gemini summarise request failed.', { ...operationContext, error });
       throw error;
     }
-
-    const data = await response.json();
-    const summary = extractSummary(data);
-    const usage = normaliseUsage(data?.usageMetadata);
-
-    return {
-      summary,
-      model: data?.model || modelToUse,
-      promptTokens: typeof usage.promptTokens === 'number' ? usage.promptTokens : undefined,
-      completionTokens: typeof usage.completionTokens === 'number' ? usage.completionTokens : undefined,
-    };
   }
 
   async transcribe() {
+    this.logger.warn('Gemini transcription requested but not supported.');
     throw new Error('Gemini transcription is not supported.');
   }
 
   async synthesise() {
+    this.logger.warn('Gemini speech synthesis requested but not supported.');
     throw new Error('Gemini speech synthesis is not supported.');
   }
 }

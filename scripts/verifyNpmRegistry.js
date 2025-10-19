@@ -5,6 +5,11 @@ import { URL } from 'node:url';
 import { HttpProxyAgent } from 'http-proxy-agent';
 import { HttpsProxyAgent } from 'https-proxy-agent';
 
+import createLogger, { loadLoggingConfig, setGlobalContext } from '../utils/logger.js';
+
+const logger = createLogger({ name: 'verify-npm-registry' });
+setGlobalContext({ script: 'verify-npm-registry' });
+
 function parseArguments(rawArgs) {
   let registry = process.env.NPM_REGISTRY_URL ?? 'https://registry.npmjs.org/';
   let resource = 'xmlchars/';
@@ -85,11 +90,17 @@ function verify(target, timeout, agent) {
   const transport = selectTransport(target.protocol);
 
   return new Promise((resolve, reject) => {
+    logger.debug('Initiating registry verification request.', {
+      target: target.href,
+      timeout,
+      usingProxy: Boolean(agent),
+    });
     const request = transport.request(target, { agent, method: 'GET' }, (response) => {
       const { statusCode = 0, statusMessage = '' } = response;
 
       if (statusCode >= 200 && statusCode < 400) {
         response.resume();
+        logger.debug('Received successful response from registry.', { statusCode, statusMessage });
         resolve({ statusCode, statusMessage });
         return;
       }
@@ -101,15 +112,23 @@ function verify(target, timeout, agent) {
 
       response.on('end', () => {
         const body = Buffer.concat(chunks).toString('utf8');
+        logger.warn('Unexpected response while verifying registry.', {
+          statusCode,
+          statusMessage,
+          body,
+          target: target.href,
+        });
         reject(new Error(`Unexpected response ${statusCode} ${statusMessage} from ${target.href}. Body: ${body}`));
       });
     });
 
     request.on('error', (error) => {
+      logger.error('Network error while verifying registry.', { error, target: target.href });
       reject(new Error(`Network error while contacting ${target.href}: ${error.message}`));
     });
 
     request.setTimeout(timeout, () => {
+      logger.warn('Registry verification request timed out.', { timeout, target: target.href });
       request.destroy(new Error(`Timed out after ${timeout}ms while contacting ${target.href}`));
     });
 
@@ -119,9 +138,15 @@ function verify(target, timeout, agent) {
 
 async function main() {
   try {
+    await loadLoggingConfig().catch(() => {});
     const { registry, resource, timeout } = parseArguments(process.argv.slice(2));
     const target = resolveTarget(registry, resource);
     const agent = selectAgent(target);
+    logger.info('Verifying npm registry reachability.', {
+      registry: target.href,
+      timeout,
+      usingProxy: Boolean(agent),
+    });
     const { statusCode, statusMessage } = await verify(target, timeout, agent);
 
     const resultMessage = [`Successfully reached ${target.href}`];
@@ -130,9 +155,13 @@ async function main() {
       resultMessage.push(`(${statusMessage})`);
     }
 
-    console.log(`${resultMessage.join(' ')}.`);
+    await logger.info(resultMessage.join(' ') + '.', {
+      registry: target.href,
+      statusCode,
+      statusMessage,
+    });
   } catch (error) {
-    console.error(error.message);
+    await logger.error('Registry verification failed.', { error });
     process.exitCode = 1;
   }
 }

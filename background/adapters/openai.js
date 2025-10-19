@@ -1,3 +1,5 @@
+import createLogger from '../../utils/logger.js';
+
 const DEFAULT_TRANSCRIPTION_MODEL = 'gpt-4o-mini-transcribe';
 const DEFAULT_TTS_MODEL = 'gpt-4o-mini-tts';
 
@@ -14,6 +16,9 @@ function base64ToUint8Array(base64) {
 export class OpenAIAdapter {
   constructor(config, options = {}) {
     this.config = config;
+    this.logger = options.logger && typeof options.logger.child === 'function'
+      ? options.logger.child({ adapter: 'openai' })
+      : createLogger({ name: 'adapter-openai', context: { adapter: 'openai' } });
     this.fetch = (...args) => {
       if (options.fetchImpl) {
         return options.fetchImpl(...args);
@@ -26,6 +31,12 @@ export class OpenAIAdapter {
     this.chatUrl = config.apiUrl || 'https://api.openai.com/v1/chat/completions';
     this.transcriptionUrl = config.transcriptionUrl || 'https://api.openai.com/v1/audio/transcriptions';
     this.ttsUrl = config.ttsUrl || 'https://api.openai.com/v1/audio/speech';
+    this.logger.debug('OpenAI adapter initialised.', {
+      hasCustomFetch: typeof options.fetchImpl === 'function',
+      chatUrl: this.chatUrl,
+      transcriptionUrl: this.transcriptionUrl,
+      ttsUrl: this.ttsUrl,
+    });
   }
 
   getCostMetadata() {
@@ -48,6 +59,7 @@ export class OpenAIAdapter {
 
   ensureKey(apiKey) {
     if (!apiKey) {
+      this.logger.error('Missing API key for request.');
       throw new Error('Missing OpenAI API key.');
     }
   }
@@ -65,96 +77,145 @@ export class OpenAIAdapter {
     this.ensureKey(apiKey);
     const modelToUse = model || this.config.model || 'gpt-4o-mini';
     const prompt = `Provide a concise, listener-friendly summary of the following webpage content. Use ${language} language.\n\n${text}`;
+    const operationContext = {
+      model: modelToUse,
+      language,
+      textLength: typeof text === 'string' ? text.length : 0,
+    };
 
-    const response = await this.fetch(this.chatUrl, {
-      method: 'POST',
-      headers: this.buildHeaders(apiKey),
-      body: JSON.stringify({
-        model: modelToUse,
-        temperature: typeof this.config.temperature === 'number' ? this.config.temperature : 0.3,
-        messages: [
-          { role: 'system', content: 'You are a helpful assistant that creates short spoken summaries.' },
-          { role: 'user', content: prompt },
-        ],
-      }),
-    });
+    this.logger.debug('Summarise request started.', operationContext);
 
-    if (!response.ok) {
-      const message = await response.text();
-      const error = new Error(`OpenAI error (${response.status}): ${message}`);
-      error.status = response.status;
+    try {
+      const response = await this.fetch(this.chatUrl, {
+        method: 'POST',
+        headers: this.buildHeaders(apiKey),
+        body: JSON.stringify({
+          model: modelToUse,
+          temperature: typeof this.config.temperature === 'number' ? this.config.temperature : 0.3,
+          messages: [
+            { role: 'system', content: 'You are a helpful assistant that creates short spoken summaries.' },
+            { role: 'user', content: prompt },
+          ],
+        }),
+      });
+
+      if (!response.ok) {
+        const message = await response.text();
+        const error = new Error(`OpenAI error (${response.status}): ${message}`);
+        error.status = response.status;
+        throw error;
+      }
+
+      const data = await response.json();
+      const choice = data.choices && data.choices[0];
+      const summary = choice && choice.message && typeof choice.message.content === 'string'
+        ? choice.message.content.trim()
+        : '';
+
+      const result = {
+        summary,
+        model: data.model || modelToUse,
+        promptTokens: data.usage?.prompt_tokens,
+        completionTokens: data.usage?.completion_tokens,
+      };
+
+      this.logger.info('Summarise request completed.', {
+        model: result.model,
+        promptTokens: result.promptTokens,
+        completionTokens: result.completionTokens,
+      });
+
+      return result;
+    } catch (error) {
+      this.logger.error('Summarise request failed.', { ...operationContext, error });
       throw error;
     }
-
-    const data = await response.json();
-    const choice = data.choices && data.choices[0];
-    const summary = choice && choice.message && typeof choice.message.content === 'string'
-      ? choice.message.content.trim()
-      : '';
-
-    return {
-      summary,
-      model: data.model || modelToUse,
-      promptTokens: data.usage?.prompt_tokens,
-      completionTokens: data.usage?.completion_tokens,
-    };
   }
 
   async transcribe({ apiKey, base64, filename = 'speech.webm', mimeType = 'audio/webm', model = DEFAULT_TRANSCRIPTION_MODEL }) {
     this.ensureKey(apiKey);
-    const formData = new FormData();
-    const bytes = base64ToUint8Array(base64);
-    const blob = new Blob([bytes], { type: mimeType });
-    formData.append('file', blob, filename);
-    formData.append('model', model);
+    const operationContext = {
+      model,
+      filename,
+      mimeType,
+      payloadBytes: typeof base64 === 'string' ? Math.floor((base64.length * 3) / 4) : null,
+    };
 
-    const response = await this.fetch(this.transcriptionUrl, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        ...(this.config.headers || {}),
-      },
-      body: formData,
-    });
+    this.logger.debug('Transcription request started.', operationContext);
 
-    if (!response.ok) {
-      const message = await response.text();
-      const error = new Error(`Transcription failed (${response.status}): ${message}`);
-      error.status = response.status;
+    try {
+      const formData = new FormData();
+      const bytes = base64ToUint8Array(base64);
+      const blob = new Blob([bytes], { type: mimeType });
+      formData.append('file', blob, filename);
+      formData.append('model', model);
+
+      const response = await this.fetch(this.transcriptionUrl, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          ...(this.config.headers || {}),
+        },
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const message = await response.text();
+        const error = new Error(`Transcription failed (${response.status}): ${message}`);
+        error.status = response.status;
+        throw error;
+      }
+
+      const data = await response.json();
+      this.logger.info('Transcription request completed.', { model });
+      return {
+        text: data.text,
+      };
+    } catch (error) {
+      this.logger.error('Transcription request failed.', { ...operationContext, error });
       throw error;
     }
-
-    const data = await response.json();
-    return {
-      text: data.text,
-    };
   }
 
   async synthesise({ apiKey, text, voice = 'alloy', format = 'mp3', model = DEFAULT_TTS_MODEL }) {
     this.ensureKey(apiKey);
-    const response = await this.fetch(this.ttsUrl, {
-      method: 'POST',
-      headers: this.buildHeaders(apiKey),
-      body: JSON.stringify({
-        model,
-        voice,
-        input: text,
-        format,
-      }),
-    });
+    const operationContext = {
+      model,
+      voice,
+      textLength: typeof text === 'string' ? text.length : 0,
+      format,
+    };
+    this.logger.debug('Speech synthesis request started.', operationContext);
 
-    if (!response.ok) {
-      const message = await response.text();
-      const error = new Error(`Speech synthesis failed (${response.status}): ${message}`);
-      error.status = response.status;
+    try {
+      const response = await this.fetch(this.ttsUrl, {
+        method: 'POST',
+        headers: this.buildHeaders(apiKey),
+        body: JSON.stringify({
+          model,
+          voice,
+          input: text,
+          format,
+        }),
+      });
+
+      if (!response.ok) {
+        const message = await response.text();
+        const error = new Error(`Speech synthesis failed (${response.status}): ${message}`);
+        error.status = response.status;
+        throw error;
+      }
+
+      const mimeType = response.headers.get('content-type') || `audio/${format}`;
+      const arrayBuffer = await response.arrayBuffer();
+      this.logger.info('Speech synthesis request completed.', { model, mimeType });
+      return {
+        arrayBuffer,
+        mimeType,
+      };
+    } catch (error) {
+      this.logger.error('Speech synthesis request failed.', { ...operationContext, error });
       throw error;
     }
-
-    const mimeType = response.headers.get('content-type') || `audio/${format}`;
-    const arrayBuffer = await response.arrayBuffer();
-    return {
-      arrayBuffer,
-      mimeType,
-    };
   }
 }

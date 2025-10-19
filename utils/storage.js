@@ -1,3 +1,7 @@
+import createLogger from './logger.js';
+
+const logger = createLogger({ name: 'storage-utils' });
+
 /**
  * Storage abstraction helpers that normalise Chrome and Firefox runtime APIs
  * for use across the extension.
@@ -13,11 +17,14 @@
  */
 const getBrowserApi = () => {
   if (typeof chrome !== 'undefined') {
+    logger.trace('Resolved Chrome runtime API.');
     return chrome;
   }
   if (typeof browser !== 'undefined') {
+    logger.trace('Resolved Firefox runtime API.');
     return browser;
   }
+  logger.error('Runtime APIs are unavailable in this environment.');
   throw new Error('Runtime APIs are unavailable in this environment.');
 };
 
@@ -86,11 +93,14 @@ const clearRuntimeLastError = runtimeApi => {
  */
 const resolveStorageArea = runtimeApi => {
   if (runtimeApi.storage && runtimeApi.storage.sync) {
+    logger.trace('Using sync storage area.');
     return runtimeApi.storage.sync;
   }
   if (runtimeApi.storage && runtimeApi.storage.local) {
+    logger.trace('Falling back to local storage area.');
     return runtimeApi.storage.local;
   }
+  logger.error('Unable to resolve persistent storage area.');
   throw new Error('Storage APIs are unavailable.');
 };
 
@@ -125,6 +135,7 @@ const getSessionArea = () => {
  */
 const callStorageArea = (area, method, args) => {
   if (!area || typeof area[method] !== 'function') {
+    logger.error('Attempted to call unavailable storage method.', { method });
     return Promise.reject(new Error(`Storage method "${method}" is unavailable.`));
   }
 
@@ -147,6 +158,11 @@ const callStorageArea = (area, method, args) => {
 
     try {
       const runtimeApi = getRuntime();
+      logger.trace('Invoking storage method.', {
+        method,
+        argumentCount: args.length,
+        hasRuntime: Boolean(runtimeApi),
+      });
       const callback = result => {
         if (settled) {
           return;
@@ -156,6 +172,7 @@ const callStorageArea = (area, method, args) => {
         if (err) {
           const storageError = new Error(err.message || 'Unknown storage error');
           storageError.isRuntimeError = true;
+          logger.warn('Storage API reported runtime error.', { method, error: storageError });
           rejectOnce(storageError);
           return;
         }
@@ -167,6 +184,7 @@ const callStorageArea = (area, method, args) => {
         maybePromise
           .then(result => {
             clearRuntimeLastError(runtimeApi);
+            logger.trace('Storage method resolved via promise.', { method });
             resolveOnce(result);
           })
           .catch(error => {
@@ -174,10 +192,12 @@ const callStorageArea = (area, method, args) => {
             if (!storageError.isRuntimeError) {
               storageError.isRuntimeError = true;
             }
+            logger.warn('Storage promise rejected.', { method, error: storageError });
             rejectOnce(storageError);
           });
       }
     } catch (error) {
+      logger.error('Storage method threw synchronously.', { method, error });
       rejectOnce(error);
     }
   });
@@ -186,13 +206,17 @@ const callStorageArea = (area, method, args) => {
 const promisify = async (method, ...args) => {
   const primaryArea = getPersistentStorageArea();
   try {
-    return await callStorageArea(primaryArea, method, args);
+    const result = await callStorageArea(primaryArea, method, args);
+    logger.trace('Primary storage area responded.', { method });
+    return result;
   } catch (error) {
     const fallbackStorageArea = getFallbackStorageArea();
     if (error && error.isRuntimeError && fallbackStorageArea) {
       clearRuntimeLastError();
+      logger.warn('Falling back to secondary storage area.', { method });
       return callStorageArea(fallbackStorageArea, method, args);
     }
+    logger.error('Persistent storage operation failed.', { method, error });
     throw error;
   }
 };
@@ -203,15 +227,22 @@ const setValuesWithFallback = async entries => {
   }
 
   const primaryArea = getPersistentStorageArea();
+  logger.debug('Persisting multiple storage values.', {
+    keys: Object.keys(entries),
+    entryCount: Object.keys(entries).length,
+  });
   try {
     await callStorageArea(primaryArea, 'set', [entries]);
+    logger.trace('Primary storage set succeeded.', { keys: Object.keys(entries) });
   } catch (error) {
     const fallbackStorageArea = getFallbackStorageArea();
     if (error && error.isRuntimeError && fallbackStorageArea) {
       clearRuntimeLastError();
+      logger.warn('Primary storage set failed, using fallback.', { error, keys: Object.keys(entries) });
       await callStorageArea(fallbackStorageArea, 'set', [entries]);
       return;
     }
+    logger.error('Failed to persist storage values.', { error, keys: Object.keys(entries) });
     throw error;
   }
 };
@@ -249,12 +280,15 @@ const promisifySession = (fn, ...args) => {
           clearRuntimeLastError(runtimeApi);
         }
         if (err) {
-          reject(new Error(err.message || 'Unknown storage error'));
+          const error = new Error(err.message || 'Unknown storage error');
+          logger.warn('Session storage reported error.', { error });
+          reject(error);
           return;
         }
         resolve(result);
       });
     } catch (error) {
+      logger.error('Session storage call failed.', { error });
       reject(error);
     }
   });
@@ -268,10 +302,13 @@ const promisifySession = (fn, ...args) => {
  * @returns {Promise<*>} Stored value or default.
  */
 export async function getValue(key, defaultValue = undefined) {
+  logger.trace('Reading persistent storage key.', { key });
   const data = await promisify('get', key);
   if (data && Object.prototype.hasOwnProperty.call(data, key)) {
+    logger.debug('Persistent storage hit.', { key });
     return data[key];
   }
+  logger.debug('Persistent storage miss.', { key });
   return defaultValue;
 }
 
@@ -283,11 +320,13 @@ export async function getValue(key, defaultValue = undefined) {
  * @returns {Promise<*>} Stored value.
  */
 export async function setPersistentValues(entries) {
+  logger.debug('Setting persistent storage values.', { keys: Object.keys(entries) });
   await setValuesWithFallback(entries);
   return entries;
 }
 
 export async function setPersistentValue(key, value) {
+  logger.debug('Setting persistent storage value.', { key, hasValue: typeof value !== 'undefined' });
   await setValuesWithFallback({ [key]: value });
   return value;
 }
@@ -307,6 +346,7 @@ export async function setValue(key, value) {
  * @returns {Promise<void>} Resolves once the key is removed.
  */
 export async function removeValue(key) {
+  logger.debug('Removing persistent storage key.', { key });
   await promisify('remove', key);
 }
 
@@ -338,33 +378,42 @@ export async function withLock(key, fn) {
 
   let attempt = 0;
   while (attempt < maxAttempts) {
+    logger.trace('Attempting to acquire storage lock.', { key, attempt });
     const current = await getValue(lockKey);
     const timestamp = resolveTimestamp(current);
 
     if (timestamp !== null && Date.now() - timestamp > LOCK_STALE_THRESHOLD_MS) {
+      logger.warn('Detected stale storage lock.', { key, timestamp });
       await removeValue(lockKey);
       continue;
     }
 
     if (timestamp === null && current) {
+      logger.warn('Removing invalid storage lock payload.', { key });
       await removeValue(lockKey);
       continue;
     }
 
     if (!current) {
+      logger.debug('Acquired storage lock.', { key });
       await setValue(lockKey, { timestamp: Date.now() });
       try {
-        return await fn();
+        const result = await fn();
+        logger.trace('Storage lock function completed.', { key });
+        return result;
       } finally {
+        logger.debug('Releasing storage lock.', { key });
         await removeValue(lockKey);
       }
     }
 
     attempt += 1;
     if (attempt < maxAttempts) {
+      logger.trace('Retrying storage lock acquisition.', { key, attempt });
       await delay(50 * attempt);
     }
   }
+  logger.error('Failed to acquire storage lock.', { key });
   throw new Error('Failed to acquire storage lock.');
 }
 
@@ -384,12 +433,15 @@ export async function getSessionValue(key, defaultValue = undefined) {
     }
   })();
   if (!sessionStore) {
+    logger.trace('Session storage unavailable when reading key.', { key });
     return defaultValue;
   }
   const data = await promisifySession(sessionStore.get, key);
   if (data && Object.prototype.hasOwnProperty.call(data, key)) {
+    logger.debug('Session storage hit.', { key });
     return data[key];
   }
+  logger.debug('Session storage miss.', { key });
   return defaultValue;
 }
 
@@ -409,8 +461,10 @@ export async function setSessionValue(key, value) {
     }
   })();
   if (!sessionStore) {
+    logger.trace('Session storage unavailable when setting key.', { key });
     return value;
   }
+  logger.debug('Setting session storage value.', { key, hasValue: typeof value !== 'undefined' });
   await promisifySession(sessionStore.set, { [key]: value });
   return value;
 }
