@@ -16,8 +16,17 @@
       <section aria-labelledby="api-section">
         <h2 id="api-section">API setup</h2>
         <form id="api-form">
-          <label for="apiKey">OpenAI API key</label>
-          <input id="apiKey" name="apiKey" type="password" autocomplete="off" required />
+          <label id="providerLabel" for="providerSelect">LLM provider</label>
+          <select id="providerSelect" name="provider" aria-required="true"></select>
+          <label id="apiKeyLabel" for="apiKey">LLM API key</label>
+          <input
+            id="apiKey"
+            name="apiKey"
+            type="password"
+            autocomplete="off"
+            aria-required="true"
+            required
+          />
           <button type="submit" class="primary">Save key</button>
           <p id="apiKeyMeta" class="field-hint" data-state="empty" aria-live="polite">
             No API key saved.
@@ -76,8 +85,8 @@
       <section aria-labelledby="disclaimer-section" class="disclaimer">
         <h2 id="disclaimer-section">Disclaimer</h2>
         <p>
-          Content is processed via OpenAI APIs. Review the privacy notice before using in
-          sensitive contexts.
+          Content is processed via your configured AI provider. Review the privacy notice before
+          using in sensitive contexts.
         </p>
       </section>
     </main>

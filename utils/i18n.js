@@ -10,7 +10,8 @@
  */
 const MESSAGES = {
   en: {
-    apiKeyLabel: 'OpenAI API key',
+    apiKeyLabel: 'LLM API key',
+    providerLabel: 'LLM provider',
     save: 'Save',
     summarise: 'Summarise page',
     readAloud: 'Read aloud',
@@ -21,10 +22,11 @@ const MESSAGES = {
     resetUsage: 'Reset usage',
     costLimitReached: 'Cost limit reached. Try again after resetting usage.',
     disclaimer:
-      'Content is processed via OpenAI APIs. Review the privacy notice before using in sensitive contexts.',
+      'Content is processed via your configured AI provider. Review the privacy notice before using in sensitive contexts.',
   },
   es: {
-    apiKeyLabel: 'Clave de API de OpenAI',
+    apiKeyLabel: 'Clave de API de LLM',
+    providerLabel: 'Proveedor de LLM',
     save: 'Guardar',
     summarise: 'Resumir página',
     readAloud: 'Leer en voz alta',
@@ -35,7 +37,7 @@ const MESSAGES = {
     resetUsage: 'Restablecer uso',
     costLimitReached: 'Se alcanzó el límite de coste. Restablece el uso para continuar.',
     disclaimer:
-      'El contenido se procesa mediante las API de OpenAI. Consulta el aviso de privacidad antes de usarlo en contextos sensibles.',
+      'El contenido se procesa mediante el proveedor de IA configurado. Consulta el aviso de privacidad antes de usarlo en contextos sensibles.',
   },
 };
 

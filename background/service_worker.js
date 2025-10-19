@@ -2,6 +2,12 @@ import { createCostTracker, DEFAULT_LIMIT_USD } from '../utils/cost.js';
 import { DEFAULT_PROVIDER, fetchApiKeyDetails, readApiKey, saveApiKey } from '../utils/apiKeyStore.js';
 import { getValue, setValue, withLock, getSessionValue, setSessionValue, runtime } from '../utils/storage.js';
 import { getFallbackProviderConfig, loadProviderConfig } from '../utils/providerConfig.js';
+import {
+  DEFAULT_PROVIDER_ID,
+  getProviderDisplayName,
+  normaliseProviderId,
+  providerRequiresApiKey,
+} from '../utils/providers.js';
 import { registerAdapter, createAdapter } from './adapters/registry.js';
 import { OpenAIAdapter } from './adapters/openai.js';
 import { AnthropicAdapter } from './adapters/anthropic.js';
@@ -17,6 +23,7 @@ registerAdapter('ollama', config => new OllamaAdapter(config));
 
 const USAGE_STORAGE_KEY = 'comet:usage';
 const CACHE_STORAGE_KEY = 'comet:cache';
+const PROVIDER_STORAGE_KEY = 'comet:activeProvider';
 
 let costTracker;
 let memoryCache = new Map();
@@ -24,68 +31,103 @@ let initialised = false;
 let providerConfig = getFallbackProviderConfig();
 let adapterInstance = null;
 let adapterLoadPromise = null;
-
-function capitalise(value) {
-  if (!value) {
-    return '';
-  }
-  return value.charAt(0).toUpperCase() + value.slice(1);
-}
+let loadingProviderId = null;
+let activeProviderId = providerConfig.provider || DEFAULT_PROVIDER;
 
 function getCacheKey(url, segmentId) {
   return `${url}::${segmentId}`;
 }
 
-async function ensureAdapter() {
-  if (adapterInstance) {
+async function ensureAdapter(providerId) {
+  const requestedProvider = providerId
+    ? normaliseProviderId(providerId, DEFAULT_PROVIDER_ID)
+    : null;
+
+  if (adapterInstance && (!requestedProvider || activeProviderId === requestedProvider)) {
     return adapterInstance;
   }
-  if (!adapterLoadPromise) {
-    adapterLoadPromise = (async () => {
-      let config;
-      try {
-        config = await loadProviderConfig();
-      } catch (error) {
-        console.error('Failed to load agent.yaml, defaulting to OpenAI', error);
-        config = getFallbackProviderConfig();
-      }
 
-      let adapter;
-      try {
-        adapter = createAdapter(config.provider, config);
-      } catch (error) {
-        console.error(`Adapter for provider \"${config.provider}\" unavailable. Falling back to OpenAI.`, error);
-        config = getFallbackProviderConfig();
-        adapter = createAdapter(config.provider, config);
-      }
-
-      providerConfig = config;
-      return adapter;
-    })()
-      .catch(error => {
-        providerConfig = getFallbackProviderConfig();
-        console.error('Falling back to default adapter due to unexpected error.', error);
-        return createAdapter(providerConfig.provider, providerConfig);
-      })
-      .finally(() => {
-        adapterLoadPromise = null;
-      });
+  if (adapterLoadPromise) {
+    if (loadingProviderId && (!requestedProvider || loadingProviderId === requestedProvider)) {
+      return adapterLoadPromise;
+    }
+    await adapterLoadPromise;
+    if (adapterInstance && (!requestedProvider || activeProviderId === requestedProvider)) {
+      return adapterInstance;
+    }
   }
+
+  const storedPreference = await getValue(PROVIDER_STORAGE_KEY);
+  const preferredProvider = normaliseProviderId(
+    requestedProvider || activeProviderId || storedPreference || providerConfig?.provider,
+    DEFAULT_PROVIDER_ID,
+  );
+
+  loadingProviderId = preferredProvider;
+  adapterInstance = null;
+
+  adapterLoadPromise = (async () => {
+    let config;
+    try {
+      config = await loadProviderConfig({ provider: preferredProvider });
+    } catch (error) {
+      console.error(
+        `Failed to load agent.yaml for provider "${preferredProvider}". Falling back to default.`,
+        error,
+      );
+      config = getFallbackProviderConfig();
+    }
+
+    let adapter;
+    try {
+      adapter = createAdapter(config.provider, config);
+    } catch (error) {
+      console.error(
+        `Adapter for provider "${config.provider}" unavailable. Falling back to default.`,
+        error,
+      );
+      config = getFallbackProviderConfig();
+      adapter = createAdapter(config.provider, config);
+    }
+
+    providerConfig = config;
+    activeProviderId = config.provider || DEFAULT_PROVIDER_ID;
+    await setValue(PROVIDER_STORAGE_KEY, activeProviderId);
+    return adapter;
+  })()
+    .catch(error => {
+      providerConfig = getFallbackProviderConfig();
+      activeProviderId = providerConfig.provider || DEFAULT_PROVIDER_ID;
+      console.error('Falling back to default adapter due to unexpected error.', error);
+      return createAdapter(activeProviderId, providerConfig);
+    })
+    .finally(() => {
+      adapterLoadPromise = null;
+      loadingProviderId = null;
+    });
 
   adapterInstance = await adapterLoadPromise;
   return adapterInstance;
 }
 
-async function getActiveProviderId() {
-  await ensureAdapter();
-  return providerConfig?.provider || DEFAULT_PROVIDER;
+async function getActiveProviderId(providerId) {
+  await ensureAdapter(providerId);
+  return activeProviderId || DEFAULT_PROVIDER;
 }
 
-async function ensureInitialised() {
+async function ensureInitialised(providerId) {
+  const previousProvider = activeProviderId;
+  await ensureAdapter(providerId);
+  const providerChanged = previousProvider && previousProvider !== activeProviderId;
+
   if (initialised) {
+    if (providerChanged) {
+      memoryCache.clear();
+      await persistCache();
+    }
     return;
   }
-  await ensureAdapter();
+
   const storedUsage = await getValue(USAGE_STORAGE_KEY);
   let limitUsd = DEFAULT_LIMIT_USD;
   let usage;
@@ -104,6 +146,20 @@ async function ensureInitialised() {
   initialised = true;
 }
 
+async function setActiveProvider(providerId) {
+  const desiredProvider = normaliseProviderId(providerId, activeProviderId || DEFAULT_PROVIDER_ID);
+  const previousProvider = activeProviderId;
+  await ensureAdapter(desiredProvider);
+  if (previousProvider && previousProvider !== activeProviderId) {
+    memoryCache.clear();
+    await persistCache();
+  }
+  return {
+    provider: activeProviderId,
+    requiresApiKey: providerRequiresApiKey(activeProviderId),
+  };
+}
+
 async function persistUsage() {
   await withLock(USAGE_STORAGE_KEY, async () => {
     await setValue(USAGE_STORAGE_KEY, costTracker.toJSON());
@@ -115,38 +171,41 @@ async function persistCache() {
   await setSessionValue(CACHE_STORAGE_KEY, entries);
 }
 
-async function resolveApiKey() {
-  const providerId = await getActiveProviderId();
-  const storedKey = await readApiKey({ provider: providerId });
+async function resolveApiKey(providerId) {
+  const activeProvider = await getActiveProviderId(providerId);
+  const storedKey = await readApiKey({ provider: activeProvider });
   if (storedKey) {
-    return storedKey;
+    return { apiKey: storedKey, providerId: activeProvider };
   }
   const envVar = providerConfig?.apiKeyEnvVar;
   if (envVar && typeof process !== 'undefined' && process.env && process.env[envVar]) {
-    return process.env[envVar];
+    return { apiKey: process.env[envVar], providerId: activeProvider };
   }
-  return null;
+  return { apiKey: null, providerId: activeProvider };
 }
 
-async function getApiKey() {
-  const providerId = await getActiveProviderId();
+async function getApiKey(options = {}) {
+  const providerId = await getActiveProviderId(options?.provider);
   return readApiKey({ provider: providerId });
 }
 
-async function setApiKey(apiKey) {
-  const providerId = await getActiveProviderId();
+async function setApiKey(apiKey, options = {}) {
+  const providerId = await getActiveProviderId(options?.provider);
   return saveApiKey(apiKey, { provider: providerId });
 }
 
-async function getApiKeyDetails() {
-  const providerId = await getActiveProviderId();
+async function getApiKeyDetails(options = {}) {
+  const providerId = await getActiveProviderId(options?.provider);
   return fetchApiKeyDetails({ provider: providerId });
 }
 
-function ensureKeyAvailable(apiKey) {
+function ensureKeyAvailable(apiKey, providerId) {
+  const effectiveProvider = providerId || providerConfig?.provider;
+  if (!providerRequiresApiKey(effectiveProvider)) {
+    return;
+  }
   if (!apiKey) {
-    const providerName = capitalise(providerConfig?.provider || '');
-    const displayName = providerName || 'Provider';
+    const displayName = getProviderDisplayName(effectiveProvider) || 'Provider';
     throw new Error(`Missing ${displayName} API key.`);
   }
 }
@@ -167,8 +226,8 @@ function getCostMetadata(adapter) {
   return adapter.getCostMetadata() || {};
 }
 
-async function requestSummary({ url, segment, language }) {
-  const adapter = await ensureAdapter();
+async function requestSummary({ url, segment, language, provider }) {
+  const adapter = await ensureAdapter(provider);
   const costMetadata = getCostMetadata(adapter);
   const summaryMeta = costMetadata.summarise || {};
   const model = summaryMeta.model || providerConfig.model;
@@ -176,8 +235,8 @@ async function requestSummary({ url, segment, language }) {
   if (!costTracker.canSpend(estimatedCost)) {
     throw new Error('Cost limit reached for summaries.');
   }
-  const apiKey = await resolveApiKey();
-  ensureKeyAvailable(apiKey);
+  const { apiKey, providerId } = await resolveApiKey(provider);
+  ensureKeyAvailable(apiKey, providerId);
   const result = await adapter.summarise({
     apiKey,
     text: segment.text,
@@ -205,8 +264,8 @@ async function requestSummary({ url, segment, language }) {
   return summary;
 }
 
-async function transcribeAudio({ base64, filename = 'speech.webm', mimeType = 'audio/webm' }) {
-  const adapter = await ensureAdapter();
+async function transcribeAudio({ base64, filename = 'speech.webm', mimeType = 'audio/webm', provider }) {
+  const adapter = await ensureAdapter(provider);
   const costMetadata = getCostMetadata(adapter);
   const transcribeMeta = costMetadata.transcribe || {};
   const estimatedCost = typeof transcribeMeta.flatCost === 'number' && transcribeMeta.flatCost > 0
@@ -215,8 +274,8 @@ async function transcribeAudio({ base64, filename = 'speech.webm', mimeType = 'a
   if (!costTracker.canSpend(estimatedCost)) {
     throw new Error('Cost limit reached for transcription.');
   }
-  const apiKey = await resolveApiKey();
-  ensureKeyAvailable(apiKey);
+  const { apiKey, providerId } = await resolveApiKey(provider);
+  ensureKeyAvailable(apiKey, providerId);
   const result = await adapter.transcribe({
     apiKey,
     base64,
@@ -230,8 +289,8 @@ async function transcribeAudio({ base64, filename = 'speech.webm', mimeType = 'a
   return result.text;
 }
 
-async function synthesiseSpeech({ text, voice = 'alloy', format = 'mp3' }) {
-  const adapter = await ensureAdapter();
+async function synthesiseSpeech({ text, voice = 'alloy', format = 'mp3', provider }) {
+  const adapter = await ensureAdapter(provider);
   const costMetadata = getCostMetadata(adapter);
   const synthMeta = costMetadata.synthesise || {};
   const estimatedCost = typeof synthMeta.flatCost === 'number' && synthMeta.flatCost > 0
@@ -240,8 +299,8 @@ async function synthesiseSpeech({ text, voice = 'alloy', format = 'mp3' }) {
   if (!costTracker.canSpend(estimatedCost)) {
     throw new Error('Cost limit reached for speech synthesis.');
   }
-  const apiKey = await resolveApiKey();
-  ensureKeyAvailable(apiKey);
+  const { apiKey, providerId } = await resolveApiKey(provider);
+  ensureKeyAvailable(apiKey, providerId);
   const result = await adapter.synthesise({
     apiKey,
     text,
@@ -258,36 +317,36 @@ async function synthesiseSpeech({ text, voice = 'alloy', format = 'mp3' }) {
   };
 }
 
-async function getSummary({ url, segment, language }) {
+async function getSummary({ url, segment, language, provider }) {
   const cacheKey = getCacheKey(url, segment.id);
   if (memoryCache.has(cacheKey)) {
     return memoryCache.get(cacheKey);
   }
-  const summary = await requestSummary({ url, segment, language });
+  const summary = await requestSummary({ url, segment, language, provider });
   memoryCache.set(cacheKey, summary);
   await persistCache();
   return summary;
 }
 
 async function handleSummariseRequest(message) {
-  const { url, segments, language = 'en' } = message.payload;
-  await ensureInitialised();
+  const { url, segments, language = 'en', provider } = message.payload;
+  await ensureInitialised(provider);
   const summaries = [];
   for (const segment of segments) {
-    const summary = await getSummary({ url, segment, language });
+    const summary = await getSummary({ url, segment, language, provider });
     summaries.push({ id: segment.id, summary });
   }
   return { summaries, usage: costTracker.toJSON() };
 }
 
 async function handleTranscriptionRequest(message) {
-  await ensureInitialised();
+  await ensureInitialised(message.payload?.provider);
   const result = await transcribeAudio(message.payload);
   return { text: result, usage: costTracker.toJSON() };
 }
 
 async function handleSpeechRequest(message) {
-  await ensureInitialised();
+  await ensureInitialised(message.payload?.provider);
   const result = await synthesiseSpeech(message.payload);
   return { audio: result, usage: costTracker.toJSON() };
 }
@@ -319,9 +378,10 @@ async function handleSegmentsUpdated(message) {
 }
 
 const handlers = {
-  'comet:setApiKey': ({ payload }) => setApiKey(payload.apiKey),
-  'comet:getApiKey': () => getApiKey(),
-  'comet:getApiKeyDetails': () => getApiKeyDetails(),
+  'comet:setApiKey': ({ payload }) => setApiKey(payload.apiKey, { provider: payload?.provider }),
+  'comet:getApiKey': ({ payload }) => getApiKey({ provider: payload?.provider }),
+  'comet:getApiKeyDetails': ({ payload }) => getApiKeyDetails({ provider: payload?.provider }),
+  'comet:setProvider': ({ payload }) => setActiveProvider(payload?.provider),
   'comet:summarise': handleSummariseRequest,
   'comet:transcribe': handleTranscriptionRequest,
   'comet:synthesise': handleSpeechRequest,
