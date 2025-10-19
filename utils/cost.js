@@ -19,6 +19,12 @@ const MODEL_PRICING = {
   'gpt-4o-mini': { prompt: 0.00015, completion: 0.0006 },
   'gpt-4o-realtime-preview': { prompt: 0.0005, completion: 0.0015 },
   'gpt-4o-audio-preview': { prompt: 0.00025, completion: 0.001 },
+  'gemini-pro': { prompt: 0.0005, completion: 0.0015 },
+  'gemini-1.0-pro': { prompt: 0.0005, completion: 0.0015 },
+  'gemini-1.5-pro': { prompt: 0.0035, completion: 0.0105 },
+  'gemini-1.5-pro-latest': { prompt: 0.0035, completion: 0.0105 },
+  'gemini-1.5-flash': { prompt: 0.00035, completion: 0.00105 },
+  'gemini-1.5-flash-latest': { prompt: 0.00035, completion: 0.00105 },
   stt: { prompt: 0.0002, completion: 0 },
   tts: { prompt: 0.0004, completion: 0 },
 };

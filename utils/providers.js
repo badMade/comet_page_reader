@@ -5,6 +5,7 @@ const PROVIDERS = Object.freeze([
   Object.freeze({ id: 'anthropic', label: 'Anthropic', requiresApiKey: true }),
   Object.freeze({ id: 'mistral', label: 'Mistral', requiresApiKey: true }),
   Object.freeze({ id: 'huggingface', label: 'Hugging Face', requiresApiKey: true }),
+  Object.freeze({ id: 'gemini', label: 'Google Gemini', requiresApiKey: true }),
   Object.freeze({ id: 'ollama', label: 'Ollama (local)', requiresApiKey: false }),
 ]);
 
