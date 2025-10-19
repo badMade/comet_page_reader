@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import { installChromeStub, importServiceWorker } from './fixtures/chrome-stub.js';
 import { registerAdapter } from '../background/adapters/registry.js';
+import { DEFAULT_PROVIDER_ID } from '../utils/providers.js';
 import { __setAgentYamlOverrideForTests, __clearAgentYamlOverrideForTests } from '../utils/providerConfig.js';
 
 test('summaries are cached per language for the same segment', async () => {

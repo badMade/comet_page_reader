@@ -450,7 +450,14 @@ runtime.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 
-export { ensureInitialised, getApiKeyDetails, handleUsageRequest, setApiKey };
+export {
+  ensureInitialised,
+  getApiKeyDetails,
+  getCacheKey,
+  handleUsageRequest,
+  parseCacheKey,
+  setApiKey,
+};
 
 ensureInitialised().catch(error => {
   console.error('Failed to initialise service worker', error);
