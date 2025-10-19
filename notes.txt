@@ -1,0 +1,36 @@
+# Comet Page Reader Notes
+
+## Purpose of the Program
+- Provides a browser extension that extracts readable sections from any webpage, summarises the content with AI providers, and plays the results aloud for accessibility.
+- Centralises API usage inside the background service worker so keys and billing controls stay private and enforceable.
+
+## Installation Instructions
+- Install Node.js 20+ and npm for running automated checks.
+- Load the extension as an unpacked WebExtension:
+  - **Chromium browsers:** Enable Developer Mode in chrome://extensions, choose Load unpacked, and select this repository.
+  - **Firefox:** Visit about:debugging#/runtime/this-firefox, choose Load Temporary Add-on, and select manifest.json.
+- Optional: run npm install to fetch dev dependencies for the Node-based tests.
+
+## How to Use It
+1. Open the Comet Page Reader popup from the browser toolbar.
+2. Enter your API key and press Save key to store it in background storage.
+3. Pick a language and voice profile, then choose an action:
+   - Summarise page: Generates summaries for each detected segment.
+   - Read aloud: Requests speech synthesis for the leading summary.
+   - Push to talk: Holds the microphone button for voice commands that map to extension actions.
+4. Review the usage panel for running cost totals and reset the meter when needed.
+5. Use the highlighted segments on the page to cross-reference generated summaries.
+
+## How It Works Internally
+- Content script (content/content.js): Extracts visible text, tracks DOM mutations, and synchronises segment metadata with the background worker.
+- Background service worker (background/service_worker.js): Manages provider selection, caches summaries, enforces spend limits, and fulfils popup requests.
+- Adapters (background/adapters/*.js): Wrap individual AI providers so the service worker can switch implementations without changing the call sites.
+- Utilities (utils/*.js): Provide cost tracking, localisation, audio helpers, DOM traversal, and secure storage abstractions for both runtime and tests.
+- Popup UI (popup/): Presents controls for API keys, language/voice preferences, and summary playback while displaying usage statistics.
+
+## Troubleshooting Tips
+- Missing API key: The popup shows an error banner; open the settings panel and re-save the key. Stored keys live only inside extension storage.
+- Exceeded spend limit: The popup usage panel indicates limit breaches. Adjust DEFAULT_LIMIT_USD in utils/cost.js or reset the usage counter.
+- Content script not responding: Reload the target tab; some browser pages block extension scripts.
+- Audio playback fails: Confirm the selected voice is available and that the browser has permission to use the speaker and microphone.
+- Debugging: Check the browser devtools consoles for the content script, popup, and background worker. Node-based tests log details to the terminal, and cached data persists via chrome.storage for easier inspection.
