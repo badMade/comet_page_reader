@@ -1,11 +1,33 @@
-let YAMLModule;
+let cachedYamlModule;
+let yamlModulePromise;
 
-if (typeof process !== 'undefined' && process.versions && process.versions.node) {
-  YAMLModule = await import('yaml');
-} else {
-  YAMLModule = await import('./vendor/yamlBrowser.js');
+function getYamlModulePromise() {
+  if (!yamlModulePromise) {
+    yamlModulePromise = (async () => {
+      if (typeof process !== 'undefined' && process.versions && process.versions.node) {
+        const module = await import('yaml');
+        return module.default || module;
+      }
+
+      const module = await import('./vendor/yamlBrowser.js');
+      return module.default || module;
+    })();
+  }
+
+  return yamlModulePromise;
 }
 
-const YAML = YAMLModule.default || YAMLModule;
+export async function loadYamlModule() {
+  if (cachedYamlModule) {
+    return cachedYamlModule;
+  }
 
-export default YAML;
+  cachedYamlModule = await getYamlModulePromise();
+  return cachedYamlModule;
+}
+
+export function __resetYamlModuleForTests() {
+  cachedYamlModule = undefined;
+  yamlModulePromise = undefined;
+}
+

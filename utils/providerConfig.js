@@ -1,4 +1,4 @@
-import YAML from './yamlLoader.js';
+import { loadYamlModule } from './yamlLoader.js';
 
 const DEFAULT_PROVIDER_CONFIG = Object.freeze({
   provider: 'openai',
@@ -111,6 +111,7 @@ async function readAgentYaml({ source, fetchImpl } = {}) {
 export async function loadProviderConfig(options = {}) {
   try {
     const yamlSource = await readAgentYaml(options);
+    const YAML = await loadYamlModule();
     const parsed = YAML.parse(yamlSource);
     return normaliseRawConfig(parsed, { provider: options.provider });
   } catch (error) {
