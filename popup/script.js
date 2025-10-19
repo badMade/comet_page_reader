@@ -12,6 +12,7 @@ const hasBrowserApi = typeof browser !== 'undefined';
 const browserApi = hasBrowserApi ? browser : undefined;
 const runtime = chrome?.runtime || browserApi?.runtime;
 const tabsApi = chrome?.tabs || browserApi?.tabs;
+const scriptingApi = chrome?.scripting || browserApi?.scripting;
 const usesBrowserPromises =
   !!browserApi && runtime === browserApi.runtime && tabsApi === browserApi.tabs;
 
@@ -298,7 +299,9 @@ function queryTabs(options) {
  * @param {Object} message - Message delivered to the content script.
  * @returns {Promise<*>} Content script response.
  */
-function sendMessageToTab(tabId, message) {
+const injectedContentTabs = new Set();
+
+function dispatchTabMessage(tabId, message) {
   if (usesBrowserPromises) {
     return tabsApi.sendMessage(tabId, message);
   }
@@ -316,6 +319,125 @@ function sendMessageToTab(tabId, message) {
       reject(error);
     }
   });
+}
+
+function shouldRetryWithInjection(error) {
+  if (!error || typeof error.message !== 'string') {
+    return false;
+  }
+  return /Receiving end does not exist|No tab with id/i.test(error.message);
+}
+
+function isAccessDeniedError(error) {
+  if (!error || typeof error.message !== 'string') {
+    return false;
+  }
+  return /Cannot access contents of url|The extensions gallery cannot be scripted/i.test(
+    error.message
+  );
+}
+
+function executeContentScript(tabId) {
+  if (injectedContentTabs.has(tabId)) {
+    return Promise.resolve();
+  }
+
+  const markInjected = () => {
+    injectedContentTabs.add(tabId);
+  };
+
+  if (scriptingApi?.executeScript) {
+    if (usesBrowserPromises) {
+      return scriptingApi
+        .executeScript({
+          target: { tabId },
+          files: ['content/content.js'],
+        })
+        .then(markInjected);
+    }
+    return new Promise((resolve, reject) => {
+      try {
+        scriptingApi.executeScript(
+          {
+            target: { tabId },
+            files: ['content/content.js'],
+          },
+          () => {
+            const lastError = getRuntimeLastError();
+            if (lastError) {
+              reject(new Error(lastError.message));
+              return;
+            }
+            markInjected();
+            resolve();
+          }
+        );
+      } catch (error) {
+        reject(error);
+      }
+    });
+  }
+
+  if (typeof tabsApi?.executeScript === 'function') {
+    if (usesBrowserPromises) {
+      return tabsApi
+        .executeScript(tabId, {
+          file: 'content/content.js',
+        })
+        .then(markInjected);
+    }
+    return new Promise((resolve, reject) => {
+      try {
+        tabsApi.executeScript(
+          tabId,
+          {
+            file: 'content/content.js',
+          },
+          () => {
+            const lastError = getRuntimeLastError();
+            if (lastError) {
+              reject(new Error(lastError.message));
+              return;
+            }
+            markInjected();
+            resolve();
+          }
+        );
+      } catch (error) {
+        reject(error);
+      }
+    });
+  }
+
+  return Promise.reject(new Error('Content script injection is not supported in this browser.'));
+}
+
+async function sendMessageToTab(tabId, message) {
+  try {
+    return await dispatchTabMessage(tabId, message);
+  } catch (error) {
+    if (!shouldRetryWithInjection(error)) {
+      throw error;
+    }
+
+    try {
+      await executeContentScript(tabId);
+    } catch (injectionError) {
+      if (isAccessDeniedError(injectionError)) {
+        throw new Error('Comet Page Reader cannot run on this page. Try a different tab.');
+      }
+      throw injectionError;
+    }
+
+    try {
+      return await dispatchTabMessage(tabId, message);
+    } catch (retryError) {
+      if (shouldRetryWithInjection(retryError)) {
+        throw new Error('Unable to communicate with this page. Refresh and try again.');
+      }
+      throw retryError;
+    }
+  }
 }
 
 /**
@@ -743,3 +865,5 @@ document.addEventListener('DOMContentLoaded', () => {
     setStatus(error.message);
   });
 });
+
+export { sendMessageToTab };
