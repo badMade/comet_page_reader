@@ -1,69 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-const createBaseDom = () => {
-  globalThis.document = {
-    addEventListener: () => {},
-    getElementById: () => ({
-      addEventListener: () => {},
-      querySelector: () => null,
-      setAttribute: () => {},
-      textContent: '',
-      dataset: {},
-    }),
-    querySelector: () => null,
-  };
-  globalThis.window = { addEventListener: () => {} };
-  globalThis.navigator = {
-    mediaDevices: {
-      getUserMedia: async () => ({ getTracks: () => [] }),
-    },
-  };
-  globalThis.Audio = class {
-    #handlers = new Map();
-    addEventListener(name, handler) {
-      this.#handlers.set(name, handler);
-    }
-    async play() {
-      return undefined;
-    }
-    pause() {}
-  };
-};
+import { setupPopupTestEnvironment } from './fixtures/popup-environment.js';
 
-const chromeStub = {
-  runtime: {
-    lastError: null,
-    sendMessage: () => {
-      throw new Error('sendMessage stub not configured');
-    },
-  },
-  tabs: {
-    query: (_options, callback) => {
-      if (callback) {
-        callback([]);
-      }
-      return Promise.resolve([]);
-    },
-    sendMessage: () => {
-      throw new Error('sendMessage stub not configured');
-    },
-  },
-  scripting: {
-    executeScript: () => {
-      throw new Error('executeScript stub not configured');
-    },
-  },
-  storage: {
-    sync: {
-      get: (_keys, callback) => callback({}),
-      set: (_values, callback) => callback(),
-    },
-  },
-};
-
-createBaseDom();
-globalThis.chrome = chromeStub;
+const { chrome: chromeStub } = setupPopupTestEnvironment();
 
 test('popup messaging content script recovery', async t => {
   const module = await import('../popup/script.js');
