@@ -124,6 +124,23 @@ function normaliseProvider(providerId) {
   return resolveAlias(providerId);
 }
 
+function normaliseModelName(modelValue, fallback) {
+  if (typeof modelValue === 'string') {
+    const trimmed = modelValue.trim();
+    if (trimmed) {
+      const segments = trimmed.split('/').filter(Boolean);
+      if (segments.length > 0) {
+        return segments[segments.length - 1];
+      }
+      return trimmed;
+    }
+  }
+  if (typeof fallback === 'string' && fallback.trim()) {
+    return fallback.trim();
+  }
+  return fallback;
+}
+
 function getLegacyProviderId(providerId) {
   if (!providerId) {
     return null;
@@ -488,7 +505,7 @@ export class LLMRouter {
       const completionTokens = typeof response?.completionTokens === 'number'
         ? response.completionTokens
         : this.costTracker?.estimateTokensFromText(summary) || 0;
-      const modelUsed = response?.model || model;
+      const modelUsed = normaliseModelName(response?.model, model);
       const cost = await this.recordCost(modelUsed, promptTokens, completionTokens, {
         provider: resolved,
         type: metadata?.type || 'summary',

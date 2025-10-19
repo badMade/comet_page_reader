@@ -71,27 +71,31 @@ function createAdapterStubs(results = {}) {
   return {
     gemini: () => ({
       summarise: async () => {
-        if (results.gemini instanceof Error) {
-          throw results.gemini;
+        const candidate = results.gemini;
+        if (candidate instanceof Error) {
+          throw candidate;
         }
         return {
           summary: 'Gemini summary',
           promptTokens: 5,
           completionTokens: 5,
           model: 'gemini-1.5-flash',
+          ...candidate,
         };
       },
     }),
     openai: () => ({
       summarise: async () => {
-        if (results.openai instanceof Error) {
-          throw results.openai;
+        const candidate = results.openai;
+        if (candidate instanceof Error) {
+          throw candidate;
         }
         return {
           summary: 'OpenAI summary',
           promptTokens: 8,
           completionTokens: 6,
           model: 'gpt-4o-mini',
+          ...candidate,
         };
       },
     }),
@@ -199,4 +203,23 @@ test('generate skips providers that exceed per-call cost', async () => {
   const result = await router.generate({ text: 'Hello world', language: 'en' });
 
   assert.equal(result.provider, 'openai_paid');
+});
+
+test('generate normalises recorded model names for usage tracking', async () => {
+  const costTracker = createCostTracker();
+  const router = createRouter({
+    costTracker,
+    readApiKeys: { gemini_free: 'free-key' },
+    adapterResults: {
+      gemini: {
+        model: 'models/gemini-1.5-flash-latest',
+      },
+    },
+  });
+
+  const result = await router.generate({ text: 'Hello world', language: 'en' });
+
+  assert.equal(result.model, 'gemini-1.5-flash-latest');
+  assert.equal(costTracker.recorded.length, 1);
+  assert.equal(costTracker.recorded[0].model, 'gemini-1.5-flash-latest');
 });
