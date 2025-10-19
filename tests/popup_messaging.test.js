@@ -112,7 +112,7 @@ test('popup messaging content script recovery', async t => {
     module.__TESTING__.setPlaybackReady();
 
     chromeStub.tabs.query = (_options, callback) => {
-      const tabs = [{ id: 321 }];
+      const tabs = [{ id: 321, url: 'https://example.test/page' }];
       if (callback) {
         callback(tabs);
       }
