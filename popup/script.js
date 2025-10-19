@@ -1400,12 +1400,18 @@ async function init() {
   bindEvents();
 }
 
-document.addEventListener('DOMContentLoaded', () => {
+function bootstrap() {
   init().catch(error => {
     console.error('Failed to initialise popup', error);
     setStatus(error.message);
   });
-});
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', bootstrap);
+} else {
+  bootstrap();
+}
 
 const __TESTING__ = {
   normaliseError,
