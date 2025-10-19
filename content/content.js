@@ -1,3 +1,5 @@
+import createLogger, { loadLoggingConfig, setGlobalContext } from '../utils/logger.js';
+
 /**
  * Content script entry point that extracts readable text from the current page,
  * synchronises segment metadata with the background service worker, and
@@ -6,6 +8,18 @@
  * @module content/content
  */
 (async () => {
+  await loadLoggingConfig().catch(() => {});
+
+  const logger = createLogger({
+    name: 'content-script',
+    context: {
+      location: typeof window !== 'undefined' ? window.location.href : undefined,
+    },
+  });
+  setGlobalContext({ runtime: 'content-script' });
+
+  await logger.info('Content script initialising.');
+
   const CONTEXT_INVALIDATED_PATTERN = /Extension context invalidated/i;
 
   function isContextInvalidated(error) {
@@ -27,7 +41,7 @@
   })();
 
   if (!runtime) {
-    console.warn('Comet Page Reader: runtime API unavailable.');
+    await logger.warn('Runtime API unavailable. Aborting content script initialisation.');
     return;
   }
 
@@ -45,7 +59,7 @@
   })();
 
   if (!resolveRuntimeUrl) {
-    console.warn('Comet Page Reader: runtime.getURL unavailable.');
+    await logger.warn('runtime.getURL unavailable. Content script cannot continue.');
     return;
   }
 
@@ -67,12 +81,13 @@
     } = await import(resolveRuntimeUrl('utils/dom.js')));
   } catch (error) {
     if (isContextInvalidated(error)) {
-      console.debug(
-        'Comet Page Reader: extension context invalidated before content script initialised.',
+      await logger.debug(
+        'Extension context invalidated before content script initialised.',
+        { error },
       );
       return;
     }
-    console.error('Comet Page Reader: failed to load DOM utilities', error);
+    await logger.error('Failed to load DOM utilities.', { error });
     return;
   }
 
@@ -101,6 +116,7 @@
       observer = null;
     }
     document.removeEventListener('scroll', throttledUpdate);
+    logger.info('Content script disposed.');
   }
 
   function handleRuntimeFailure(error) {
@@ -108,11 +124,11 @@
       return;
     }
     if (isContextInvalidated(error)) {
-      console.debug('Comet Page Reader: extension context invalidated, disposing content script.');
+      logger.debug('Extension context invalidated, disposing content script.');
       dispose();
       return;
     }
-    console.debug('Comet Page Reader: segment update failed', error);
+    logger.debug('Segment update failed.', { error });
   }
 
   function safeSendRuntimeMessage(message) {
@@ -142,11 +158,13 @@
     if (disposed) {
       return;
     }
+    logger.debug('Rebuilding text segments.');
     const texts = extractVisibleText(document.body, {
       maxLength: 4000,
       minSegmentLength: 500,
     });
     segments = createSegmentMap(texts);
+    logger.debug('Segments rebuilt.', { count: segments.length });
     safeSendRuntimeMessage({
       type: 'comet:segmentsUpdated',
       payload: {
@@ -169,6 +187,7 @@
     }
     const segment = segments.find(item => item.id === segmentId);
     if (!segment) {
+      logger.debug('Requested segment not found.', { segmentId });
       return false;
     }
     const snippet = segment.text.slice(0, 200);
@@ -183,7 +202,7 @@
         activeHighlightId = segmentId;
         return true;
       } catch (error) {
-        console.debug('Comet Page Reader: failed to highlight segment', error);
+        logger.debug('Failed to highlight segment.', { error, segmentId });
       }
     }
     return false;

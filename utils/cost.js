@@ -1,3 +1,7 @@
+import createLogger from './logger.js';
+
+const logger = createLogger({ name: 'cost-tracker' });
+
 /**
  * Cost tracking helpers shared by the background worker and popup UI.
  *
@@ -51,6 +55,11 @@ export class CostTracker {
       requests: [],
       lastReset: Date.now(),
     };
+    logger.info('Cost tracker initialised.', {
+      limitUsd: this.limitUsd,
+      preloadedRequests: this.usage.requests.length,
+      totalCostUsd: this.usage.totalCostUsd,
+    });
   }
 
   /**
@@ -61,7 +70,14 @@ export class CostTracker {
    * @returns {boolean} True when the spend is permitted.
    */
   canSpend(amountUsd) {
-    return this.usage.totalCostUsd + amountUsd <= this.limitUsd;
+    const allowed = this.usage.totalCostUsd + amountUsd <= this.limitUsd;
+    logger.debug('Cost tracker spend check.', {
+      amountUsd,
+      currentTotal: this.usage.totalCostUsd,
+      limitUsd: this.limitUsd,
+      allowed,
+    });
+    return allowed;
   }
 
   /**
@@ -88,6 +104,13 @@ export class CostTracker {
       timestamp: Date.now(),
       ...metadata,
     });
+    logger.info('Recorded token usage event.', {
+      model,
+      promptTokens,
+      completionTokens,
+      amount,
+      totalCostUsd: this.usage.totalCostUsd,
+    });
     return amount;
   }
 
@@ -110,6 +133,11 @@ export class CostTracker {
       timestamp: Date.now(),
       ...metadata,
     });
+    logger.info('Recorded flat usage event.', {
+      model,
+      amountUsd,
+      totalCostUsd: this.usage.totalCostUsd,
+    });
     return amountUsd;
   }
 
@@ -121,6 +149,7 @@ export class CostTracker {
     this.usage.totalCostUsd = 0;
     this.usage.requests = [];
     this.usage.lastReset = Date.now();
+    logger.warn('Cost tracker reset invoked.', { timestamp: this.usage.lastReset });
   }
 
   /**
@@ -132,6 +161,7 @@ export class CostTracker {
    */
   estimateTokensFromText(text) {
     if (!text) {
+      logger.trace('Estimating tokens for empty text.');
       return 0;
     }
     const words = text.trim().split(/\s+/).length;
@@ -151,10 +181,17 @@ export class CostTracker {
     const promptTokens = this.estimateTokensFromText(text);
     const completionTokens = responseLength;
     const pricing = MODEL_PRICING[model] || MODEL_PRICING['gpt-4o-mini'];
-    return (
+    const estimatedCost = (
       (promptTokens / 1000) * (pricing.prompt || 0) +
       (completionTokens / 1000) * (pricing.completion || 0)
     );
+    logger.debug('Estimated cost for text.', {
+      model,
+      promptTokens,
+      completionTokens,
+      estimatedCost,
+    });
+    return estimatedCost;
   }
 
   /**
@@ -163,6 +200,10 @@ export class CostTracker {
    * @returns {Object} Plain JSON representation of the usage snapshot.
    */
   toJSON() {
+    logger.trace('Serialising cost tracker snapshot.', {
+      requestCount: this.usage.requests.length,
+      totalCostUsd: this.usage.totalCostUsd,
+    });
     return { ...this.usage, limitUsd: this.limitUsd };
   }
 }
@@ -175,6 +216,10 @@ export class CostTracker {
  * @returns {CostTracker} Configured tracker instance.
  */
 export function createCostTracker(limitUsd, usage) {
+  logger.debug('Creating cost tracker via factory.', {
+    limitUsd,
+    hasUsage: Boolean(usage),
+  });
   return new CostTracker(limitUsd, usage);
 }
 

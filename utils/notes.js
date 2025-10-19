@@ -1,10 +1,6 @@
-/**
- * Maintains the developer notes file shipped with the extension. The helper in
- * this module rewrites `notes.txt` with canonical content so the repository
- * always exposes the latest troubleshooting tips and setup guidance.
- *
- * @module utils/notes
- */
+import createLogger from './logger.js';
+
+const logger = createLogger({ name: 'notes-maintenance' });
 
 const NOTES_FILENAME = 'notes.txt';
 const NOTES_CONTENT = `# Comet Page Reader Notes
@@ -70,9 +66,10 @@ export async function ensureNotesFile() {
     const moduleDir = path.dirname(url.fileURLToPath(import.meta.url));
     const notesPath = path.resolve(moduleDir, '..', NOTES_FILENAME);
     await fs.writeFile(notesPath, NOTES_CONTENT, 'utf8');
+    await logger.info('notes.txt refreshed.', { path: notesPath });
     return true;
   } catch (error) {
-    console.warn('Comet Page Reader: failed to update notes.txt', error);
+    await logger.warn('Failed to update notes.txt.', { error });
     return false;
   }
 }

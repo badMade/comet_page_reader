@@ -1,3 +1,4 @@
+import createLogger, { loadLoggingConfig, setGlobalContext } from '../utils/logger.js';
 import { availableLocales, setLocale, t } from '../utils/i18n.js';
 import { createRecorder } from '../utils/audio.js';
 import {
@@ -43,6 +44,23 @@ const MOCK_MODE = (() => {
   }
   return false;
 })();
+
+const logger = createLogger({
+  name: 'popup-ui',
+  context: {
+    mockMode: MOCK_MODE,
+  },
+});
+
+setGlobalContext({ runtime: 'popup' });
+
+function createCorrelationId(prefix = 'msg') {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  const random = Math.random().toString(36).slice(2, 8);
+  return `${prefix}-${Date.now().toString(36)}-${random}`;
+}
 const mockHandlers = {
   'comet:getApiKey': () => Promise.resolve('sk-mock-1234'),
   'comet:getApiKeyDetails': () =>
@@ -172,13 +190,21 @@ function applyApiKeyRequirement() {
   }
   const requiresKey = providerRequiresApiKey(state.provider);
   if (requiresKey) {
-    elements.apiKey.setAttribute('required', '');
-    elements.apiKey.setAttribute('aria-required', 'true');
+    if (typeof elements.apiKey.setAttribute === 'function') {
+      elements.apiKey.setAttribute('required', '');
+      elements.apiKey.setAttribute('aria-required', 'true');
+    }
   } else {
-    elements.apiKey.removeAttribute('required');
-    elements.apiKey.setAttribute('aria-required', 'false');
+    if (typeof elements.apiKey.removeAttribute === 'function') {
+      elements.apiKey.removeAttribute('required');
+    }
+    if (typeof elements.apiKey.setAttribute === 'function') {
+      elements.apiKey.setAttribute('aria-required', 'false');
+    }
   }
-  elements.apiKey.required = requiresKey;
+  if ('required' in elements.apiKey) {
+    elements.apiKey.required = requiresKey;
+  }
 }
 
 function readSupportedProvidersFromComment(source) {
@@ -200,8 +226,12 @@ async function readAgentProviderMetadata() {
     return {};
   }
   try {
+    logger.debug('Loading provider metadata from agent.yaml.');
     const response = await fetch(runtime.getURL('agent.yaml'));
     if (!response.ok) {
+      logger.warn('agent.yaml request did not return a successful response.', {
+        status: response.status,
+      });
       return {};
     }
     const text = await response.text();
@@ -210,7 +240,7 @@ async function readAgentProviderMetadata() {
     const supportedProviders = readSupportedProvidersFromComment(text);
     return { defaultProvider, supportedProviders };
   } catch (error) {
-    console.debug('Failed to load provider metadata from agent.yaml', error);
+    logger.debug('Failed to load provider metadata from agent.yaml.', { error });
     return {};
   }
 }
@@ -250,6 +280,7 @@ async function hydrateProviderSelector() {
   if (!elements.provider) {
     return;
   }
+  logger.debug('Hydrating provider selector options.');
   const { defaultProvider, supportedProviders } = await readAgentProviderMetadata();
   const knownProviders = listProviders().map(provider => provider.id);
   let optionIds = knownProviders;
@@ -265,6 +296,10 @@ async function hydrateProviderSelector() {
     ? state.provider
     : optionIds[0];
   renderProviderOptions(optionIds, initialSelection || DEFAULT_PROVIDER_ID);
+  logger.debug('Provider selector hydrated.', {
+    optionCount: optionIds.length,
+    initialSelection: initialSelection || DEFAULT_PROVIDER_ID,
+  });
 }
 
 /**
@@ -302,7 +337,7 @@ function createPlaybackController() {
         try {
           listener();
         } catch (error) {
-          console.debug('Playback cancellation handler failed', error);
+          logger.debug('Playback cancellation handler failed.', { error });
         }
       });
       listeners.clear();
@@ -332,7 +367,7 @@ function revokeAudioSource() {
     try {
       URL.revokeObjectURL(state.audioSourceUrl);
     } catch (error) {
-      console.debug('Failed to revoke audio URL', error);
+      logger.debug('Failed to revoke audio URL.', { error });
     }
   }
   state.audioSourceUrl = null;
@@ -424,7 +459,7 @@ function resolveStatusMessage(error, fallbackMessage = 'Something went wrong.') 
       return trimmed;
     }
   } catch (stringifyError) {
-    console.debug('Failed to stringify error for status message', stringifyError);
+    logger.debug('Failed to stringify error for status message.', { error: stringifyError });
   }
 
   return fallbackMessage;
@@ -436,7 +471,10 @@ function withErrorHandling(handler) {
     try {
       await handler(event);
     } catch (error) {
-      console.error(error);
+      logger.error('Popup handler failed.', {
+        error,
+        handler: typeof handler === 'function' ? handler.name : undefined,
+      });
       setStatus(resolveStatusMessage(error));
     }
   };
@@ -487,8 +525,33 @@ function normaliseError(error, fallbackMessage = 'Background request failed.') {
  * @returns {Promise<*>} Background response result.
  */
 function sendMessage(type, payload) {
+  const correlationId = createCorrelationId('bg');
+  const metadata = {
+    type,
+    hasPayload: Boolean(payload),
+    correlationId,
+  };
+  logger.debug('Dispatching message to background worker.', metadata);
   if (MOCK_MODE && mockHandlers[type]) {
-    return mockHandlers[type](payload);
+    try {
+      const result = mockHandlers[type](payload);
+      if (result && typeof result.then === 'function') {
+        return result
+          .then(value => {
+            logger.debug('Mock background message resolved.', { ...metadata });
+            return value;
+          })
+          .catch(error => {
+            logger.error('Mock background message rejected.', { ...metadata, error });
+            throw normaliseError(error);
+          });
+      }
+      logger.debug('Mock background message resolved synchronously.', { ...metadata });
+      return result;
+    } catch (error) {
+      logger.error('Mock background message threw synchronously.', { ...metadata, error });
+      throw normaliseError(error);
+    }
   }
   const payloadMessage = { type, payload };
   if (usesBrowserPromises) {
@@ -501,9 +564,11 @@ function sendMessage(type, payload) {
         if (!response.ok) {
           throw new Error(response.error || 'Request failed.');
         }
+        logger.debug('Background message resolved.', { ...metadata });
         return response.result;
       })
       .catch(error => {
+        logger.error('Background message rejected.', { ...metadata, error });
         throw normaliseError(error);
       });
   }
@@ -513,25 +578,33 @@ function sendMessage(type, payload) {
       const maybePromise = runtime.sendMessage(payloadMessage, response => {
         const lastError = getRuntimeLastError();
         if (lastError) {
+          logger.error('Background message rejected via callback.', { ...metadata, error: lastError });
           reject(normaliseError(lastError));
           return;
         }
         if (!response) {
-          reject(new Error('No response from background script.'));
+          const error = new Error('No response from background script.');
+          logger.error('Background message received empty response.', { ...metadata, error });
+          reject(error);
           return;
         }
         if (!response.ok) {
-          reject(new Error(response.error || 'Request failed.'));
+          const error = new Error(response.error || 'Request failed.');
+          logger.error('Background message returned error response.', { ...metadata, error });
+          reject(error);
           return;
         }
+        logger.debug('Background message resolved via callback.', { ...metadata });
         resolve(response.result);
       });
       if (maybePromise && typeof maybePromise.catch === 'function') {
         maybePromise.catch(error => {
+          logger.error('Background message promise rejected.', { ...metadata, error });
           reject(normaliseError(error));
         });
       }
     } catch (error) {
+      logger.error('Background message send threw synchronously.', { ...metadata, error });
       reject(normaliseError(error));
     }
   });
@@ -547,8 +620,15 @@ async function loadApiKey(options = {}) {
   if (options.provider) {
     payload.provider = options.provider;
   }
+  logger.debug('Loading API key details.', {
+    provider: payload.provider || state.provider,
+  });
   const response = await sendMessage('comet:getApiKeyDetails', payload);
   renderApiKeyDetails(response);
+  logger.debug('API key details loaded.', {
+    provider: payload.provider || state.provider,
+    hasKey: Boolean(response?.apiKey),
+  });
 }
 
 /**
@@ -559,6 +639,10 @@ async function loadApiKey(options = {}) {
 async function saveApiKey(event) {
   const apiKey = elements.apiKey.value.trim();
   const payload = { apiKey, provider: state.provider };
+  logger.info('Persisting API key update.', {
+    provider: state.provider,
+    provided: Boolean(apiKey),
+  });
   await sendMessage('comet:setApiKey', payload);
   await loadApiKey({ provider: state.provider });
   const providerName = getProviderDisplayName(state.provider);
@@ -576,6 +660,10 @@ async function saveApiKey(event) {
 async function handleProviderChange(event) {
   const providerId = normaliseProviderId(event.target?.value, state.provider);
   const previousProvider = state.provider;
+  logger.info('Provider selection changed.', {
+    previousProvider,
+    nextProvider: providerId,
+  });
   ensureProviderOption(providerId);
   if (elements.provider) {
     elements.provider.value = providerId;
@@ -919,17 +1007,25 @@ function updateUsage(usage) {
  * @returns {Promise<void>} Resolves when summaries and usage are refreshed.
  */
 async function summarisePage() {
+  logger.info('Summarise command requested.', {
+    provider: state.provider,
+    language: state.language,
+    mockMode: MOCK_MODE,
+  });
   if (MOCK_MODE) {
     const mock = await mockHandlers['comet:summarise']();
     state.summaries = mock.summaries;
     updateUsage(mock.usage);
     setStatus('Summary ready (mock).');
+    logger.info('Mock summary generated.', { segments: mock.summaries?.length || 0 });
     return;
   }
   const tabId = await getActiveTabId();
+  logger.debug('Active tab resolved for summary.', { tabId });
   const { url, segments } = await fetchSegments(tabId);
   if (!segments.length) {
     setStatus('No readable content detected.');
+    logger.warn('No readable segments available for summary.', { tabId });
     return;
   }
   const response = await sendMessage('comet:summarise', {
@@ -941,6 +1037,10 @@ async function summarisePage() {
   state.summaries = response.summaries;
   updateUsage(response.usage);
   setStatus('Summary ready. Use read aloud to listen.');
+  logger.info('Summary completed.', {
+    provider: state.provider,
+    segmentCount: segments.length,
+  });
 }
 
 /**
@@ -959,6 +1059,10 @@ function ensureAudio() {
 }
 
 async function playAudioPayload(audioPayload, controller) {
+  logger.debug('Starting audio playback for payload.', {
+    hasAudio: Boolean(audioPayload?.base64),
+    mimeType: audioPayload?.mimeType,
+  });
   if (!audioPayload || !audioPayload.base64) {
     return 'skipped';
   }
@@ -989,7 +1093,7 @@ async function playAudioPayload(audioPayload, controller) {
         try {
           URL.revokeObjectURL(url);
         } catch (error) {
-          console.debug('Failed to revoke temporary audio URL', error);
+          logger.debug('Failed to revoke temporary audio URL.', { error });
         }
       }
       audio.removeEventListener('ended', onEnded);
@@ -1005,6 +1109,7 @@ async function playAudioPayload(audioPayload, controller) {
       }
       settled = true;
       cleanup();
+      logger.debug('Audio playback resolved.', { result: value });
       resolve(value);
     };
 
@@ -1014,6 +1119,7 @@ async function playAudioPayload(audioPayload, controller) {
       }
       settled = true;
       cleanup();
+      logger.error('Audio playback failed.', { error });
       reject(error);
     };
 
@@ -1063,10 +1169,16 @@ async function playAudioPayload(audioPayload, controller) {
  * @returns {Promise<void>} Resolves when playback has started or been skipped.
  */
 async function readAloud() {
+  logger.info('Read aloud requested.', {
+    summariesAvailable: state.summaries.length,
+    voice: state.voice,
+    language: state.language,
+  });
   if (!state.summaries.length) {
     await summarisePage();
   }
   if (!state.summaries.length) {
+    logger.warn('Read aloud aborted due to missing summaries.');
     return;
   }
   const first = state.summaries[0];
@@ -1088,11 +1200,13 @@ async function readAloud() {
     if (playbackResult === 'skipped') {
       setStatus('Audio generated (mock).');
       setPlaybackReady();
+      logger.info('Audio playback skipped because payload was unavailable.');
       return;
     }
     if (playbackResult !== 'cancelled') {
       setPlaybackReady();
     }
+    logger.info('Read aloud completed.', { playbackResult });
   } finally {
     if (state.playbackController === controller) {
       state.playbackController = null;
@@ -1101,10 +1215,17 @@ async function readAloud() {
 }
 
 async function readFullPage() {
+  logger.info('Full page narration requested.', {
+    voice: state.voice,
+    language: state.language,
+    provider: state.provider,
+  });
   const tabId = await getActiveTabId();
+  logger.debug('Active tab resolved for full-page narration.', { tabId });
   const { segments } = await fetchSegments(tabId);
   if (!segments.length) {
     setStatus('No readable content detected.');
+    logger.warn('Full-page narration aborted due to missing segments.', { tabId });
     return;
   }
 
@@ -1121,6 +1242,7 @@ async function readFullPage() {
     if (!total) {
       setStatus('No readable content detected.');
       setPlaybackReady();
+      logger.warn('No playable segments found after filtering.', { tabId });
       return;
     }
 
@@ -1129,6 +1251,11 @@ async function readFullPage() {
         break;
       }
       const segment = playableSegments[index];
+      logger.debug('Requesting narration for segment.', {
+        index,
+        total,
+        length: segment.text.length,
+      });
       const response = await sendMessage('comet:synthesise', {
         text: segment.text,
         voice: state.voice,
@@ -1143,9 +1270,11 @@ async function readFullPage() {
       const outcome = await playAudioPayload(response.audio, controller);
       if (outcome === 'skipped') {
         setStatus(`Segment ${index + 1} is silent. Skipping.`);
+        logger.debug('Segment playback skipped.', { index, reason: 'silent' });
         continue;
       }
       if (outcome === 'cancelled') {
+        logger.info('Playback cancelled by user during full-page narration.', { index });
         break;
       }
     }
@@ -1153,13 +1282,16 @@ async function readFullPage() {
     if (controller.cancelled) {
       setPlaybackReady();
       setStatus('Playback stopped.');
+      logger.info('Full-page narration stopped before completion.');
       return;
     }
 
     setPlaybackReady();
     setStatus('Finished reading page.');
+    logger.info('Full-page narration completed.');
   } catch (error) {
     setPlaybackReady();
+    logger.error('Full-page narration failed.', { error });
     throw error;
   } finally {
     if (state.playbackController === controller) {
@@ -1172,6 +1304,7 @@ async function readFullPage() {
  * Stops the active audio playback and resets player controls.
  */
 function stopPlayback() {
+  logger.debug('Stopping playback.');
   if (state.audio) {
     state.audio.pause();
     state.audio.currentTime = 0;
@@ -1189,6 +1322,7 @@ function stopPlayback() {
  * Pauses audio playback without resetting the position.
  */
 function pausePlayback() {
+  logger.debug('Pausing playback.');
   if (state.audio) {
     state.audio.pause();
   }
@@ -1212,7 +1346,7 @@ async function updateLanguage(event) {
       chrome.storage.sync.set({ language: state.language }, () => {
         const err = chrome.runtime.lastError;
         if (err) {
-          console.debug('Failed to persist language preference', err);
+          logger.debug('Failed to persist language preference.', { error: err });
         }
         resolve();
       });
@@ -1233,7 +1367,7 @@ async function updateVoice(event) {
       chrome.storage.sync.set({ voice: state.voice }, () => {
         const err = chrome.runtime.lastError;
         if (err) {
-          console.debug('Failed to persist voice preference', err);
+          logger.debug('Failed to persist voice preference.', { error: err });
         }
         resolve();
       });
@@ -1262,7 +1396,7 @@ async function updatePlaybackRate(event) {
       chrome.storage.sync.set({ playbackRate: state.playbackRate }, () => {
         const err = chrome.runtime.lastError;
         if (err) {
-          console.debug('Failed to persist playback rate preference', err);
+          logger.debug('Failed to persist playback rate preference.', { error: err });
         }
         resolve();
       });
@@ -1276,6 +1410,7 @@ async function updatePlaybackRate(event) {
  * @returns {Promise<void>} Resolves after UI state has been updated.
  */
 async function loadPreferences() {
+  logger.info('Loading persisted preferences.');
   const stored = await new Promise(resolve => {
     if (!chrome?.storage?.sync) {
       resolve({});
@@ -1306,6 +1441,11 @@ async function loadPreferences() {
     elements.playbackRate.value = String(state.playbackRate);
   }
   translateUi();
+  logger.info('Preferences loaded.', {
+    language: state.language,
+    voice: state.voice,
+    playbackRate: state.playbackRate,
+  });
 }
 
 /**
@@ -1314,6 +1454,7 @@ async function loadPreferences() {
  * @param {{cancel?: boolean}} [options] - Control whether to discard results.
  */
 function teardownRecorder({ cancel = true } = {}) {
+  logger.debug('Tearing down recorder.', { cancel });
   if (state.recorder) {
     if (cancel) {
       state.recorder.cancel();
@@ -1333,12 +1474,14 @@ function teardownRecorder({ cancel = true } = {}) {
  * @returns {Promise<void>} Resolves when recording starts or mock mode triggers.
  */
 async function startRecording() {
+  logger.info('Start recording requested.', { hasRecorder: Boolean(state.recorder), mockMode: MOCK_MODE });
   if (state.recorder) {
     return;
   }
   if (MOCK_MODE) {
     elements.pushToTalk.setAttribute('aria-pressed', 'true');
     setStatus('Mock listening… release to stop');
+    logger.info('Mock recording started.');
     return;
   }
   state.mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -1346,6 +1489,7 @@ async function startRecording() {
   state.recorder.start();
   elements.pushToTalk.setAttribute('aria-pressed', 'true');
   setStatus(t('listening'));
+  logger.info('Recording started.');
 }
 
 /**
@@ -1355,12 +1499,14 @@ async function startRecording() {
  * @returns {Promise<void>} Resolves once transcription has been processed.
  */
 async function stopRecording() {
+  logger.info('Stop recording requested.', { hasRecorder: Boolean(state.recorder), mockMode: MOCK_MODE });
   if (!state.recorder) {
     if (MOCK_MODE) {
       elements.pushToTalk.setAttribute('aria-pressed', 'false');
       const response = await mockHandlers['comet:transcribe']();
       updateUsage(response.usage);
       handleTranscript(response.text);
+      logger.info('Mock transcription completed.');
     }
     return;
   }
@@ -1388,6 +1534,10 @@ async function stopRecording() {
   });
   updateUsage(response.usage);
   handleTranscript(response.text);
+  logger.info('Transcription completed.', {
+    language: state.language,
+    provider: state.provider,
+  });
 }
 
 /**
@@ -1415,9 +1565,11 @@ function handleTranscript(text) {
  * @returns {Promise<void>} Resolves after the usage panel is refreshed.
  */
 async function resetUsage() {
+  logger.info('Reset usage requested.');
   const usage = await sendMessage('comet:resetUsage');
   updateUsage(usage);
   setStatus('Usage has been reset.');
+  logger.info('Usage reset completed.');
 }
 
 /**
@@ -1426,8 +1578,10 @@ async function resetUsage() {
  * @returns {Promise<void>} Resolves once the UI has been updated.
  */
 async function refreshUsage() {
+  logger.debug('Refreshing usage snapshot.');
   const usage = await sendMessage('comet:getUsage');
   updateUsage(usage);
+  logger.debug('Usage snapshot updated.');
 }
 
 /**
@@ -1485,6 +1639,8 @@ function bindEvents() {
  * @returns {Promise<void>} Resolves once initialisation completes.
  */
 async function init() {
+  await loadLoggingConfig().catch(() => {});
+  logger.info('Popup initialising.');
   assignElements();
   setPlaybackReady();
   await hydrateProviderSelector();
@@ -1492,11 +1648,12 @@ async function init() {
   await loadPreferences();
   await refreshUsage();
   bindEvents();
+  logger.info('Popup initialised.');
 }
 
 function bootstrap() {
   init().catch(error => {
-    console.error('Failed to initialise popup', error);
+    logger.error('Failed to initialise popup.', { error });
     setStatus(error.message);
   });
 }

@@ -11,7 +11,7 @@ import { PlaceholderAdapter } from './placeholder.js';
  * Extends the placeholder adapter with Hugging Face naming conventions.
  */
 export class HuggingFaceAdapter extends PlaceholderAdapter {
-  constructor(config) {
-    super('huggingface', config);
+  constructor(config, options = {}) {
+    super('huggingface', config, options);
   }
 }

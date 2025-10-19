@@ -1,12 +1,4 @@
-/**
- * API key storage helpers shared across the popup UI and background worker.
- * The functions in this module encapsulate the logic needed to migrate legacy
- * keys, namespace provider-specific entries, and expose ergonomic helpers for
- * reading or writing secrets.
- *
- * @module utils/apiKeyStore
- */
-
+import createLogger from './logger.js';
 import { getValue, setPersistentValue, removeValue } from './storage.js';
 
 export const DEFAULT_PROVIDER = 'openai';
@@ -14,6 +6,8 @@ export const LEGACY_API_KEY_STORAGE_KEY = 'comet:openaiApiKey';
 export const LEGACY_API_KEY_METADATA_STORAGE_KEY = 'comet:openaiApiKeyMeta';
 export const API_KEY_STORAGE_PREFIX = 'comet:apiKey';
 export const API_KEY_METADATA_STORAGE_PREFIX = 'comet:apiKeyMeta';
+
+const logger = createLogger({ name: 'api-key-store' });
 
 const defaultDeps = {
   getValue,
@@ -98,14 +92,20 @@ export async function saveApiKey(apiKey, options) {
   const normalised = typeof apiKey === 'string' ? apiKey.trim() : apiKey;
 
   if (!normalised) {
+    logger.info('Clearing API key for provider.', { provider });
     const removals = [removeValueFn(storageKey), removeValueFn(metadataKey)];
     if (provider === DEFAULT_PROVIDER) {
       removals.push(clearLegacyKeys(removeValueFn));
     }
     await Promise.all(removals);
+    logger.debug('API key cleared.', { provider });
     return null;
   }
 
+  logger.debug('Persisting API key.', {
+    provider,
+    length: typeof normalised === 'string' ? normalised.length : null,
+  });
   const storedKey = await setValueFn(storageKey, normalised);
   await setValueFn(metadataKey, { lastUpdated: Date.now() });
 
@@ -113,6 +113,7 @@ export async function saveApiKey(apiKey, options) {
     await clearLegacyKeys(removeValueFn);
   }
 
+  logger.info('API key stored.', { provider });
   return storedKey;
 }
 
@@ -154,6 +155,7 @@ export async function fetchApiKeyDetails(options) {
   const { getValue: getValueFn } = resolveDeps(overrides);
   const { apiKey: storageKey, metadata: metadataKey } = getProviderStorageKeys(provider);
 
+  logger.trace('Fetching API key details.', { provider });
   const [storedKey, metadata] = await Promise.all([
     getValueFn(storageKey),
     getValueFn(metadataKey),
@@ -163,11 +165,17 @@ export async function fetchApiKeyDetails(options) {
   let lastUpdated = normaliseLastUpdated(metadata);
 
   if (!apiKey && provider === DEFAULT_PROVIDER) {
+    logger.debug('Falling back to legacy API key.', { provider });
     const legacyDetails = await readLegacyKey(getValueFn);
     apiKey = legacyDetails.apiKey;
     lastUpdated = legacyDetails.lastUpdated;
   }
 
+  logger.info('API key details resolved.', {
+    provider,
+    hasKey: Boolean(apiKey),
+    lastUpdated,
+  });
   return {
     provider,
     apiKey,
@@ -201,9 +209,11 @@ export async function deleteApiKey(options) {
   const { removeValue: removeValueFn } = resolveDeps(overrides);
   const { apiKey: storageKey, metadata: metadataKey } = getProviderStorageKeys(provider);
 
+  logger.warn('Deleting API key.', { provider });
   const removals = [removeValueFn(storageKey), removeValueFn(metadataKey)];
   if (provider === DEFAULT_PROVIDER) {
     removals.push(clearLegacyKeys(removeValueFn));
   }
   await Promise.all(removals);
+  logger.debug('API key deleted.', { provider });
 }

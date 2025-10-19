@@ -1,10 +1,4 @@
-/**
- * Shared placeholder adapter used for providers that currently require manual
- * integration. The helper raises descriptive errors while exposing cost
- * metadata consistent with the router.
- *
- * @module background/adapters/placeholder
- */
+import createLogger from '../../utils/logger.js';
 
 function normaliseModel(config, fallback) {
   return config?.model || fallback;
@@ -14,14 +8,26 @@ function normaliseModel(config, fallback) {
  * Minimal adapter that throws descriptive errors for unimplemented providers.
  */
 export class PlaceholderAdapter {
-  /**
-   * @param {string} providerKey - Identifier for the provider (e.g. `mistral`).
-   * @param {object} config - Provider configuration block.
-   */
-  constructor(providerKey, config) {
+  constructor(providerKey, config, options = {}) {
     this.providerKey = providerKey;
     this.config = config;
     this.displayName = providerKey.charAt(0).toUpperCase() + providerKey.slice(1);
+    const baseLogger = options.logger;
+    if (baseLogger && typeof baseLogger.child === 'function') {
+      this.logger = baseLogger.child({ implementation: 'placeholder', adapter: providerKey });
+    } else if (baseLogger && typeof baseLogger.info === 'function') {
+      this.logger = baseLogger;
+      this.logger.extend?.({ implementation: 'placeholder', adapter: providerKey });
+    } else {
+      this.logger = createLogger({
+        name: `adapter-${providerKey}-placeholder`,
+        context: { adapter: providerKey, implementation: 'placeholder' },
+      });
+    }
+    this.logger.warn('Placeholder adapter initialised. Real implementation unavailable.', {
+      providerKey,
+      hasConfig: !!config,
+    });
   }
 
   /**
@@ -31,6 +37,7 @@ export class PlaceholderAdapter {
    */
   ensureKey(apiKey) {
     if (!apiKey) {
+      this.logger.error('Missing API key when using placeholder adapter.', { providerKey: this.providerKey });
       throw new Error(`Missing ${this.displayName} API key.`);
     }
   }
@@ -41,7 +48,7 @@ export class PlaceholderAdapter {
    * @returns {object} Cost metadata grouped by capability.
    */
   getCostMetadata() {
-    return {
+    const metadata = {
       summarise: {
         model: normaliseModel(this.config, `${this.providerKey}-model`),
       },
@@ -56,6 +63,11 @@ export class PlaceholderAdapter {
         model: `${this.providerKey}-tts`,
       },
     };
+    this.logger.debug('Cost metadata requested from placeholder adapter.', {
+      providerKey: this.providerKey,
+      models: metadata,
+    });
+    return metadata;
   }
 
   /**
@@ -77,6 +89,11 @@ export class PlaceholderAdapter {
       ],
       textLength: text ? text.length : 0,
     };
+    this.logger.error('Placeholder adapter invoked for summarise.', {
+      providerKey: this.providerKey,
+      language,
+      textLength: payload.textLength,
+    });
     throw new Error(`${this.displayName} adapter placeholder. Expected request: ${JSON.stringify(payload)}`);
   }
 
@@ -93,6 +110,10 @@ export class PlaceholderAdapter {
       model: `${this.providerKey}-transcribe`,
       mimeType,
     };
+    this.logger.error('Placeholder adapter invoked for transcription.', {
+      providerKey: this.providerKey,
+      mimeType,
+    });
     throw new Error(`${this.displayName} adapter placeholder. Expected transcription request: ${JSON.stringify(payload)}`);
   }
 
@@ -110,6 +131,11 @@ export class PlaceholderAdapter {
       format,
       voice,
     };
+    this.logger.error('Placeholder adapter invoked for synthesis.', {
+      providerKey: this.providerKey,
+      format,
+      voice,
+    });
     throw new Error(`${this.displayName} adapter placeholder. Expected synthesis request: ${JSON.stringify(payload)}`);
   }
 }

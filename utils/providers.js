@@ -1,10 +1,6 @@
-/**
- * Provider metadata helpers used by both the popup and background worker. The
- * utilities here keep label rendering, alias resolution, and capability checks
- * consistent across the extension.
- *
- * @module utils/providers
- */
+import createLogger from './logger.js';
+
+const logger = createLogger({ name: 'providers-registry' });
 
 const DEFAULT_PROVIDER_ID = 'auto';
 
@@ -59,12 +55,17 @@ function normaliseProviderId(value, fallback = DEFAULT_PROVIDER_ID) {
  *   Provider definitions ordered for display.
  */
 function listProviders() {
+  logger.trace('Listing providers.', { count: PROVIDERS.length });
   return PROVIDERS.map(provider => ({ ...provider }));
 }
 
 function findProvider(providerId) {
   const normalised = normaliseProviderId(providerId, providerId);
-  return PROVIDERS.find(provider => provider.id === normalised) || null;
+  const provider = PROVIDERS.find(candidate => candidate.id === normalised) || null;
+  if (!provider) {
+    logger.debug('Requested provider not found.', { providerId, normalised });
+  }
+  return provider;
 }
 
 /**
@@ -79,7 +80,11 @@ function resolveAlias(providerId) {
     return providerId;
   }
   const normalised = normaliseProviderId(providerId, providerId);
-  return PROVIDER_ALIASES[normalised] || normalised;
+  const resolved = PROVIDER_ALIASES[normalised] || normalised;
+  if (resolved !== normalised) {
+    logger.debug('Resolved provider alias.', { providerId, resolved });
+  }
+  return resolved;
 }
 
 /**
@@ -92,6 +97,7 @@ function resolveAlias(providerId) {
 function providerRequiresApiKey(providerId) {
   const provider = findProvider(providerId);
   if (!provider) {
+    logger.error('Checking API key requirement for unknown provider.', { providerId });
     return true;
   }
   return provider.requiresApiKey !== false;
@@ -114,9 +120,11 @@ function getProviderDisplayName(providerId) {
   }
   const provider = findProvider(providerId);
   if (provider && provider.label) {
+    logger.trace('Using provider display label.', { providerId: provider.id });
     return provider.label;
   }
   const normalised = normaliseProviderId(providerId, providerId);
+  logger.debug('Falling back to generated provider name.', { providerId, normalised });
   return capitaliseWords(normalised);
 }
 
@@ -128,7 +136,9 @@ function getProviderDisplayName(providerId) {
  * @returns {boolean} True when the provider is available.
  */
 function isSupportedProvider(providerId) {
-  return Boolean(findProvider(providerId));
+  const supported = Boolean(findProvider(providerId));
+  logger.trace('Provider support check.', { providerId, supported });
+  return supported;
 }
 
 export {

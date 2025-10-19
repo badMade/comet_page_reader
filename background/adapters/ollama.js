@@ -10,8 +10,8 @@ import { PlaceholderAdapter } from './placeholder.js';
  * Extends the placeholder adapter with Ollama-specific naming.
  */
 export class OllamaAdapter extends PlaceholderAdapter {
-  constructor(config) {
-    super('ollama', config);
+  constructor(config, options = {}) {
+    super('ollama', config, options);
   }
 
   /**

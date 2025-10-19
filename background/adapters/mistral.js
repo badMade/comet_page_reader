@@ -10,7 +10,7 @@ import { PlaceholderAdapter } from './placeholder.js';
  * Extends the placeholder adapter with Mistral-specific naming.
  */
 export class MistralAdapter extends PlaceholderAdapter {
-  constructor(config) {
-    super('mistral', config);
+  constructor(config, options = {}) {
+    super('mistral', config, options);
   }
 }

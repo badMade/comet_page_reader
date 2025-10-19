@@ -1,12 +1,7 @@
-/**
- * Provider configuration helpers responsible for reading `agent.yaml`,
- * applying environment overrides, and building the runtime configuration passed
- * to adapters and the routing layer.
- *
- * @module utils/providerConfig
- */
-
+import createLogger from './logger.js';
 import { loadYamlModule } from './yamlLoader.js';
+
+const logger = createLogger({ name: 'provider-config' });
 
 const DEFAULT_PROVIDER_CONFIG = Object.freeze({
   provider: 'openai',
@@ -58,7 +53,7 @@ function invokeFetch(fetchFn, resource, init) {
 }
 
 function cloneDefaultConfig(overrides = {}) {
-  return {
+  const config = {
     ...DEFAULT_PROVIDER_CONFIG,
     headers: { ...DEFAULT_PROVIDER_CONFIG.headers },
     ...overrides,
@@ -67,6 +62,10 @@ function cloneDefaultConfig(overrides = {}) {
       ...(overrides.headers || {}),
     },
   };
+  logger.trace('Cloned default provider config.', {
+    overrideKeys: Object.keys(overrides || {}),
+  });
+  return config;
 }
 
 function normaliseHeaders(value) {
@@ -190,6 +189,16 @@ function parseRoutingConfig(rawConfig, env = readEnvironment()) {
     dryRun,
   };
 
+  logger.debug('Routing configuration parsed.', {
+    providerOrder: routing.providerOrder,
+    disablePaid,
+    timeoutMs,
+    retryLimit,
+    maxCostPerCallUsd,
+    maxMonthlyCostUsd,
+    dryRun,
+  });
+
   return routing;
 }
 
@@ -210,6 +219,7 @@ function parseGeminiConfig(rawConfig = {}) {
       DEFAULT_GEMINI_CONFIG.vertexEndpointEnv,
   };
 
+  logger.debug('Gemini configuration parsed.', normalised);
   return normalised;
 }
 
@@ -218,7 +228,7 @@ function parseProviderOverrides(rawProviders = {}, baseHeaders = {}) {
     return {};
   }
 
-  return Object.entries(rawProviders).reduce((acc, [providerId, providerConfig]) => {
+  const overrides = Object.entries(rawProviders).reduce((acc, [providerId, providerConfig]) => {
     if (!providerId || typeof providerConfig !== 'object') {
       return acc;
     }
@@ -246,6 +256,11 @@ function parseProviderOverrides(rawProviders = {}, baseHeaders = {}) {
     });
     return acc;
   }, {});
+  logger.debug('Provider overrides parsed.', {
+    overrideCount: Object.keys(overrides).length,
+    providers: Object.keys(overrides),
+  });
+  return overrides;
 }
 
 /**
@@ -277,12 +292,17 @@ function normaliseAgentConfig(rawConfig) {
   const routing = parseRoutingConfig(rawConfig);
   const gemini = parseGeminiConfig(rawConfig);
 
-  return {
+  const normalised = {
     base: baseConfig,
     providers: providerOverrides,
     routing,
     gemini,
   };
+  logger.info('Agent configuration normalised.', {
+    baseProvider: normalised.base.provider,
+    overrideCount: Object.keys(normalised.providers).length,
+  });
+  return normalised;
 }
 
 /**
@@ -296,6 +316,7 @@ function normaliseAgentConfig(rawConfig) {
  */
 function buildProviderConfig(agentConfig, providerOverride) {
   if (!agentConfig || typeof agentConfig !== 'object') {
+    logger.warn('Missing agent configuration when building provider config. Falling back to defaults.');
     return cloneDefaultConfig();
   }
   const baseProvider = agentConfig.base?.provider || DEFAULT_PROVIDER_CONFIG.provider;
@@ -307,17 +328,24 @@ function buildProviderConfig(agentConfig, providerOverride) {
       ...normaliseHeaders(agentConfig.base?.headers),
       ...normaliseHeaders(overrides.headers),
     };
-    return cloneDefaultConfig({
+    const config = cloneDefaultConfig({
       ...overrides,
       headers,
       provider: overrides.provider || resolvedProvider,
     });
+    logger.debug('Built provider config from override.', {
+      provider: resolvedProvider,
+      hasHeaders: Object.keys(headers).length > 0,
+    });
+    return config;
   }
 
   if (resolvedProvider === baseProvider && agentConfig.base) {
+    logger.debug('Using base provider configuration.', { provider: baseProvider });
     return cloneDefaultConfig({ ...agentConfig.base, provider: baseProvider });
   }
 
+  logger.debug('Falling back to default provider configuration.', { provider: resolvedProvider });
   return cloneDefaultConfig({ provider: resolvedProvider });
 }
 
@@ -332,34 +360,44 @@ function resolveOverride(override) {
 
 async function readAgentYaml({ source, fetchImpl } = {}) {
   if (source) {
+    logger.debug('Using provided agent.yaml source override.');
     return source;
   }
 
   if (typeof agentYamlOverride !== 'undefined') {
+    logger.debug('Using in-memory agent.yaml override.');
     return resolveOverride(agentYamlOverride);
   }
 
   if (typeof process !== 'undefined' && process.versions && process.versions.node) {
     const fs = await import('fs/promises');
+    logger.debug('Reading agent.yaml from filesystem.');
     return fs.readFile(CONFIG_RESOURCE_URL, 'utf8');
   }
 
   if (typeof fetchImpl === 'function') {
     const response = await invokeFetch(fetchImpl, CONFIG_RESOURCE_URL_STRING);
     if (!response.ok) {
+      logger.error('Failed to load agent.yaml using provided fetch implementation.', {
+        status: response.status,
+      });
       throw new Error(`Failed to load agent.yaml (${response.status})`);
     }
+    logger.debug('Loaded agent.yaml using provided fetch implementation.');
     return response.text();
   }
 
   if (typeof fetch === 'function') {
     const response = await globalThis.fetch(CONFIG_RESOURCE_URL_STRING);
     if (!response.ok) {
+      logger.error('Failed to load agent.yaml using global fetch.', { status: response.status });
       throw new Error(`Failed to load agent.yaml (${response.status})`);
     }
+    logger.debug('Loaded agent.yaml using global fetch.');
     return response.text();
   }
 
+  logger.error('Unable to load agent.yaml: no fetch or filesystem access available.');
   throw new Error('Unable to load agent.yaml in the current environment.');
 }
 
@@ -375,11 +413,16 @@ async function readAgentYaml({ source, fetchImpl } = {}) {
  */
 export async function loadProviderConfig(options = {}) {
   try {
+    logger.debug('Loading provider configuration.', { provider: options.provider });
     const yamlSource = await readAgentYaml(options);
     const YAML = await loadYamlModule();
     const parsed = YAML.parse(yamlSource);
     const agentConfig = normaliseAgentConfig(parsed);
     const providerConfig = buildProviderConfig(agentConfig, options.provider);
+    logger.info('Provider configuration loaded.', {
+      provider: providerConfig.provider,
+      routingOrder: agentConfig.routing.providerOrder,
+    });
     return {
       ...providerConfig,
       routing: agentConfig.routing,
@@ -388,8 +431,10 @@ export async function loadProviderConfig(options = {}) {
     };
   } catch (error) {
     if (options.suppressErrors) {
+      logger.warn('Failed to load provider configuration, returning defaults.', { error });
       return cloneDefaultConfig();
     }
+    logger.error('Failed to load provider configuration.', { error });
     throw error;
   }
 }
@@ -405,10 +450,16 @@ export async function loadProviderConfig(options = {}) {
  *   Complete agent configuration object.
  */
 export async function loadAgentConfiguration(options = {}) {
+  logger.debug('Loading agent configuration.');
   const yamlSource = await readAgentYaml(options);
   const YAML = await loadYamlModule();
   const parsed = YAML.parse(yamlSource);
-  return normaliseAgentConfig(parsed);
+  const config = normaliseAgentConfig(parsed);
+  logger.info('Agent configuration loaded.', {
+    baseProvider: config.base.provider,
+    providerOverrides: Object.keys(config.providers).length,
+  });
+  return config;
 }
 
 /**
@@ -419,6 +470,9 @@ export async function loadAgentConfiguration(options = {}) {
  * @returns {object} Provider configuration snapshot.
  */
 export function getFallbackProviderConfig(overrides = {}) {
+  logger.debug('Providing fallback provider configuration.', {
+    overrideKeys: Object.keys(overrides || {}),
+  });
   return cloneDefaultConfig(overrides);
 }
 
@@ -437,6 +491,7 @@ export {
  * @param {string|Function} override - Alternate YAML content or supplier.
  */
 export function __setAgentYamlOverrideForTests(override) {
+  logger.warn('Setting agent.yaml override for tests.');
   agentYamlOverride = override;
 }
 
@@ -445,5 +500,6 @@ export function __setAgentYamlOverrideForTests(override) {
  * loading behaviour.
  */
 export function __clearAgentYamlOverrideForTests() {
+  logger.warn('Clearing agent.yaml override for tests.');
   agentYamlOverride = undefined;
 }
