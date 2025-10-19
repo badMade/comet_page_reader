@@ -364,7 +364,7 @@ export class LLMRouter {
       const combined = uniqueProviderOrder([resolvedPreference, ...baseOrder]);
       return combined.filter(providerId => providerId !== 'auto');
     }
-    const combined = uniqueProviderOrder([...baseOrder, resolvedPreference]);
+    const combined = uniqueProviderOrder([resolvedPreference, ...baseOrder]);
     return combined.filter(providerId => providerId !== 'auto');
   }
 
