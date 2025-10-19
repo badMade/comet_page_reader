@@ -6,19 +6,15 @@
  * @module content/content
  */
 (async () => {
-  const {
-    extractVisibleText,
-    createSegmentMap,
-    clearHighlights,
-    findTextRange,
-    observeMutations,
-    throttle,
-  } = await import(chrome.runtime.getURL('utils/dom.js'));
+  const CONTEXT_INVALIDATED_PATTERN = /Extension context invalidated/i;
 
-  let segments = [];
-  let observer;
-  let activeHighlightId = null;
-  let disposed = false;
+  function isContextInvalidated(error) {
+    if (!error) {
+      return false;
+    }
+    const message = typeof error.message === 'string' ? error.message : String(error);
+    return CONTEXT_INVALIDATED_PATTERN.test(message);
+  }
 
   const runtime = (() => {
     if (typeof chrome === 'object' && chrome && chrome.runtime) {
@@ -35,7 +31,55 @@
     return;
   }
 
-  const CONTEXT_INVALIDATED_PATTERN = /Extension context invalidated/i;
+  const resolveRuntimeUrl = (() => {
+    if (typeof runtime.getURL === 'function') {
+      return resource => runtime.getURL(resource);
+    }
+    if (typeof chrome === 'object' && chrome?.runtime?.getURL) {
+      return resource => chrome.runtime.getURL(resource);
+    }
+    if (typeof browser === 'object' && browser?.runtime?.getURL) {
+      return resource => browser.runtime.getURL(resource);
+    }
+    return null;
+  })();
+
+  if (!resolveRuntimeUrl) {
+    console.warn('Comet Page Reader: runtime.getURL unavailable.');
+    return;
+  }
+
+  let extractVisibleText;
+  let createSegmentMap;
+  let clearHighlights;
+  let findTextRange;
+  let observeMutations;
+  let throttle;
+
+  try {
+    ({
+      extractVisibleText,
+      createSegmentMap,
+      clearHighlights,
+      findTextRange,
+      observeMutations,
+      throttle,
+    } = await import(resolveRuntimeUrl('utils/dom.js')));
+  } catch (error) {
+    if (isContextInvalidated(error)) {
+      console.debug(
+        'Comet Page Reader: extension context invalidated before content script initialised.',
+      );
+      return;
+    }
+    console.error('Comet Page Reader: failed to load DOM utilities', error);
+    return;
+  }
+
+  let segments = [];
+  let observer;
+  let activeHighlightId = null;
+  let disposed = false;
 
   function getRuntimeLastError() {
     if (typeof chrome === 'object' && chrome?.runtime?.lastError) {
@@ -45,14 +89,6 @@
       return browser.runtime.lastError;
     }
     return null;
-  }
-
-  function isContextInvalidated(error) {
-    if (!error) {
-      return false;
-    }
-    const message = typeof error.message === 'string' ? error.message : String(error);
-    return CONTEXT_INVALIDATED_PATTERN.test(message);
   }
 
   function dispose() {
