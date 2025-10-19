@@ -65,6 +65,8 @@ test('popup initialises immediately when DOMContentLoaded already fired', async 
   };
 
   const recordedMessages = [];
+  const recordedStorageWrites = [];
+  let requestedSyncKeys;
   const runtimeStub = {
     lastError: null,
     sendMessage(message, callback) {
@@ -87,7 +89,18 @@ test('popup initialises immediately when DOMContentLoaded already fired', async 
     globalThis.fetch = async () => ({ ok: true, text: async () => 'provider: openai' });
     globalThis.chrome = {
       runtime: runtimeStub,
-      storage: { sync: { get: (_keys, cb) => cb({}), set: (_items, cb) => cb?.() } },
+      storage: {
+        sync: {
+          get: (keys, cb) => {
+            requestedSyncKeys = keys;
+            cb({ playbackRate: 1.75 });
+          },
+          set: (items, cb) => {
+            recordedStorageWrites.push(items);
+            cb?.();
+          },
+        },
+      },
       tabs: { query: (_opts, cb) => cb?.([]) },
       scripting: { executeScript: (_opts, cb) => cb?.([{ result: true }]) },
     };
@@ -96,6 +109,9 @@ test('popup initialises immediately when DOMContentLoaded already fired', async 
       mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) },
     };
     globalThis.Audio = class {
+      constructor() {
+        this.playbackRate = 1;
+      }
       addEventListener() {}
       removeEventListener() {}
       async play() {}
@@ -112,7 +128,7 @@ test('popup initialises immediately when DOMContentLoaded already fired', async 
 
     const moduleUrl = new NativeURL('../popup/script.js', import.meta.url);
     moduleUrl.searchParams.set('cacheBust', `${Date.now()}-${Math.random()}`);
-    await import(moduleUrl.href);
+    const module = await import(moduleUrl.href);
 
     const waitForTick = () => new Promise(resolve => setTimeout(resolve, 0));
     await waitForTick();
@@ -136,6 +152,28 @@ test('popup initialises immediately when DOMContentLoaded already fired', async 
     const setApiKeyMessage = recordedMessages.find(message => message.type === 'comet:setApiKey');
     assert.ok(setApiKeyMessage, 'API key submission should call runtime messaging');
     assert.equal(setApiKeyMessage.payload.apiKey, 'test-key');
+
+    assert.deepEqual(requestedSyncKeys, ['language', 'voice', 'playbackRate']);
+
+    const playbackSelect = getElement('playbackRateSelect');
+    assert.equal(playbackSelect.value, '1.75');
+
+    const audio = module.__TESTING__.ensureAudio();
+    assert.equal(audio.playbackRate, 1.75);
+
+    playbackSelect.value = '2';
+    const playbackListeners = playbackSelect.listeners.get('change') || [];
+    assert.ok(playbackListeners.length > 0, 'playback rate change handler should be registered');
+    await playbackListeners[0]({
+      target: playbackSelect,
+      preventDefault() {},
+    });
+
+    assert.equal(audio.playbackRate, 2);
+    assert.ok(
+      recordedStorageWrites.some(entry => entry.playbackRate === 2),
+      'playback rate update should persist to storage'
+    );
   } finally {
     if (previousGlobals.fetch === undefined) {
       delete globalThis.fetch;
