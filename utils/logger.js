@@ -1,4 +1,4 @@
-import { parse as parseYaml } from 'yaml';
+import { loadYamlModule } from './yamlLoader.js';
 
 const LOG_LEVELS = Object.freeze({
   error: 0,
@@ -313,7 +313,8 @@ export async function loadLoggingConfig(configPath = 'logging_config.yaml') {
     if (!rawConfig) {
       return;
     }
-    const parsed = parseYaml(rawConfig);
+    const YAML = await loadYamlModule();
+    const parsed = YAML.parse(rawConfig);
     if (parsed && typeof parsed === 'object') {
       setLoggerConfig(parsed);
     }
