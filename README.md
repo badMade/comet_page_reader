@@ -1,6 +1,6 @@
 # Comet Page Reader
 
-Comet Page Reader is a cross-browser WebExtensions add-on that summarises web pages and reads them aloud using OpenAI services. It keeps the API key and request pipeline inside the background service worker so sensitive data never reaches web pages.
+Comet Page Reader is a cross-browser WebExtensions add-on that summarises web pages and reads them aloud using multiple LLM providers such as OpenAI, Anthropic, Mistral, Hugging Face, or a local Ollama instance. It keeps the API key and request pipeline inside the background service worker so sensitive data never reaches web pages.
 
 ## Table of Contents
 
@@ -33,7 +33,7 @@ Comet Page Reader focuses on three responsibilities:
 ### Steps
 
 1. Clone or download this repository: `git clone https://github.com/<your-org>/comet_page_reader`.
-2. Generate an OpenAI API key and store it securely.
+2. Generate an API key for your chosen LLM provider (OpenAI, Anthropic, Mistral, Hugging Face) or prepare your local Ollama endpoint, and store the credentials securely.
 3. Load the extension in your browser:
    - **Chromium (Chrome, Edge, Comet):** open `chrome://extensions`, enable **Developer Mode**, choose **Load unpacked**, and select the repository root.
    - **Firefox:** open `about:debugging#/runtime/this-firefox`, choose **Load Temporary Add-on**, and select the repository root (e.g. `manifest.json`).
@@ -43,7 +43,7 @@ The extension is fully static, so no bundling step is required. If you plan to e
 ## Usage
 
 1. Click the Comet Page Reader icon in your browser toolbar to open the popup.
-2. Paste your OpenAI API key and press **Save key**. The key lives in background storage only.
+2. Paste your provider API key (or Ollama endpoint) and press **Save key**. The credentials live in background storage only.
 3. Select your preferred **Language** (affects summaries and UI text) and **Voice** (used for speech synthesis).
 4. Choose one of the following interactions:
    - **Summarise page:** Generates summaries for each extracted segment and lists them in the popup.
@@ -102,7 +102,7 @@ Key settings are embedded in source files so they remain easy to audit:
 
 ## Testing & Mocking
 
-To exercise the extension without incurring OpenAI costs:
+To exercise the extension without incurring remote provider costs:
 
 - Switch the `MOCK_MODE` constant in `popup/script.js` to `true` to simulate all background requests.
 - Alternatively, point the fetch calls in `background/service_worker.js` to a local mock server (for example `http://localhost:3000`) to return deterministic responses.
