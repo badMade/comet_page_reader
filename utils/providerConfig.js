@@ -10,6 +10,14 @@ const DEFAULT_PROVIDER_CONFIG = Object.freeze({
 });
 
 const CONFIG_RESOURCE_URL = new URL('../agent.yaml', import.meta.url);
+const CONFIG_RESOURCE_URL_STRING = CONFIG_RESOURCE_URL.href;
+
+function invokeFetch(fetchFn, resource, init) {
+  if (fetchFn === globalThis.fetch) {
+    return globalThis.fetch(resource, init);
+  }
+  return fetchFn(resource, init);
+}
 
 function cloneDefaultConfig(overrides = {}) {
   return {
@@ -90,7 +98,7 @@ async function readAgentYaml({ source, fetchImpl } = {}) {
   }
 
   if (typeof fetchImpl === 'function') {
-    const response = await fetchImpl(CONFIG_RESOURCE_URL);
+    const response = await invokeFetch(fetchImpl, CONFIG_RESOURCE_URL_STRING);
     if (!response.ok) {
       throw new Error(`Failed to load agent.yaml (${response.status})`);
     }
@@ -98,7 +106,7 @@ async function readAgentYaml({ source, fetchImpl } = {}) {
   }
 
   if (typeof fetch === 'function') {
-    const response = await fetch(CONFIG_RESOURCE_URL);
+    const response = await globalThis.fetch(CONFIG_RESOURCE_URL_STRING);
     if (!response.ok) {
       throw new Error(`Failed to load agent.yaml (${response.status})`);
     }
