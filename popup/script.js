@@ -617,7 +617,8 @@ function formatLastUpdated(timestamp) {
  */
 function renderApiKeyDetails(details) {
   const normalised = details || {};
-  const providerId = normaliseProviderId(normalised.provider, state.provider);
+  const requested = normalised.requestedProvider || normalised.provider;
+  const providerId = normaliseProviderId(requested, state.provider);
   ensureProviderOption(providerId);
   if (elements.provider) {
     elements.provider.value = providerId;

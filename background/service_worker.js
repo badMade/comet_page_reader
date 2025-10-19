@@ -40,6 +40,8 @@ const USAGE_STORAGE_KEY = 'comet:usage';
 const CACHE_STORAGE_KEY = 'comet:cache';
 const PROVIDER_STORAGE_KEY = 'comet:activeProvider';
 
+let preferredProviderId = null;
+
 let costTracker;
 let memoryCache = new Map();
 let initialised = false;
@@ -141,6 +143,17 @@ async function ensureRouter() {
   return llmRouter;
 }
 
+function updatePreferredProvider(preference) {
+  if (typeof preference !== 'string') {
+    return;
+  }
+  const trimmed = preference.trim().toLowerCase();
+  if (!trimmed) {
+    return;
+  }
+  preferredProviderId = trimmed;
+}
+
 async function ensureAdapter(providerId) {
   const requestedProviderRaw = providerId
     ? normaliseProviderId(providerId, DEFAULT_PROVIDER_ID)
@@ -166,8 +179,16 @@ async function ensureAdapter(providerId) {
   }
 
   const storedPreference = await getValue(PROVIDER_STORAGE_KEY);
-  const resolvedPreference = storedPreference === 'auto' ? null : storedPreference;
-  const overrideProvider = requestedProvider || (resolvedPreference ? resolveAlias(resolvedPreference) : null);
+  if (storedPreference === 'auto') {
+    preferredProviderId = 'auto';
+  } else if (typeof storedPreference === 'string') {
+    updatePreferredProvider(storedPreference);
+  }
+  const resolvedPreference =
+    preferredProviderId && preferredProviderId !== 'auto'
+      ? resolveAlias(preferredProviderId)
+      : null;
+  const overrideProvider = requestedProvider || resolvedPreference;
   await ensureAgentConfig();
   const baseFallbackProvider = providerConfig?.provider || activeProviderId || DEFAULT_PROVIDER_ID;
   const fallbackProvider = baseFallbackProvider === 'auto'
@@ -206,7 +227,9 @@ async function ensureAdapter(providerId) {
 
     providerConfig = config;
     activeProviderId = config.provider || DEFAULT_PROVIDER_ID;
-    await setValue(PROVIDER_STORAGE_KEY, activeProviderId);
+    if (!preferredProviderId || preferredProviderId === 'auto') {
+      await setValue(PROVIDER_STORAGE_KEY, preferredProviderId || activeProviderId);
+    }
     if (llmRouter) {
       llmRouter.setAgentConfig(agentConfigSnapshot);
     }
@@ -273,7 +296,9 @@ async function ensureInitialised(providerId) {
 }
 
 async function setActiveProvider(providerId) {
-  const normalised = normaliseProviderId(providerId, activeProviderId || DEFAULT_PROVIDER_ID);
+  const normalised = normaliseProviderId(providerId, preferredProviderId || activeProviderId || DEFAULT_PROVIDER_ID);
+  updatePreferredProvider(normalised);
+  await setValue(PROVIDER_STORAGE_KEY, preferredProviderId);
   const desiredProvider = normalised === 'auto'
     ? DEFAULT_PROVIDER_ID
     : resolveAlias(normalised);
@@ -352,7 +377,13 @@ async function setApiKey(apiKey, options = {}) {
 
 async function getApiKeyDetails(options = {}) {
   const providerId = await getActiveProviderId(options?.provider);
-  return fetchApiKeyDetails({ provider: providerId });
+  const details = await fetchApiKeyDetails({ provider: providerId });
+  const requestedProvider = preferredProviderId
+    ? preferredProviderId
+    : options?.provider
+      ? normaliseProviderId(options.provider, providerId)
+      : providerId;
+  return { ...details, provider: providerId, requestedProvider };
 }
 
 function ensureKeyAvailable(apiKey, providerId) {
@@ -558,7 +589,7 @@ runtime.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 
-export { ensureInitialised, getApiKeyDetails, handleUsageRequest, setApiKey };
+export { ensureInitialised, getApiKeyDetails, handleUsageRequest, setActiveProvider, setApiKey };
 
 ensureInitialised().catch(error => {
   console.error('Failed to initialise service worker', error);

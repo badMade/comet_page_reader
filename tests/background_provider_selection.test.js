@@ -47,6 +47,7 @@ test('setApiKey scopes storage to the active provider from agent.yaml', async ()
 
     const details = await module.getApiKeyDetails();
     assert.equal(details.provider, 'mistral_paid');
+    assert.equal(details.requestedProvider, 'mistral_paid');
     assert.equal(details.apiKey, 'mistral-key');
   } finally {
     __clearAgentYamlOverrideForTests();
@@ -65,8 +66,25 @@ test('falls back to default provider when adapter registration fails', async () 
     assert.equal(persistentStore['comet:apiKey:openai_paid'], 'openai-key');
     const details = await module.getApiKeyDetails();
     assert.equal(details.provider, 'openai_paid');
+    assert.equal(details.requestedProvider, 'openai_paid');
   } finally {
     __clearAgentYamlOverrideForTests();
+    uninstall();
+  }
+});
+
+test('returns user requested provider when selection differs from active adapter', async () => {
+  const { uninstall, persistentStore } = installChromeStub();
+
+  try {
+    const module = await importServiceWorker();
+    await module.setActiveProvider('openai_trial');
+    assert.equal(persistentStore['comet:activeProvider'], 'openai_trial');
+
+    const details = await module.getApiKeyDetails();
+    assert.equal(details.provider, 'openai_trial');
+    assert.equal(details.requestedProvider, 'openai_trial');
+  } finally {
     uninstall();
   }
 });
