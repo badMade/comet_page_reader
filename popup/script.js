@@ -15,6 +15,16 @@ import {
  * @module popup/script
  */
 
+// Escape special HTML characters in a string to prevent XSS
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 const hasBrowserApi = typeof browser !== 'undefined';
 const browserApi = hasBrowserApi ? browser : undefined;
 const runtime = chrome?.runtime || browserApi?.runtime;
@@ -196,8 +206,9 @@ function renderProviderOptions(optionIds, selectedId) {
   if (uniqueIds.length === 0) {
     uniqueIds.push(DEFAULT_PROVIDER_ID);
   }
+  // Escape both id (for attribute) and display name (for text content)
   const markup = uniqueIds
-    .map(id => `<option value="${id}">${getProviderDisplayName(id)}</option>`)
+    .map(id => `<option value="${escapeHtml(id)}">${escapeHtml(getProviderDisplayName(id))}</option>`)
     .join('');
   elements.provider.innerHTML = markup;
   const chosen = uniqueIds.includes(selectedId) ? selectedId : uniqueIds[0];
