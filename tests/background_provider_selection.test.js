@@ -1,13 +1,22 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import YAML from '../utils/yamlLoader.js';
+import { loadYamlModule } from '../utils/yamlLoader.js';
 
 import { installChromeStub, importServiceWorker } from './fixtures/chrome-stub.js';
 import { __setAgentYamlOverrideForTests, __clearAgentYamlOverrideForTests } from '../utils/providerConfig.js';
 
-function createConfigYaml(provider) {
-  return YAML.stringify({ provider, model: `${provider}-model`, api_url: `https://api.${provider}.example/v1/chat`, api_key_var: `${provider.toUpperCase()}_KEY`, temperature: 0.5 });
+const yamlModulePromise = loadYamlModule();
+
+async function createConfigYaml(provider) {
+  const YAML = await yamlModulePromise;
+  return YAML.stringify({
+    provider,
+    model: `${provider}-model`,
+    api_url: `https://api.${provider}.example/v1/chat`,
+    api_key_var: `${provider.toUpperCase()}_KEY`,
+    temperature: 0.5,
+  });
 }
 
 test('setApiKey scopes storage to the active provider from agent.yaml', async () => {
