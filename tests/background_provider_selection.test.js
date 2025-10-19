@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
+import YAML from 'yaml';
+
 import { installChromeStub, importServiceWorker } from './fixtures/chrome-stub.js';
 import { __setAgentYamlOverrideForTests, __clearAgentYamlOverrideForTests } from '../utils/providerConfig.js';
 

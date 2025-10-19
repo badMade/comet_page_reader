@@ -34,8 +34,36 @@ let adapterLoadPromise = null;
 let loadingProviderId = null;
 let activeProviderId = providerConfig.provider || DEFAULT_PROVIDER;
 
-function getCacheKey(url, segmentId) {
-  return `${url}::${segmentId}`;
+function getCacheKey({ url, segmentId, language = 'en', providerId = DEFAULT_PROVIDER_ID }) {
+  return JSON.stringify({
+    url,
+    segmentId,
+    language: language || 'en',
+    providerId: providerId || DEFAULT_PROVIDER_ID,
+  });
+}
+
+function parseCacheKey(key) {
+  if (typeof key !== 'string') {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(key);
+    if (parsed && typeof parsed === 'object') {
+      return parsed;
+    }
+  } catch (error) {
+    // Fall back to legacy format handling below.
+  }
+
+  const legacyParts = key.split('::');
+  if (legacyParts.length >= 2) {
+    const [url, segmentId] = legacyParts;
+    return { url, segmentId };
+  }
+
+  return null;
 }
 
 async function ensureAdapter(providerId) {
@@ -58,10 +86,14 @@ async function ensureAdapter(providerId) {
   }
 
   const storedPreference = await getValue(PROVIDER_STORAGE_KEY);
-  const preferredProvider = normaliseProviderId(
-    requestedProvider || activeProviderId || storedPreference || providerConfig?.provider,
+  const overrideProvider = requestedProvider || storedPreference || null;
+  const fallbackProvider = normaliseProviderId(
+    providerConfig?.provider || activeProviderId || DEFAULT_PROVIDER_ID,
     DEFAULT_PROVIDER_ID,
   );
+  const preferredProvider = overrideProvider
+    ? normaliseProviderId(overrideProvider, DEFAULT_PROVIDER_ID)
+    : fallbackProvider;
 
   loadingProviderId = preferredProvider;
   adapterInstance = null;
@@ -69,7 +101,8 @@ async function ensureAdapter(providerId) {
   adapterLoadPromise = (async () => {
     let config;
     try {
-      config = await loadProviderConfig({ provider: preferredProvider });
+      const loadOptions = overrideProvider ? { provider: preferredProvider } : {};
+      config = await loadProviderConfig(loadOptions);
     } catch (error) {
       console.error(
         `Failed to load agent.yaml for provider "${preferredProvider}". Falling back to default.`,
@@ -80,7 +113,8 @@ async function ensureAdapter(providerId) {
 
     let adapter;
     try {
-      adapter = createAdapter(config.provider, config);
+      const resolvedProvider = normaliseProviderId(config.provider, DEFAULT_PROVIDER_ID);
+      adapter = createAdapter(resolvedProvider, config);
     } catch (error) {
       console.error(
         `Adapter for provider "${config.provider}" unavailable. Falling back to default.`,
@@ -318,7 +352,13 @@ async function synthesiseSpeech({ text, voice = 'alloy', format = 'mp3', provide
 }
 
 async function getSummary({ url, segment, language, provider }) {
-  const cacheKey = getCacheKey(url, segment.id);
+  const providerId = await getActiveProviderId(provider);
+  const cacheKey = getCacheKey({
+    url,
+    segmentId: segment.id,
+    language,
+    providerId,
+  });
   if (memoryCache.has(cacheKey)) {
     return memoryCache.get(cacheKey);
   }
@@ -365,14 +405,18 @@ async function handleResetUsage() {
 
 async function handleSegmentsUpdated(message) {
   const { url, segments } = message.payload;
-  memoryCache.forEach((value, key) => {
-    if (key.startsWith(`${url}::`)) {
-      const exists = segments.some(segment => getCacheKey(url, segment.id) === key);
-      if (!exists) {
-        memoryCache.delete(key);
-      }
+  const validSegmentIds = new Set((segments || []).map(segment => segment.id));
+
+  for (const key of Array.from(memoryCache.keys())) {
+    const entry = parseCacheKey(key);
+    if (!entry || entry.url !== url) {
+      continue;
     }
-  });
+
+    if (!validSegmentIds.has(entry.segmentId)) {
+      memoryCache.delete(key);
+    }
+  }
   await persistCache();
   return true;
 }
