@@ -1,4 +1,5 @@
 import { createCostTracker, DEFAULT_LIMIT_USD } from '../utils/cost.js';
+import { ensureNotesFile } from '../utils/notes.js';
 import { DEFAULT_PROVIDER, fetchApiKeyDetails, readApiKey, saveApiKey } from '../utils/apiKeyStore.js';
 import { getValue, setValue, withLock, getSessionValue, setSessionValue, runtime } from '../utils/storage.js';
 import { getFallbackProviderConfig, loadProviderConfig } from '../utils/providerConfig.js';
@@ -20,6 +21,10 @@ registerAdapter('anthropic', config => new AnthropicAdapter(config));
 registerAdapter('mistral', config => new MistralAdapter(config));
 registerAdapter('huggingface', config => new HuggingFaceAdapter(config));
 registerAdapter('ollama', config => new OllamaAdapter(config));
+
+ensureNotesFile().catch(error => {
+  console.warn('Comet Page Reader: unable to refresh notes.txt', error);
+});
 
 const USAGE_STORAGE_KEY = 'comet:usage';
 const CACHE_STORAGE_KEY = 'comet:cache';
