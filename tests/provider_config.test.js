@@ -19,6 +19,17 @@ test('loadProviderConfig merges provider overrides from agent.yaml', async () =>
   assert.deepEqual(config.headers, { 'Anthropic-Version': '2023-06-01' });
 });
 
+test('loadProviderConfig allows overriding the provider through options', async () => {
+  const yamlSource = `provider: openai\nproviders:\n  anthropic:\n    model: claude-3-haiku\n    api_url: https://api.anthropic.com/v1/messages\n    api_key_var: ANTHROPIC_KEY\n`;
+
+  const config = await loadProviderConfig({ source: yamlSource, provider: 'anthropic' });
+
+  assert.equal(config.provider, 'anthropic');
+  assert.equal(config.model, 'claude-3-haiku');
+  assert.equal(config.apiUrl, 'https://api.anthropic.com/v1/messages');
+  assert.equal(config.apiKeyEnvVar, 'ANTHROPIC_KEY');
+});
+
 test('getFallbackProviderConfig returns an independent copy', () => {
   const first = getFallbackProviderConfig();
   first.model = 'modified';
