@@ -47,11 +47,7 @@ function resolveConfigPath(configPath) {
   }
 
   try {
-    const runtime = globalThis?.chrome?.runtime?.getURL
-      ? globalThis.chrome.runtime
-      : globalThis?.browser?.runtime?.getURL
-      ? globalThis.browser.runtime
-      : null;
+    const runtime = globalThis.chrome?.runtime ?? globalThis.browser?.runtime;
 
     if (runtime?.getURL) {
       return runtime.getURL(configPath);
