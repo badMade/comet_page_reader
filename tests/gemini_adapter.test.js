@@ -64,7 +64,7 @@ test('summarise posts payloads with key query parameter and returns usage metada
 
   assert.deepEqual(result, {
     summary: 'Summary line one.\nSecond line.',
-    model: 'models/gemini-1.5-flash-latest',
+    model: 'gemini-1.5-flash-latest',
     promptTokens: 321,
     completionTokens: 45,
   });

@@ -107,10 +107,12 @@ export class GeminiAdapter {
     const data = await response.json();
     const summary = extractSummary(data);
     const usage = normaliseUsage(data?.usageMetadata);
+    const reportedModel =
+      typeof data?.model === 'string' ? data.model.replace(/^models\//, '') : modelToUse;
 
     return {
       summary,
-      model: data?.model || modelToUse,
+      model: reportedModel,
       promptTokens: typeof usage.promptTokens === 'number' ? usage.promptTokens : undefined,
       completionTokens: typeof usage.completionTokens === 'number' ? usage.completionTokens : undefined,
     };
