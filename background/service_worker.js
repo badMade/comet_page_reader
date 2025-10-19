@@ -60,7 +60,7 @@ function parseCacheKey(key) {
   const legacyParts = key.split('::');
   if (legacyParts.length >= 2) {
     const [url, segmentId] = legacyParts;
-    return { url, segmentId };
+    return { url, segmentId, language: 'en', providerId: 'openai' };
   }
 
   return null;
