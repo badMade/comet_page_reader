@@ -31,7 +31,7 @@ function assertSummarisePlaceholder(Adapter, providerKey) {
   assert.equal(payload.textLength, SAMPLE_TEXT.length);
   assert.deepEqual(payload.messages, [
     { role: 'system', content: 'You are a helpful assistant that creates short spoken summaries.' },
-    { role: 'user', content: 'Provide a concise summary in en.' },
+    { role: 'user', content: `Provide a concise summary in ${SAMPLE_LANGUAGE}.` },
   ]);
 }
 
