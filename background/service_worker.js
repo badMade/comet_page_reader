@@ -529,12 +529,8 @@ async function getSummary({ url, segment, language, provider }) {
       continue;
     }
     const parsedProvider = normaliseForCache(parsed.providerId);
-    if (parsedProvider) {
-      if (candidateSet.size > 0 && !candidateSet.has(parsedProvider)) {
-        memoryCache.delete(key);
-        continue;
-      }
-    } else if (candidateSet.size > 0) {
+    const providerMatches = parsedProvider && candidateSet.has(parsedProvider);
+    if (!providerMatches) {
       memoryCache.delete(key);
       continue;
     }
