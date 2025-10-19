@@ -76,7 +76,7 @@ test('parseCacheKey correctly parses legacy cache keys', async () => {
     const key = 'https://example.com::123';
     const parsed = module.parseCacheKey(key);
     assert.equal(parsed.language, 'en');
-    assert.equal(parsed.providerId, 'openai');
+    assert.equal(parsed.providerId, DEFAULT_PROVIDER_ID);
   } finally {
     uninstall();
   }
