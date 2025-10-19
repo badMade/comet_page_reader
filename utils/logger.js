@@ -46,7 +46,7 @@ function resolveConfigPath(configPath) {
     return configPath;
   }
 
-  const hasScheme = /^[a-zA-Z][a-zA-Z\d+\-.]*:/.test(configPath);
+  const hasScheme = /^[a-zA-Z]{2,}[a-zA-Z\d+\-.]*:/.test(configPath);
   const isProtocolRelative = configPath.startsWith('//');
 
   if (hasScheme || isProtocolRelative) {
