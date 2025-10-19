@@ -63,9 +63,9 @@
         'Extension context invalidated before utilities could be resolved.',
         error,
       );
-      return;
+    } else {
+      console.error('Failed to resolve utility module URLs.', error);
     }
-    console.error('Failed to resolve utility module URLs.', error);
     return;
   }
 
