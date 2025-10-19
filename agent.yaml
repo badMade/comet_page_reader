@@ -1,5 +1,5 @@
 # Default provider-agnostic runtime configuration for Comet Page Reader.
-# Supported providers: openai, anthropic, mistral, huggingface, ollama.
+# Supported providers: openai, anthropic, mistral, huggingface, gemini, ollama.
 # Extend or override these fields in your deployment specific configuration.
 provider: openai
 model: gpt-4o-mini
@@ -10,3 +10,8 @@ temperature: 0.3
 # Optional HTTP headers that should accompany every request.
 # headers:
 #   X-Custom-Header: value
+providers:
+  gemini:
+    model: gemini-1.5-flash-latest
+    api_url: https://generativelanguage.googleapis.com/v1beta/models
+    api_key_var: GOOGLE_GEMINI_API_KEY

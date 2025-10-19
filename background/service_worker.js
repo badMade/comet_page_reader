@@ -15,12 +15,14 @@ import { AnthropicAdapter } from './adapters/anthropic.js';
 import { MistralAdapter } from './adapters/mistral.js';
 import { HuggingFaceAdapter } from './adapters/huggingface.js';
 import { OllamaAdapter } from './adapters/ollama.js';
+import { GeminiAdapter } from './adapters/gemini.js';
 
 registerAdapter('openai', config => new OpenAIAdapter(config));
 registerAdapter('anthropic', config => new AnthropicAdapter(config));
 registerAdapter('mistral', config => new MistralAdapter(config));
 registerAdapter('huggingface', config => new HuggingFaceAdapter(config));
 registerAdapter('ollama', config => new OllamaAdapter(config));
+registerAdapter('gemini', config => new GeminiAdapter(config));
 
 ensureNotesFile().catch(error => {
   console.warn('Comet Page Reader: unable to refresh notes.txt', error);

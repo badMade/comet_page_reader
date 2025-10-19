@@ -19,6 +19,18 @@ test('loadProviderConfig merges provider overrides from agent.yaml', async () =>
   assert.deepEqual(config.headers, { 'Anthropic-Version': '2023-06-01' });
 });
 
+test('loadProviderConfig applies gemini overrides when requested', async () => {
+  const yamlSource = `provider: openai\nmodel: gpt-4o-mini\nproviders:\n  gemini:\n    model: gemini-1.5-flash-latest\n    api_url: https://generativelanguage.googleapis.com/v1beta/models\n    api_key_var: GOOGLE_GEMINI_API_KEY\n    headers:\n      X-Client: Comet\n`;
+
+  const config = await loadProviderConfig({ source: yamlSource, provider: 'gemini' });
+
+  assert.equal(config.provider, 'gemini');
+  assert.equal(config.model, 'gemini-1.5-flash-latest');
+  assert.equal(config.apiUrl, 'https://generativelanguage.googleapis.com/v1beta/models');
+  assert.equal(config.apiKeyEnvVar, 'GOOGLE_GEMINI_API_KEY');
+  assert.deepEqual(config.headers, { 'X-Client': 'Comet' });
+});
+
 test('loadProviderConfig falls back to defaults when suppressErrors is enabled', async () => {
   const config = await loadProviderConfig({ source: 'not: yaml', suppressErrors: true });
 
