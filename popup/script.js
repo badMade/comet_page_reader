@@ -48,10 +48,12 @@ const mockHandlers = {
 const state = {
   summaries: [],
   audio: null,
+  audioSourceUrl: null,
   language: 'en',
   voice: 'alloy',
   recorder: null,
   mediaStream: null,
+  playbackController: null,
 };
 
 const elements = {};
@@ -82,6 +84,7 @@ function assignElements() {
   elements.voice = qs('voiceSelect');
   elements.summarise = qs('summariseBtn');
   elements.read = qs('readBtn');
+  elements.readPage = qs('readPageBtn');
   elements.pushToTalk = qs('pushToTalkBtn');
   elements.recordingStatus = qs('recordingStatus');
   elements.play = qs('playBtn');
@@ -99,6 +102,7 @@ function translateUi() {
   elements.apiForm.querySelector('label').textContent = t('apiKeyLabel');
   elements.summarise.textContent = t('summarise');
   elements.read.textContent = t('readAloud');
+  elements.readPage.textContent = t('readPage');
   elements.pushToTalk.textContent = t('pushToTalk');
   elements.resetUsage.textContent = t('resetUsage');
   const usageHeading = document.querySelector('#usage-section');
@@ -118,6 +122,87 @@ function translateUi() {
  */
 function setStatus(message) {
   elements.recordingStatus.textContent = message || '';
+}
+
+function setPlaybackReady() {
+  elements.play.disabled = false;
+  elements.pause.disabled = true;
+  elements.stop.disabled = true;
+}
+
+function setPlaybackActive() {
+  elements.play.disabled = true;
+  elements.pause.disabled = false;
+  elements.stop.disabled = false;
+}
+
+function createPlaybackController() {
+  let cancelled = false;
+  const listeners = new Set();
+
+  return {
+    cancel() {
+      if (cancelled) {
+        return;
+      }
+      cancelled = true;
+      listeners.forEach(listener => {
+        try {
+          listener();
+        } catch (error) {
+          console.debug('Playback cancellation handler failed', error);
+        }
+      });
+      listeners.clear();
+    },
+    onCancel(listener) {
+      if (cancelled) {
+        listener();
+        return () => {};
+      }
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    get cancelled() {
+      return cancelled;
+    },
+  };
+}
+
+function revokeAudioSource() {
+  if (
+    state.audioSourceUrl &&
+    typeof URL !== 'undefined' &&
+    typeof URL.revokeObjectURL === 'function'
+  ) {
+    try {
+      URL.revokeObjectURL(state.audioSourceUrl);
+    } catch (error) {
+      console.debug('Failed to revoke audio URL', error);
+    }
+  }
+  state.audioSourceUrl = null;
+}
+
+function decodeBase64Audio(base64) {
+  if (!base64) {
+    return new Uint8Array();
+  }
+  if (typeof atob === 'function') {
+    const binary = atob(base64);
+    const length = binary.length;
+    const bytes = new Uint8Array(length);
+    for (let index = 0; index < length; index += 1) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+    return bytes;
+  }
+  if (typeof Buffer !== 'undefined') {
+    return new Uint8Array(Buffer.from(base64, 'base64'));
+  }
+  throw new Error('Base64 decoding is not supported in this environment.');
 }
 
 /**
@@ -631,13 +716,104 @@ async function summarisePage() {
 function ensureAudio() {
   if (!state.audio) {
     state.audio = new Audio();
-    state.audio.addEventListener('ended', () => {
-      elements.play.disabled = false;
-      elements.pause.disabled = true;
-      elements.stop.disabled = true;
-    });
   }
   return state.audio;
+}
+
+async function playAudioPayload(audioPayload, controller) {
+  if (!audioPayload || !audioPayload.base64) {
+    return 'skipped';
+  }
+
+  const audio = ensureAudio();
+  revokeAudioSource();
+  const bytes = decodeBase64Audio(audioPayload.base64);
+  const blob = new Blob([bytes], { type: audioPayload.mimeType || 'audio/mpeg' });
+  if (
+    typeof URL === 'undefined' ||
+    typeof URL.createObjectURL !== 'function' ||
+    typeof URL.revokeObjectURL !== 'function'
+  ) {
+    throw new Error('Audio playback is not supported in this environment.');
+  }
+  const url = URL.createObjectURL(blob);
+  state.audioSourceUrl = url;
+  audio.src = url;
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let unsubscribe;
+
+    const cleanup = () => {
+      if (state.audioSourceUrl === url) {
+        revokeAudioSource();
+      } else if (typeof URL !== 'undefined' && typeof URL.revokeObjectURL === 'function') {
+        try {
+          URL.revokeObjectURL(url);
+        } catch (error) {
+          console.debug('Failed to revoke temporary audio URL', error);
+        }
+      }
+      audio.removeEventListener('ended', onEnded);
+      audio.removeEventListener('error', onError);
+      if (typeof unsubscribe === 'function') {
+        unsubscribe();
+      }
+    };
+
+    const resolveOnce = value => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      resolve(value);
+    };
+
+    const rejectOnce = error => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+
+    const onEnded = () => {
+      resolveOnce('finished');
+    };
+
+    const onError = event => {
+      const mediaError = event.target?.error;
+      const message = mediaError?.message || 'Audio playback failed';
+      const code = mediaError?.code;
+      const error = new Error(code ? `${message} (code: ${code})` : message);
+      rejectOnce(error);
+    };
+
+    const onCancel = () => {
+      resolveOnce('cancelled');
+    };
+
+    audio.addEventListener('ended', onEnded);
+    audio.addEventListener('error', onError);
+    unsubscribe = controller?.onCancel(onCancel);
+
+    setPlaybackActive();
+
+    try {
+      const playResult = audio.play();
+      if (playResult && typeof playResult.catch === 'function') {
+        playResult.catch(rejectOnce);
+      }
+    } catch (error) {
+      rejectOnce(error);
+    }
+
+    if (controller?.cancelled) {
+      onCancel();
+    }
+  });
 }
 
 /**
@@ -659,29 +835,94 @@ async function readAloud() {
     language: state.language,
   });
   updateUsage(audioResult.usage);
-  const audio = ensureAudio();
-  const { base64, mimeType } = audioResult.audio;
-  if (!base64) {
-    setStatus('Audio generated (mock).');
-    elements.play.disabled = false;
-    elements.pause.disabled = true;
-    elements.stop.disabled = true;
+  const controller = createPlaybackController();
+  if (state.playbackController) {
+    state.playbackController.cancel();
+  }
+  state.playbackController = controller;
+  setStatus('Playing summary.');
+  try {
+    const playbackResult = await playAudioPayload(audioResult.audio, controller);
+    if (playbackResult === 'skipped') {
+      setStatus('Audio generated (mock).');
+      setPlaybackReady();
+      return;
+    }
+    if (playbackResult !== 'cancelled') {
+      setPlaybackReady();
+    }
+  } finally {
+    if (state.playbackController === controller) {
+      state.playbackController = null;
+    }
+  }
+}
+
+async function readFullPage() {
+  const tabId = await getActiveTabId();
+  const { segments } = await fetchSegments(tabId);
+  if (!segments.length) {
+    setStatus('No readable content detected.');
     return;
   }
-  const blob = new Blob([Uint8Array.from(atob(base64), c => c.charCodeAt(0))], { type: mimeType });
-  const url = URL.createObjectURL(blob);
-  audio.src = url;
-  await audio.play();
-  elements.play.disabled = true;
-  elements.pause.disabled = false;
-  elements.stop.disabled = false;
-  setStatus('Playing summary.');
-  audio.onended = () => {
-    URL.revokeObjectURL(url);
-    elements.play.disabled = false;
-    elements.pause.disabled = true;
-    elements.stop.disabled = true;
-  };
+
+  const controller = createPlaybackController();
+  if (state.playbackController) {
+    state.playbackController.cancel();
+  }
+  state.playbackController = controller;
+  setStatus('Preparing full-page narration…');
+
+  try {
+    const playableSegments = segments.filter(segment => typeof segment?.text === 'string' && segment.text.trim().length > 0);
+    const total = playableSegments.length;
+    if (!total) {
+      setStatus('No readable content detected.');
+      setPlaybackReady();
+      return;
+    }
+
+    for (let index = 0; index < total; index += 1) {
+      if (controller.cancelled) {
+        break;
+      }
+      const segment = playableSegments[index];
+      const response = await sendMessage('comet:synthesise', {
+        text: segment.text,
+        voice: state.voice,
+        language: state.language,
+      });
+      updateUsage(response.usage);
+      if (controller.cancelled) {
+        break;
+      }
+      setStatus(`Playing segment ${index + 1} of ${total}.`);
+      const outcome = await playAudioPayload(response.audio, controller);
+      if (outcome === 'skipped') {
+        setStatus(`Segment ${index + 1} is silent. Skipping.`);
+        continue;
+      }
+      if (outcome === 'cancelled') {
+        break;
+      }
+    }
+
+    if (controller.cancelled) {
+      setPlaybackReady();
+      setStatus('Playback stopped.');
+      return;
+    }
+
+    setPlaybackReady();
+    setStatus('Finished reading page.');
+  } catch (error) {
+    setPlaybackReady();
+    throw error;
+  } finally {
+    if (state.playbackController === controller) {
+      state.playbackController = null;
+    }
+  }
 }
 
 /**
@@ -692,9 +933,13 @@ function stopPlayback() {
     state.audio.pause();
     state.audio.currentTime = 0;
   }
-  elements.play.disabled = false;
-  elements.pause.disabled = true;
-  elements.stop.disabled = true;
+  if (state.playbackController) {
+    state.playbackController.cancel();
+    state.playbackController = null;
+  }
+  revokeAudioSource();
+  setPlaybackReady();
+  setStatus('Playback stopped.');
 }
 
 /**
@@ -906,12 +1151,11 @@ function bindEvents() {
   elements.apiForm.addEventListener('submit', withErrorHandling(saveApiKey));
   elements.summarise.addEventListener('click', withErrorHandling(summarisePage));
   elements.read.addEventListener('click', withErrorHandling(readAloud));
+  elements.readPage.addEventListener('click', withErrorHandling(readFullPage));
   elements.play.addEventListener('click', withErrorHandling(async () => {
     if (state.audio) {
       await state.audio.play();
-      elements.play.disabled = true;
-      elements.pause.disabled = false;
-      elements.stop.disabled = false;
+      setPlaybackActive();
     }
   }));
   elements.pause.addEventListener('click', withErrorHandling(async () => {
@@ -951,6 +1195,7 @@ function bindEvents() {
  */
 async function init() {
   assignElements();
+  setPlaybackReady();
   await loadApiKey();
   await loadPreferences();
   await refreshUsage();
@@ -969,6 +1214,9 @@ const __TESTING__ = {
   isContextInvalidatedError,
   createContextInvalidatedError,
   resolveStatusMessage,
+  assignElements,
+  setPlaybackReady,
+  readFullPage,
 };
 
 export { sendMessageToTab, sendMessage, __TESTING__ };

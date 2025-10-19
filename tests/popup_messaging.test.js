@@ -82,4 +82,54 @@ test('popup messaging content script recovery', async t => {
 
     chromeStub.runtime.lastError = null;
   });
+
+  await t.test('readFullPage requests segments and synthesises audio', async () => {
+    module.__TESTING__.assignElements();
+    module.__TESTING__.setPlaybackReady();
+
+    chromeStub.tabs.query = (_options, callback) => {
+      const tabs = [{ id: 321 }];
+      if (callback) {
+        callback(tabs);
+      }
+      return tabs;
+    };
+
+    const segments = [
+      { id: 'segment-1', text: 'First segment for playback.' },
+      { id: 'segment-2', text: 'Second segment for playback.' },
+    ];
+
+    let tabMessageCount = 0;
+    chromeStub.tabs.sendMessage = (_tabId, message, callback) => {
+      tabMessageCount += 1;
+      assert.equal(message.type, 'comet:getSegments');
+      chromeStub.runtime.lastError = null;
+      callback({
+        ok: true,
+        result: {
+          url: 'https://example.test',
+          segments,
+        },
+      });
+    };
+
+    const dispatchedTypes = [];
+    chromeStub.runtime.sendMessage = (message, callback) => {
+      dispatchedTypes.push(message.type);
+      chromeStub.runtime.lastError = null;
+      callback({
+        ok: true,
+        result: {
+          audio: { base64: 'AA==', mimeType: 'audio/mpeg' },
+          usage: { totalCostUsd: 0.01, limitUsd: 5, lastReset: Date.now() },
+        },
+      });
+    };
+
+    await module.__TESTING__.readFullPage();
+
+    assert.equal(tabMessageCount, 1);
+    assert.deepEqual(dispatchedTypes, ['comet:synthesise', 'comet:synthesise']);
+  });
 });

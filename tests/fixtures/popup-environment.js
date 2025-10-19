@@ -5,6 +5,7 @@ function createElementStub() {
     cloneNode: () => createElementStub(),
     querySelector: () => createElementStub(),
     setAttribute: () => {},
+    removeEventListener: () => {},
     dataset: {},
     style: {},
     textContent: '',
@@ -47,15 +48,40 @@ export function setupPopupTestEnvironment() {
   globalThis.Audio = class {
     #handlers = new Map();
 
+    constructor() {
+      this.currentTime = 0;
+      this.src = '';
+    }
+
     addEventListener(name, handler) {
-      this.#handlers.set(name, handler);
+      if (!this.#handlers.has(name)) {
+        this.#handlers.set(name, new Set());
+      }
+      this.#handlers.get(name).add(handler);
+    }
+
+    removeEventListener(name, handler) {
+      this.#handlers.get(name)?.delete(handler);
     }
 
     async play() {
+      queueMicrotask(() => {
+        const handlers = this.#handlers.get('ended');
+        if (handlers) {
+          handlers.forEach(listener => {
+            listener();
+          });
+        }
+      });
       return undefined;
     }
 
     pause() {}
+  };
+
+  globalThis.URL = {
+    createObjectURL: () => 'blob:mock',
+    revokeObjectURL: () => {},
   };
 
   const chromeStub = {
