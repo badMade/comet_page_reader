@@ -16,11 +16,20 @@ const scriptingApi = chrome?.scripting || browserApi?.scripting;
 const usesBrowserPromises =
   !!browserApi && runtime === browserApi.runtime && tabsApi === browserApi.tabs;
 
-const MOCK_MODE = false;
+const MOCK_MODE = (() => {
+  if (typeof globalThis !== 'undefined' && Object.prototype.hasOwnProperty.call(globalThis, '__COMET_MOCK_MODE__')) {
+    return Boolean(globalThis.__COMET_MOCK_MODE__);
+  }
+  if (typeof process !== 'undefined' && process.env && typeof process.env.COMET_MOCK_MODE !== 'undefined') {
+    const value = process.env.COMET_MOCK_MODE;
+    return value === '1' || value === 'true';
+  }
+  return false;
+})();
 const mockHandlers = {
   'comet:getApiKey': () => Promise.resolve('sk-mock-1234'),
   'comet:getApiKeyDetails': () =>
-    Promise.resolve({ apiKey: 'sk-mock-1234', lastUpdated: Date.now() - 30 * 1000 }),
+    Promise.resolve({ apiKey: 'sk-mock-1234', provider: 'openai', lastUpdated: Date.now() - 30 * 1000 }),
   'comet:setApiKey': () => Promise.resolve(null),
   'comet:getUsage': () =>
     Promise.resolve({ totalCostUsd: 0.0123, limitUsd: 5, lastReset: Date.now() - 3600 * 1000 }),

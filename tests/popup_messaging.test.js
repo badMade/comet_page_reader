@@ -1,12 +1,36 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { URL as NodeURL } from 'node:url';
 
 import { setupPopupTestEnvironment } from './fixtures/popup-environment.js';
 
 const { chrome: chromeStub } = setupPopupTestEnvironment();
 
+async function importPopupModule({ mockMode = false } = {}) {
+  const hadMockFlag = Object.prototype.hasOwnProperty.call(globalThis, '__COMET_MOCK_MODE__');
+  const previousValue = globalThis.__COMET_MOCK_MODE__;
+  if (mockMode) {
+    globalThis.__COMET_MOCK_MODE__ = true;
+  } else if (hadMockFlag) {
+    delete globalThis.__COMET_MOCK_MODE__;
+  }
+  const moduleUrl = new NodeURL('../popup/script.js', import.meta.url);
+  moduleUrl.searchParams.set('cacheBust', `${Date.now()}-${Math.random()}`);
+  try {
+    return await import(moduleUrl.href);
+  } finally {
+    if (mockMode || hadMockFlag) {
+      if (hadMockFlag) {
+        globalThis.__COMET_MOCK_MODE__ = previousValue;
+      } else {
+        delete globalThis.__COMET_MOCK_MODE__;
+      }
+    }
+  }
+}
+
 test('popup messaging content script recovery', async t => {
-  const module = await import('../popup/script.js');
+  const module = await importPopupModule();
   const { sendMessageToTab, sendMessage } = module;
 
   await t.test('retries after injecting the content script', async () => {
@@ -132,4 +156,20 @@ test('popup messaging content script recovery', async t => {
     assert.equal(tabMessageCount, 1);
     assert.deepEqual(dispatchedTypes, ['comet:synthesise', 'comet:synthesise']);
   });
+});
+
+test('mock mode bypasses runtime messaging and preserves provider metadata', async () => {
+  chromeStub.runtime.sendMessage = () => {
+    throw new Error('Runtime messaging should not be used in mock mode');
+  };
+
+  const module = await importPopupModule({ mockMode: true });
+  const details = await module.sendMessage('comet:getApiKeyDetails');
+  assert.equal(details.provider, 'openai');
+  assert.equal(details.apiKey, 'sk-mock-1234');
+
+  const usage = await module.sendMessage('comet:getUsage');
+  assert.equal(usage.limitUsd, 5);
+  const summary = await module.sendMessage('comet:summarise');
+  assert.ok(Array.isArray(summary.summaries));
 });

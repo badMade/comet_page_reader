@@ -19,6 +19,15 @@ test('loadProviderConfig merges provider overrides from agent.yaml', async () =>
   assert.deepEqual(config.headers, { 'Anthropic-Version': '2023-06-01' });
 });
 
+test('loadProviderConfig falls back to defaults when suppressErrors is enabled', async () => {
+  const config = await loadProviderConfig({ source: 'not: yaml', suppressErrors: true });
+
+  assert.equal(config.provider, 'openai');
+  assert.equal(config.model, 'gpt-4o-mini');
+  assert.equal(config.apiUrl, 'https://api.openai.com/v1/chat/completions');
+  assert.equal(config.apiKeyEnvVar, 'OPENAI_API_KEY');
+});
+
 test('getFallbackProviderConfig returns an independent copy', () => {
   const first = getFallbackProviderConfig();
   first.model = 'modified';
@@ -44,3 +53,31 @@ test('loadEnv ignores missing files without throwing', () => {
   assert.doesNotThrow(() => loadEnv({ path: envPath }));
 });
 
+test('.env values populate process.env without clobbering existing entries', async () => {
+  const originalFoo = process.env.FOO;
+  const originalBar = process.env.BAR;
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'comet-env-override-'));
+  const envPath = path.join(tmpDir, '.env');
+  await fs.writeFile(envPath, 'FOO=override\nBAR=baz');
+
+  try {
+    process.env.FOO = 'existing';
+    delete process.env.BAR;
+    const parsed = loadEnv({ path: envPath });
+
+    assert.deepEqual(parsed, { FOO: 'override', BAR: 'baz' });
+    assert.equal(process.env.FOO, 'existing');
+    assert.equal(process.env.BAR, 'baz');
+  } finally {
+    if (typeof originalFoo === 'undefined') {
+      delete process.env.FOO;
+    } else {
+      process.env.FOO = originalFoo;
+    }
+    if (typeof originalBar === 'undefined') {
+      delete process.env.BAR;
+    } else {
+      process.env.BAR = originalBar;
+    }
+  }
+});

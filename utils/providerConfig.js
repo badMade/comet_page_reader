@@ -65,9 +65,22 @@ function normaliseRawConfig(rawConfig) {
   };
 }
 
+let agentYamlOverride;
+
+function resolveOverride(override) {
+  if (typeof override === 'function') {
+    return override();
+  }
+  return override;
+}
+
 async function readAgentYaml({ source, fetchImpl } = {}) {
   if (source) {
     return source;
+  }
+
+  if (typeof agentYamlOverride !== 'undefined') {
+    return resolveOverride(agentYamlOverride);
   }
 
   if (typeof process !== 'undefined' && process.versions && process.versions.node) {
@@ -112,3 +125,11 @@ export function getFallbackProviderConfig(overrides = {}) {
 }
 
 export { DEFAULT_PROVIDER_CONFIG };
+
+export function __setAgentYamlOverrideForTests(override) {
+  agentYamlOverride = override;
+}
+
+export function __clearAgentYamlOverrideForTests() {
+  agentYamlOverride = undefined;
+}
