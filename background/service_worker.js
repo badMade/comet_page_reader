@@ -59,7 +59,7 @@ async function ensureAdapter(providerId) {
 
   const storedPreference = await getValue(PROVIDER_STORAGE_KEY);
   const preferredProvider = normaliseProviderId(
-    requestedProvider || activeProviderId || storedPreference || providerConfig?.provider,
+    requestedProvider || storedPreference || activeProviderId || providerConfig?.provider,
     DEFAULT_PROVIDER_ID,
   );
 
