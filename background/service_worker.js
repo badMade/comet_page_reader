@@ -1,5 +1,5 @@
 import { createCostTracker, DEFAULT_LIMIT_USD } from '../utils/cost.js';
-import { fetchApiKeyDetails, readApiKey, saveApiKey } from '../utils/apiKeyStore.js';
+import { DEFAULT_PROVIDER, fetchApiKeyDetails, readApiKey, saveApiKey } from '../utils/apiKeyStore.js';
 import { getValue, setValue, withLock, getSessionValue, setSessionValue, runtime } from '../utils/storage.js';
 import { getFallbackProviderConfig, loadProviderConfig } from '../utils/providerConfig.js';
 import { registerAdapter, createAdapter } from './adapters/registry.js';
@@ -76,6 +76,11 @@ async function ensureAdapter() {
   return adapterInstance;
 }
 
+async function getActiveProviderId() {
+  await ensureAdapter();
+  return providerConfig?.provider || DEFAULT_PROVIDER;
+}
+
 async function ensureInitialised() {
   if (initialised) {
     return;
@@ -111,11 +116,11 @@ async function persistCache() {
 }
 
 async function resolveApiKey() {
-  const storedKey = await readApiKey();
+  const providerId = await getActiveProviderId();
+  const storedKey = await readApiKey({ provider: providerId });
   if (storedKey) {
     return storedKey;
   }
-  await ensureAdapter();
   const envVar = providerConfig?.apiKeyEnvVar;
   if (envVar && typeof process !== 'undefined' && process.env && process.env[envVar]) {
     return process.env[envVar];
@@ -124,15 +129,18 @@ async function resolveApiKey() {
 }
 
 async function getApiKey() {
-  return readApiKey();
+  const providerId = await getActiveProviderId();
+  return readApiKey({ provider: providerId });
 }
 
 async function setApiKey(apiKey) {
-  return saveApiKey(apiKey);
+  const providerId = await getActiveProviderId();
+  return saveApiKey(apiKey, { provider: providerId });
 }
 
 async function getApiKeyDetails() {
-  return fetchApiKeyDetails();
+  const providerId = await getActiveProviderId();
+  return fetchApiKeyDetails({ provider: providerId });
 }
 
 function ensureKeyAvailable(apiKey) {
