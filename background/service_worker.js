@@ -50,7 +50,7 @@ function parseCacheKey(key) {
 
   try {
     const parsed = JSON.parse(key);
-    if (parsed && typeof parsed === 'object') {
+    if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
       return parsed;
     }
   } catch (error) {
