@@ -14,7 +14,15 @@ function base64ToUint8Array(base64) {
 export class OpenAIAdapter {
   constructor(config, options = {}) {
     this.config = config;
-    this.fetch = options.fetchImpl || fetch;
+    this.fetch = (...args) => {
+      if (options.fetchImpl) {
+        return options.fetchImpl(...args);
+      }
+      if (typeof globalThis.fetch !== 'function') {
+        throw new Error('Fetch API is not available in this environment.');
+      }
+      return globalThis.fetch(...args);
+    };
     this.chatUrl = config.apiUrl || 'https://api.openai.com/v1/chat/completions';
     this.transcriptionUrl = config.transcriptionUrl || 'https://api.openai.com/v1/audio/transcriptions';
     this.ttsUrl = config.ttsUrl || 'https://api.openai.com/v1/audio/speech';
