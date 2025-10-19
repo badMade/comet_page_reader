@@ -829,12 +829,39 @@ async function sendMessageToTab(tabId, message) {
  *
  * @returns {Promise<number>} Active tab identifier.
  */
+const UNSUPPORTED_TAB_URL_PATTERN = /^(?:about|brave|chrome|chrome-extension|chrome-devtools|edge|moz-extension|opera|vivaldi):/i;
+const UNSUPPORTED_TAB_MESSAGE =
+  'Comet Page Reader cannot run on this page. Switch to a different tab and try again.';
+
+function normaliseTabUrl(url) {
+  if (typeof url !== 'string') {
+    return '';
+  }
+  return url.trim();
+}
+
+function isTabUrlSupported(url) {
+  const normalised = normaliseTabUrl(url);
+  if (!normalised) {
+    return false;
+  }
+  return !UNSUPPORTED_TAB_URL_PATTERN.test(normalised);
+}
+
+function ensureSupportedTab(tab) {
+  if (!tab || typeof tab.id !== 'number' || !isTabUrlSupported(tab.url)) {
+    throw new Error(UNSUPPORTED_TAB_MESSAGE);
+  }
+  return tab;
+}
+
 async function getActiveTabId() {
   const tabs = await queryTabs({ active: true, currentWindow: true });
   if (!tabs.length) {
     throw new Error('No active tab detected.');
   }
-  return tabs[0].id;
+  const activeTab = ensureSupportedTab(tabs[0]);
+  return activeTab.id;
 }
 
 /**
@@ -1483,6 +1510,10 @@ const __TESTING__ = {
   setPlaybackReady,
   readFullPage,
   ensureAudio,
+  getActiveTabId,
+  isTabUrlSupported,
+  ensureSupportedTab,
+  UNSUPPORTED_TAB_MESSAGE,
 };
 
 export { sendMessageToTab, sendMessage, __TESTING__ };
