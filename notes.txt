@@ -10,14 +10,17 @@
   - **Chromium browsers:** Enable Developer Mode in chrome://extensions, choose Load unpacked, and select this repository.
   - **Firefox:** Visit about:debugging#/runtime/this-firefox, choose Load Temporary Add-on, and select manifest.json.
 - Optional: run npm install to fetch dev dependencies for the Node-based tests.
+- Provision API credentials for the providers you plan to use:
+  - **OpenAI:** set the key via the popup or export `OPENAI_API_KEY` before running background scripts.
+  - **Google Gemini:** set the key via the popup or export `GOOGLE_GEMINI_API_KEY` (Gemini currently exposes summarisation only).
 
 ## How to Use It
 1. Open the Comet Page Reader popup from the browser toolbar.
-2. Enter your API key and press Save key to store it in background storage.
-3. Pick a language and voice profile, then choose an action:
+2. Select a provider, enter the matching API key, and press Save key to store it in background storage.
+3. Pick a language and voice profile (voice applies when the active provider supports text-to-speech), then choose an action:
    - Summarise page: Generates summaries for each detected segment.
-   - Read aloud: Requests speech synthesis for the leading summary.
-   - Push to talk: Holds the microphone button for voice commands that map to extension actions.
+   - Read aloud: Requests speech synthesis for the leading summary (requires a provider with TTS support, e.g. OpenAI).
+   - Push to talk: Holds the microphone button for voice commands that map to extension actions (requires transcription support).
 4. Review the usage panel for running cost totals and reset the meter when needed.
 5. Use the highlighted segments on the page to cross-reference generated summaries.
 
@@ -32,5 +35,6 @@
 - Missing API key: The popup shows an error banner; open the settings panel and re-save the key. Stored keys live only inside extension storage.
 - Exceeded spend limit: The popup usage panel indicates limit breaches. Adjust DEFAULT_LIMIT_USD in utils/cost.js or reset the usage counter.
 - Content script not responding: Reload the target tab; some browser pages block extension scripts.
-- Audio playback fails: Confirm the selected voice is available and that the browser has permission to use the speaker and microphone.
+- Audio playback fails: Confirm the selected voice is available, that the provider supports speech synthesis, and that the browser has permission to use the speaker and microphone.
+- Provider limitations: Gemini only handles summarisation and will return descriptive errors when asked to transcribe or synthesise speech; switch to OpenAI or another audio-capable provider for those features.
 - Debugging: Check the browser devtools consoles for the content script, popup, and background worker. Node-based tests log details to the terminal, and cached data persists via chrome.storage for easier inspection.

@@ -22,7 +22,7 @@ This document supplements the main README with implementation details, known iss
 
 The extension is intentionally modular:
 
-- `background/service_worker.js` orchestrates all OpenAI requests, tracks spend using `utils/cost.js`, and mediates messages.
+- `background/service_worker.js` orchestrates provider requests (OpenAI, Gemini, and others), tracks spend using `utils/cost.js`, and mediates messages.
 - `content/content.js` extracts visible text and reacts to highlight commands while protecting page integrity.
 - `popup/script.js` coordinates UI state, localisation, push-to-talk controls, and background messaging.
 - `utils/` houses pure helpers for DOM traversal, storage, audio, localisation, and cost tracking. These modules are designed to be imported into unit tests.
@@ -37,9 +37,14 @@ Refer to in-file JSDoc comments for argument and return types.
 
 ## Testing Strategies
 
-- **Mock mode:** Toggle `MOCK_MODE` in `popup/script.js` to simulate successful responses without contacting OpenAI.
+- **Mock mode:** Toggle `MOCK_MODE` in `popup/script.js` to simulate successful responses without contacting any provider.
 - **Local API stubs:** Point `fetchWithAuth` in the service worker to a mock server to experiment with error handling.
 - **Unit tests:** Import `utils/dom.js`, `utils/cost.js`, or `utils/audio.js` into a test runner with DOM shims for targeted assertions.
+
+### Provider specifics
+
+- **API keys:** When running scripts outside the browser, export `OPENAI_API_KEY` or `GOOGLE_GEMINI_API_KEY` (and any other provider-specific variables listed in `agent.yaml`) so the service worker can authenticate without prompting.
+- **Gemini:** The Gemini adapter focuses on summarisation; it throws descriptive errors for transcription or speech synthesis requests. Surface these to users or choose a provider with audio endpoints (e.g. OpenAI) when enabling push-to-talk or read-aloud features.
 
 ## Known Issues & Workarounds
 

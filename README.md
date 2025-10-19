@@ -1,6 +1,6 @@
 # Comet Page Reader
 
-Comet Page Reader is a cross-browser WebExtensions add-on that summarises web pages and reads them aloud using OpenAI services. It keeps the API key and request pipeline inside the background service worker so sensitive data never reaches web pages.
+Comet Page Reader is a cross-browser WebExtensions add-on that summarises web pages and reads them aloud using your preferred AI provider (OpenAI, Google Gemini, and others). It keeps the API key and request pipeline inside the background service worker so sensitive data never reaches web pages.
 
 ## Table of Contents
 
@@ -33,22 +33,31 @@ Comet Page Reader focuses on three responsibilities:
 ### Steps
 
 1. Clone or download this repository: `git clone https://github.com/<your-org>/comet_page_reader`.
-2. Generate an OpenAI API key and store it securely.
+2. Generate API credentials for the providers you plan to use and store them securely.
 3. Load the extension in your browser:
    - **Chromium (Chrome, Edge, Comet):** open `chrome://extensions`, enable **Developer Mode**, choose **Load unpacked**, and select the repository root.
    - **Firefox:** open `about:debugging#/runtime/this-firefox`, choose **Load Temporary Add-on**, and select the repository root (e.g. `manifest.json`).
 
 The extension is fully static, so no bundling step is required. If you plan to execute the test suite, install the dev dependencies once via `npm install`.
 
+### Provider setup
+
+The popup lets you switch between any configured providers at runtime. When running the background worker outside the browser (for example under automated tests) the extension can also read keys from environment variables:
+
+- **OpenAI:** store your key in `OPENAI_API_KEY`.
+- **Google Gemini:** store your key in `GOOGLE_GEMINI_API_KEY` (Gemini currently exposes summarisation only; speech features require an audio-capable provider such as OpenAI).
+
+Set the variables in your shell before launching development tooling or rely on the popup to persist the keys in extension storage when testing in the browser.
+
 ## Usage
 
 1. Click the Comet Page Reader icon in your browser toolbar to open the popup.
-2. Paste your OpenAI API key and press **Save key**. The key lives in background storage only.
-3. Select your preferred **Language** (affects summaries and UI text) and **Voice** (used for speech synthesis).
+2. Pick an AI **Provider** and paste the matching API key, then press **Save key**. The key lives in background storage only.
+3. Select your preferred **Language** (affects summaries and UI text) and **Voice** (used for speech synthesis with providers that support text-to-speech).
 4. Choose one of the following interactions:
    - **Summarise page:** Generates summaries for each extracted segment and lists them in the popup.
-   - **Read aloud:** Requests speech for the first summary and plays it inside the popup.
-   - **Push to talk:** Hold the button to dictate commands such as “summary this page” or “read the first result”. Speech-to-text responses automatically trigger matching actions.
+   - **Read aloud:** Requests speech for the first summary and plays it inside the popup (requires a provider that exposes TTS, e.g. OpenAI).
+   - **Push to talk:** Hold the button to dictate commands such as “summary this page” or “read the first result”. Speech-to-text responses automatically trigger matching actions (requires a provider with transcription support).
 5. Monitor the **Usage** panel to see cumulative spend, limit, and the last reset time. Use **Reset usage** whenever you want to clear historical costs.
 
 ### Programmatic access
@@ -102,7 +111,7 @@ Key settings are embedded in source files so they remain easy to audit:
 
 ## Testing & Mocking
 
-To exercise the extension without incurring OpenAI costs:
+To exercise the extension without incurring provider costs:
 
 - Switch the `MOCK_MODE` constant in `popup/script.js` to `true` to simulate all background requests.
 - Alternatively, point the fetch calls in `background/service_worker.js` to a local mock server (for example `http://localhost:3000`) to return deterministic responses.
@@ -116,6 +125,7 @@ The ES module structure enables lightweight unit tests. For example, you can imp
 - **Cost limit exceeded:** The service worker blocks expensive calls once the configured ceiling is reached. Lower the requested workload, reset usage from the popup, or increase `DEFAULT_LIMIT_USD`.
 - **Firefox session storage:** Firefox currently lacks `chrome.storage.session`. The service worker falls back to an in-memory cache which resets per session.
 - **No response from content script:** Ensure the site allows content scripts (e.g. some browser pages forbid injections). Refresh the tab and retry.
+- **Provider limitations:** Some providers only implement a subset of features. For example, Gemini currently offers summarisation only; choose OpenAI or another audio-capable provider for speech synthesis or transcription.
 
 ## Contributing
 
