@@ -1,5 +1,12 @@
 import { availableLocales, setLocale, t } from '../utils/i18n.js';
 import { createRecorder } from '../utils/audio.js';
+import {
+  DEFAULT_PROVIDER_ID,
+  getProviderDisplayName,
+  listProviders,
+  normaliseProviderId,
+  providerRequiresApiKey,
+} from '../utils/providers.js';
 
 /**
  * Popup controller responsible for coordinating UI state, background messages,
@@ -7,6 +14,16 @@ import { createRecorder } from '../utils/audio.js';
  *
  * @module popup/script
  */
+
+// Escape special HTML characters in a string to prevent XSS
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 
 const hasBrowserApi = typeof browser !== 'undefined';
 const browserApi = hasBrowserApi ? browser : undefined;
@@ -20,8 +37,13 @@ const MOCK_MODE = false;
 const mockHandlers = {
   'comet:getApiKey': () => Promise.resolve('sk-mock-1234'),
   'comet:getApiKeyDetails': () =>
-    Promise.resolve({ apiKey: 'sk-mock-1234', lastUpdated: Date.now() - 30 * 1000 }),
+    Promise.resolve({
+      provider: DEFAULT_PROVIDER_ID,
+      apiKey: 'sk-mock-1234',
+      lastUpdated: Date.now() - 30 * 1000,
+    }),
   'comet:setApiKey': () => Promise.resolve(null),
+  'comet:setProvider': () => Promise.resolve({ provider: DEFAULT_PROVIDER_ID }),
   'comet:getUsage': () =>
     Promise.resolve({ totalCostUsd: 0.0123, limitUsd: 5, lastReset: Date.now() - 3600 * 1000 }),
   'comet:resetUsage': () =>
@@ -51,6 +73,8 @@ const state = {
   audioSourceUrl: null,
   language: 'en',
   voice: 'alloy',
+  provider: DEFAULT_PROVIDER_ID,
+  providerOptions: listProviders().map(option => option.id),
   recorder: null,
   mediaStream: null,
   playbackController: null,
@@ -78,6 +102,9 @@ function qs(id) {
  */
 function assignElements() {
   elements.apiForm = qs('api-form');
+  elements.providerLabel = qs('providerLabel');
+  elements.provider = qs('providerSelect');
+  elements.apiKeyLabel = qs('apiKeyLabel');
   elements.apiKey = qs('apiKey');
   elements.apiKeyMeta = qs('apiKeyMeta');
   elements.language = qs('languageSelect');
@@ -99,7 +126,12 @@ function assignElements() {
  * Applies the currently selected locale to all visible UI strings.
  */
 function translateUi() {
-  elements.apiForm.querySelector('label').textContent = t('apiKeyLabel');
+  if (elements.providerLabel) {
+    elements.providerLabel.textContent = t('providerLabel');
+  }
+  if (elements.apiKeyLabel) {
+    elements.apiKeyLabel.textContent = t('apiKeyLabel');
+  }
   elements.summarise.textContent = t('summarise');
   elements.read.textContent = t('readAloud');
   elements.readPage.textContent = t('readPage');
@@ -113,6 +145,107 @@ function translateUi() {
   if (disclaimer) {
     disclaimer.textContent = t('disclaimer');
   }
+}
+
+function applyApiKeyRequirement() {
+  if (!elements.apiKey) {
+    return;
+  }
+  const requiresKey = providerRequiresApiKey(state.provider);
+  if (requiresKey) {
+    elements.apiKey.setAttribute('required', '');
+    elements.apiKey.setAttribute('aria-required', 'true');
+  } else {
+    elements.apiKey.removeAttribute('required');
+    elements.apiKey.setAttribute('aria-required', 'false');
+  }
+  elements.apiKey.required = requiresKey;
+}
+
+function readSupportedProvidersFromComment(source) {
+  if (typeof source !== 'string') {
+    return [];
+  }
+  const commentMatch = source.match(/#\s*Supported providers:\s*([^\n]+)/i);
+  if (!commentMatch) {
+    return [];
+  }
+  return commentMatch[1]
+    .split(',')
+    .map(value => normaliseProviderId(value))
+    .filter((value, index, array) => value && array.indexOf(value) === index);
+}
+
+async function readAgentProviderMetadata() {
+  if (!runtime?.getURL || typeof fetch !== 'function') {
+    return {};
+  }
+  try {
+    const response = await fetch(runtime.getURL('agent.yaml'));
+    if (!response.ok) {
+      return {};
+    }
+    const text = await response.text();
+    const providerMatch = text.match(/^\s*provider:\s*([^\s#]+)/mi);
+    const defaultProvider = providerMatch ? normaliseProviderId(providerMatch[1]) : undefined;
+    const supportedProviders = readSupportedProvidersFromComment(text);
+    return { defaultProvider, supportedProviders };
+  } catch (error) {
+    console.debug('Failed to load provider metadata from agent.yaml', error);
+    return {};
+  }
+}
+
+function renderProviderOptions(optionIds, selectedId) {
+  if (!elements.provider) {
+    return;
+  }
+  const uniqueIds = optionIds
+    .map(id => normaliseProviderId(id))
+    .filter((id, index, array) => id && array.indexOf(id) === index);
+  if (uniqueIds.length === 0) {
+    uniqueIds.push(DEFAULT_PROVIDER_ID);
+  }
+  // Escape both id (for attribute) and display name (for text content)
+  const markup = uniqueIds
+    .map(id => `<option value="${escapeHtml(id)}">${escapeHtml(getProviderDisplayName(id))}</option>`)
+    .join('');
+  elements.provider.innerHTML = markup;
+  const chosen = uniqueIds.includes(selectedId) ? selectedId : uniqueIds[0];
+  elements.provider.value = chosen;
+  state.providerOptions = uniqueIds;
+  state.provider = chosen;
+  applyApiKeyRequirement();
+}
+
+function ensureProviderOption(providerId) {
+  const normalised = normaliseProviderId(providerId, state.provider);
+  if (state.providerOptions.includes(normalised)) {
+    return;
+  }
+  const updated = [...state.providerOptions, normalised];
+  renderProviderOptions(updated, normalised);
+}
+
+async function hydrateProviderSelector() {
+  if (!elements.provider) {
+    return;
+  }
+  const { defaultProvider, supportedProviders } = await readAgentProviderMetadata();
+  const knownProviders = listProviders().map(provider => provider.id);
+  let optionIds = knownProviders;
+  if (supportedProviders && supportedProviders.length > 0) {
+    const filtered = knownProviders.filter(providerId => supportedProviders.includes(providerId));
+    if (filtered.length > 0) {
+      optionIds = filtered;
+    }
+  }
+  const initialSelection = defaultProvider && optionIds.includes(defaultProvider)
+    ? defaultProvider
+    : optionIds.includes(state.provider)
+    ? state.provider
+    : optionIds[0];
+  renderProviderOptions(optionIds, initialSelection || DEFAULT_PROVIDER_ID);
 }
 
 /**
@@ -390,8 +523,12 @@ function sendMessage(type, payload) {
  *
  * @returns {Promise<void>} Resolves once the value is populated.
  */
-async function loadApiKey() {
-  const response = await sendMessage('comet:getApiKeyDetails');
+async function loadApiKey(options = {}) {
+  const payload = {};
+  if (options.provider) {
+    payload.provider = options.provider;
+  }
+  const response = await sendMessage('comet:getApiKeyDetails', payload);
   renderApiKeyDetails(response);
 }
 
@@ -402,9 +539,43 @@ async function loadApiKey() {
  */
 async function saveApiKey(event) {
   const apiKey = elements.apiKey.value.trim();
-  await sendMessage('comet:setApiKey', { apiKey });
-  await loadApiKey();
-  setStatus('API key saved securely.');
+  const payload = { apiKey, provider: state.provider };
+  await sendMessage('comet:setApiKey', payload);
+  await loadApiKey({ provider: state.provider });
+  const providerName = getProviderDisplayName(state.provider);
+  if (!apiKey) {
+    if (providerRequiresApiKey(state.provider)) {
+      setStatus(`${providerName} API key removed.`);
+    } else {
+      setStatus(`${providerName} will use local access.`);
+    }
+    return;
+  }
+  setStatus(`${providerName} API key saved securely.`);
+}
+
+async function handleProviderChange(event) {
+  const providerId = normaliseProviderId(event.target?.value, state.provider);
+  const previousProvider = state.provider;
+  ensureProviderOption(providerId);
+  if (elements.provider) {
+    elements.provider.value = providerId;
+  }
+  if (providerId === previousProvider) {
+    state.provider = providerId;
+    applyApiKeyRequirement();
+    return;
+  }
+  state.provider = providerId;
+  applyApiKeyRequirement();
+  await sendMessage('comet:setProvider', { provider: providerId });
+  await loadApiKey({ provider: providerId });
+  const providerName = getProviderDisplayName(providerId);
+  if (providerRequiresApiKey(providerId)) {
+    setStatus(`${providerName} selected. Enter an API key to enable requests.`);
+  } else {
+    setStatus(`${providerName} selected. API key is optional.`);
+  }
 }
 
 /**
@@ -432,21 +603,37 @@ function formatLastUpdated(timestamp) {
  */
 function renderApiKeyDetails(details) {
   const normalised = details || {};
+  const providerId = normaliseProviderId(normalised.provider, state.provider);
+  ensureProviderOption(providerId);
+  if (elements.provider) {
+    elements.provider.value = providerId;
+  }
+  state.provider = providerId;
+  applyApiKeyRequirement();
 
-  const hasKey = Boolean(normalised.apiKey);
+  const hasKey = typeof normalised.apiKey === 'string' && normalised.apiKey.trim().length > 0;
+  const providerName = getProviderDisplayName(providerId);
+  const requiresKey = providerRequiresApiKey(providerId);
+
   if (hasKey) {
     elements.apiKey.value = normalised.apiKey;
     const formatted = formatLastUpdated(normalised.lastUpdated);
+    const prefix = `${providerName} API key saved`;
     elements.apiKeyMeta.textContent = formatted
-      ? `Last updated: ${formatted}`
-      : 'API key saved. Last update time unavailable.';
+      ? `${prefix}. Last updated: ${formatted}.`
+      : `${prefix}. Last update time unavailable.`;
     elements.apiKeyMeta.dataset.state = 'ready';
     return;
   }
 
   elements.apiKey.value = '';
-  elements.apiKeyMeta.textContent = 'No API key saved.';
-  elements.apiKeyMeta.dataset.state = 'empty';
+  if (requiresKey) {
+    elements.apiKeyMeta.textContent = `No ${providerName} API key saved.`;
+    elements.apiKeyMeta.dataset.state = 'empty';
+  } else {
+    elements.apiKeyMeta.textContent = `${providerName} does not require an API key.`;
+    elements.apiKeyMeta.dataset.state = 'optional';
+  }
 }
 
 /**
@@ -702,6 +889,7 @@ async function summarisePage() {
     url,
     segments,
     language: state.language,
+    provider: state.provider,
   });
   state.summaries = response.summaries;
   updateUsage(response.usage);
@@ -833,6 +1021,7 @@ async function readAloud() {
     text: first.summary,
     voice: state.voice,
     language: state.language,
+    provider: state.provider,
   });
   updateUsage(audioResult.usage);
   const controller = createPlaybackController();
@@ -891,6 +1080,7 @@ async function readFullPage() {
         text: segment.text,
         voice: state.voice,
         language: state.language,
+        provider: state.provider,
       });
       updateUsage(response.usage);
       if (controller.cancelled) {
@@ -1099,6 +1289,7 @@ async function stopRecording() {
     base64,
     mimeType: blob.type,
     filename: 'speech.webm',
+    provider: state.provider,
   });
   updateUsage(response.usage);
   handleTranscript(response.text);
@@ -1149,6 +1340,7 @@ async function refreshUsage() {
  */
 function bindEvents() {
   elements.apiForm.addEventListener('submit', withErrorHandling(saveApiKey));
+  elements.provider.addEventListener('change', withErrorHandling(handleProviderChange));
   elements.summarise.addEventListener('click', withErrorHandling(summarisePage));
   elements.read.addEventListener('click', withErrorHandling(readAloud));
   elements.readPage.addEventListener('click', withErrorHandling(readFullPage));
@@ -1196,6 +1388,7 @@ function bindEvents() {
 async function init() {
   assignElements();
   setPlaybackReady();
+  await hydrateProviderSelector();
   await loadApiKey();
   await loadPreferences();
   await refreshUsage();

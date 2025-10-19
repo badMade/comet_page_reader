@@ -40,11 +40,12 @@ function sanitiseString(value) {
   return typeof value === 'string' ? value.trim() : undefined;
 }
 
-function normaliseRawConfig(rawConfig) {
+function normaliseRawConfig(rawConfig, options = {}) {
   if (!rawConfig || typeof rawConfig !== 'object') {
     throw new Error('Invalid configuration structure.');
   }
-  const provider = sanitiseString(rawConfig.provider)?.toLowerCase() || DEFAULT_PROVIDER_CONFIG.provider;
+  const overrideProvider = sanitiseString(options.provider)?.toLowerCase();
+  const provider = overrideProvider || sanitiseString(rawConfig.provider)?.toLowerCase() || DEFAULT_PROVIDER_CONFIG.provider;
   const providersSection = rawConfig.providers && typeof rawConfig.providers === 'object' ? rawConfig.providers : undefined;
   const providerOverrides = providersSection && typeof providersSection[provider] === 'object' ? providersSection[provider] : undefined;
   const candidate = { ...rawConfig, ...(providerOverrides || {}) };
@@ -98,7 +99,7 @@ export async function loadProviderConfig(options = {}) {
   try {
     const yamlSource = await readAgentYaml(options);
     const parsed = YAML.parse(yamlSource);
-    return normaliseRawConfig(parsed);
+    return normaliseRawConfig(parsed, { provider: options.provider });
   } catch (error) {
     if (options.suppressErrors) {
       return cloneDefaultConfig();
