@@ -1,0 +1,622 @@
+import {
+  buildProviderConfig,
+  loadAgentConfiguration,
+  DEFAULT_ROUTING_CONFIG,
+  DEFAULT_GEMINI_CONFIG,
+} from '../../utils/providerConfig.js';
+import { resolveAlias, getProviderDisplayName, normaliseProviderId } from '../../utils/providers.js';
+import { readApiKey } from '../../utils/apiKeyStore.js';
+import { createAdapter } from '../adapters/registry.js';
+
+const PROVIDER_TIERS = Object.freeze({
+  LOCAL: 'local',
+  FREE: 'free',
+  TRIAL: 'trial',
+  PAID: 'paid',
+});
+
+const AUTH_ERROR_CODES = new Set([401, 403]);
+
+const TOKEN_SCOPES = Object.freeze(['https://www.googleapis.com/auth/cloud-platform']);
+
+const PROVIDER_METADATA = Object.freeze({
+  ollama: { tier: PROVIDER_TIERS.LOCAL, requiresKey: false, adapterKey: 'ollama' },
+  huggingface_free: { tier: PROVIDER_TIERS.FREE, requiresKey: true, adapterKey: 'huggingface' },
+  gemini_free: { tier: PROVIDER_TIERS.FREE, requiresKey: true, adapterKey: 'gemini' },
+  gemini_paid: { tier: PROVIDER_TIERS.PAID, requiresKey: true, adapterKey: 'gemini' },
+  openai_trial: { tier: PROVIDER_TIERS.TRIAL, requiresKey: true, adapterKey: 'openai' },
+  openai_paid: { tier: PROVIDER_TIERS.PAID, requiresKey: true, adapterKey: 'openai' },
+  mistral_trial: { tier: PROVIDER_TIERS.TRIAL, requiresKey: true, adapterKey: 'mistral' },
+  mistral_paid: { tier: PROVIDER_TIERS.PAID, requiresKey: true, adapterKey: 'mistral' },
+  anthropic_paid: { tier: PROVIDER_TIERS.PAID, requiresKey: true, adapterKey: 'anthropic' },
+  openai: { tier: PROVIDER_TIERS.PAID, requiresKey: true, adapterKey: 'openai' },
+  mistral: { tier: PROVIDER_TIERS.PAID, requiresKey: true, adapterKey: 'mistral' },
+  anthropic: { tier: PROVIDER_TIERS.PAID, requiresKey: true, adapterKey: 'anthropic' },
+  gemini: { tier: PROVIDER_TIERS.PAID, requiresKey: true, adapterKey: 'gemini' },
+  huggingface: { tier: PROVIDER_TIERS.FREE, requiresKey: true, adapterKey: 'huggingface' },
+});
+
+const DEFAULT_BACKOFF_MS = 250;
+const MAX_BACKOFF_MS = 4000;
+const CIRCUIT_BREAKER_THRESHOLD = 3;
+const CIRCUIT_BREAKER_TIMEOUT_MS = 60_000;
+
+function uniqueProviderOrder(order) {
+  const seen = new Set();
+  const result = [];
+  order.forEach(providerId => {
+    const resolved = normaliseProviderId(providerId, providerId);
+    if (resolved && !seen.has(resolved)) {
+      seen.add(resolved);
+      result.push(resolved);
+    }
+  });
+  return result;
+}
+
+function readEnvironment() {
+  if (typeof process === 'undefined' || !process.env) {
+    return {};
+  }
+  return process.env;
+}
+
+function delay(ms, timer = setTimeout) {
+  return new Promise(resolve => timer(resolve, ms));
+}
+
+function hashValue(value) {
+  if (!value) {
+    return null;
+  }
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    const charCode = value.charCodeAt(index);
+    hash = (hash * 31 + charCode) % 2147483647;
+  }
+  return hash;
+}
+
+function getLogger(logger) {
+  if (logger && typeof logger.info === 'function') {
+    return logger;
+  }
+  return console;
+}
+
+function getFetch(fetchImpl) {
+  if (typeof fetchImpl === 'function') {
+    return fetchImpl;
+  }
+  if (typeof globalThis.fetch === 'function') {
+    return (...args) => globalThis.fetch(...args);
+  }
+  throw new Error('Fetch API is not available in this environment.');
+}
+
+function createTimeoutPromise(ms, errorMessage) {
+  return new Promise((_, reject) => {
+    const error = new Error(errorMessage || `Operation timed out after ${ms}ms`);
+    error.code = 'ETIMEOUT';
+    setTimeout(() => reject(error), ms);
+  });
+}
+
+function normaliseNumber(value, fallback) {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  return fallback;
+}
+
+function isAuthError(error) {
+  if (!error) {
+    return false;
+  }
+  if (typeof error.status === 'number') {
+    return AUTH_ERROR_CODES.has(error.status);
+  }
+  const message = typeof error.message === 'string' ? error.message.toLowerCase() : '';
+  return message.includes('unauthorised') || message.includes('unauthorized') || message.includes('forbidden');
+}
+
+function normaliseProvider(providerId) {
+  return resolveAlias(providerId);
+}
+
+function getLegacyProviderId(providerId) {
+  if (!providerId) {
+    return null;
+  }
+  if (providerId.endsWith('_paid') || providerId.endsWith('_trial')) {
+    return providerId.replace(/_(paid|trial)$/, '');
+  }
+  if (providerId === 'gemini_free' || providerId === 'gemini_paid') {
+    return 'gemini';
+  }
+  if (providerId === 'huggingface_free') {
+    return 'huggingface';
+  }
+  return null;
+}
+
+async function createJwtAssertion({ clientEmail, privateKey, scope }) {
+  const now = Math.floor(Date.now() / 1000);
+  const payload = {
+    iss: clientEmail,
+    scope: scope.join(' '),
+    aud: 'https://oauth2.googleapis.com/token',
+    exp: now + 3600,
+    iat: now,
+  };
+  const header = { alg: 'RS256', typ: 'JWT' };
+  const encode = data => Buffer.from(JSON.stringify(data)).toString('base64url');
+  const unsignedToken = `${encode(header)}.${encode(payload)}`;
+  const { createSign } = await import('node:crypto');
+  const signer = createSign('RSA-SHA256');
+  signer.update(unsignedToken);
+  const signature = signer.sign(privateKey, 'base64url');
+  return `${unsignedToken}.${signature}`;
+}
+
+async function fetchAccessToken({ credentialsPath, fetchImpl, scope }) {
+  if (!credentialsPath) {
+    throw new Error('Missing Vertex credentials path. Provide GCP_ACCESS_TOKEN or configure GCP_CREDENTIALS.');
+  }
+  const fs = await import('node:fs/promises');
+  const raw = await fs.readFile(credentialsPath, 'utf8');
+  const parsed = JSON.parse(raw);
+  if (!parsed.client_email || !parsed.private_key) {
+    throw new Error('Invalid service account credentials JSON.');
+  }
+  const assertion = await createJwtAssertion({ clientEmail: parsed.client_email, privateKey: parsed.private_key, scope });
+  const response = await fetchImpl('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+      assertion,
+    }),
+  });
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(`Failed to obtain Vertex access token (${response.status}): ${message}`);
+  }
+  const data = await response.json();
+  if (!data.access_token) {
+    throw new Error('Vertex token response missing access_token.');
+  }
+  return { token: data.access_token, expiresIn: normaliseNumber(data.expires_in, 3600) };
+}
+
+export class LLMRouter {
+  constructor(options = {}) {
+    this.logger = getLogger(options.logger);
+    this.readApiKeyFn = options.readApiKeyFn || (provider => readApiKey({ provider }));
+    this.environment = options.environment || readEnvironment();
+    this.now = options.now || (() => Date.now());
+    this.random = typeof options.random === 'function' ? options.random : Math.random;
+    this.fetch = getFetch(options.fetchImpl);
+    this.costTracker = options.costTracker;
+    this.loadAgentConfigurationFn = options.loadAgentConfigurationFn || loadAgentConfiguration;
+    this.agentConfig = options.agentConfig || null;
+    this.providerConfigCache = new Map();
+    this.adapterCache = new Map();
+    this.providerState = new Map();
+    this.routing = options.routing || DEFAULT_ROUTING_CONFIG;
+    this.vertexTokenCache = null;
+    this.createAdapterFn = typeof options.createAdapterFn === 'function' ? options.createAdapterFn : createAdapter;
+  }
+
+  setCostTracker(costTracker) {
+    this.costTracker = costTracker;
+  }
+
+  setAgentConfig(agentConfig) {
+    this.agentConfig = agentConfig;
+    if (agentConfig?.routing) {
+      this.routing = {
+        ...DEFAULT_ROUTING_CONFIG,
+        ...agentConfig.routing,
+      };
+    }
+  }
+
+  clearCaches() {
+    this.providerConfigCache.clear();
+    this.adapterCache.clear();
+  }
+
+  async ensureAgentConfigLoaded() {
+    if (!this.agentConfig) {
+      const config = await this.loadAgentConfigurationFn();
+      this.setAgentConfig(config);
+    }
+  }
+
+  getRoutingConfig() {
+    return this.routing || DEFAULT_ROUTING_CONFIG;
+  }
+
+  getGeminiConfig() {
+    return this.agentConfig?.gemini || DEFAULT_GEMINI_CONFIG;
+  }
+
+  getProviderMetadata(providerId) {
+    const resolved = normaliseProvider(providerId);
+    return PROVIDER_METADATA[resolved] || {
+      tier: PROVIDER_TIERS.PAID,
+      requiresKey: true,
+      adapterKey: resolved,
+    };
+  }
+
+  isPaidProvider(providerId) {
+    const metadata = this.getProviderMetadata(providerId);
+    return metadata?.tier === PROVIDER_TIERS.PAID;
+  }
+
+  async getProviderConfig(providerId) {
+    const resolved = normaliseProvider(providerId);
+    if (this.providerConfigCache.has(resolved)) {
+      return this.providerConfigCache.get(resolved);
+    }
+    await this.ensureAgentConfigLoaded();
+    const config = buildProviderConfig(this.agentConfig, resolved);
+    this.providerConfigCache.set(resolved, config);
+    return config;
+  }
+
+  async getAdapter(providerId) {
+    const resolved = normaliseProvider(providerId);
+    if (this.adapterCache.has(resolved)) {
+      return this.adapterCache.get(resolved);
+    }
+    const metadata = this.getProviderMetadata(resolved);
+    if (!metadata) {
+      throw new Error(`Unknown provider: ${providerId}`);
+    }
+    const config = await this.getProviderConfig(resolved);
+    const adapter = this.createAdapterFn(metadata.adapterKey || resolved, config);
+    this.adapterCache.set(resolved, adapter);
+    return adapter;
+  }
+
+  getProviderState(providerId) {
+    const resolved = normaliseProvider(providerId);
+    if (!this.providerState.has(resolved)) {
+      this.providerState.set(resolved, {
+        failures: 0,
+        blockedUntil: 0,
+        invalidAuth: false,
+        lastKeyHash: null,
+        calls: 0,
+        tokensIn: 0,
+        tokensOut: 0,
+        totalCost: 0,
+      });
+    }
+    return this.providerState.get(resolved);
+  }
+
+  markProviderFailure(providerId, error) {
+    const state = this.getProviderState(providerId);
+    state.failures += 1;
+    if (isAuthError(error)) {
+      state.invalidAuth = true;
+    }
+    if (state.failures >= CIRCUIT_BREAKER_THRESHOLD) {
+      state.blockedUntil = this.now() + CIRCUIT_BREAKER_TIMEOUT_MS;
+    }
+  }
+
+  markProviderSuccess(providerId, { tokensIn = 0, tokensOut = 0, cost = 0 } = {}) {
+    const state = this.getProviderState(providerId);
+    state.failures = 0;
+    state.blockedUntil = 0;
+    state.calls += 1;
+    state.tokensIn += tokensIn;
+    state.tokensOut += tokensOut;
+    state.totalCost += cost;
+  }
+
+  clearAuthFailure(providerId, apiKeyHash) {
+    const state = this.getProviderState(providerId);
+    if (state.lastKeyHash !== apiKeyHash) {
+      state.invalidAuth = false;
+    }
+    state.lastKeyHash = apiKeyHash;
+  }
+
+  isBlocked(providerId) {
+    const state = this.getProviderState(providerId);
+    return state.blockedUntil && state.blockedUntil > this.now();
+  }
+
+  async getApiKey(providerId, config) {
+    const resolved = normaliseProvider(providerId);
+    const stored = await this.readApiKeyFn(resolved);
+    if (stored) {
+      return stored;
+    }
+    const legacyId = getLegacyProviderId(resolved);
+    if (legacyId) {
+      const legacyKey = await this.readApiKeyFn(legacyId);
+      if (legacyKey) {
+        return legacyKey;
+      }
+    }
+    const envVar = config?.apiKeyEnvVar;
+    if (envVar && this.environment && typeof this.environment[envVar] === 'string') {
+      return this.environment[envVar];
+    }
+    return null;
+  }
+
+  getRoutingOrder(preference) {
+    const baseOrder = uniqueProviderOrder(this.getRoutingConfig().providerOrder || []);
+    const resolvedPreference = normaliseProvider(preference);
+    if (!resolvedPreference || resolvedPreference === 'auto') {
+      return baseOrder;
+    }
+    const metadata = this.getProviderMetadata(resolvedPreference);
+    if (metadata && metadata.tier !== PROVIDER_TIERS.PAID) {
+      const combined = uniqueProviderOrder([resolvedPreference, ...baseOrder]);
+      return combined.filter(providerId => providerId !== 'auto');
+    }
+    const combined = uniqueProviderOrder([...baseOrder, resolvedPreference]);
+    return combined.filter(providerId => providerId !== 'auto');
+  }
+
+  async ensureCostBudget(model, text) {
+    if (!this.costTracker) {
+      return true;
+    }
+    const routing = this.getRoutingConfig();
+    const estimate = this.costTracker.estimateCostForText(model, text);
+    if (routing.maxCostPerCallUsd > 0 && estimate > routing.maxCostPerCallUsd) {
+      return false;
+    }
+    return this.costTracker.canSpend(estimate);
+  }
+
+  async recordCost(model, promptTokens, completionTokens, metadata) {
+    if (!this.costTracker) {
+      return 0;
+    }
+    return this.costTracker.record(model, promptTokens, completionTokens, metadata);
+  }
+
+  async getVertexAccessToken({ project, location, credentialsPath }) {
+    const envCandidates = ['VERTEX_ACCESS_TOKEN', 'GOOGLE_VERTEX_TOKEN', 'GCP_ACCESS_TOKEN'];
+    for (const candidate of envCandidates) {
+      const value = this.environment?.[candidate];
+      if (typeof value === 'string' && value) {
+        return { token: value, expiresIn: 3600 };
+      }
+    }
+    if (typeof process === 'undefined' || !process.versions?.node) {
+      throw new Error('Vertex access tokens require Node.js environment or pre-supplied token.');
+    }
+    return fetchAccessToken({ credentialsPath, fetchImpl: this.fetch, scope: TOKEN_SCOPES });
+  }
+
+  async resolveGeminiAuth(providerId, config) {
+    const apiKey = await this.getApiKey(providerId, config);
+    const keyHash = hashValue(apiKey || '');
+    this.clearAuthFailure(providerId, keyHash);
+    if (apiKey) {
+      return { mode: 'apiKey', apiKey };
+    }
+
+    const geminiConfig = this.getGeminiConfig();
+    const project = this.environment?.[geminiConfig.projectEnv];
+    const location = this.environment?.[geminiConfig.locationEnv];
+    const credentialsPath = this.environment?.[geminiConfig.credentialsEnv];
+    if (!project || !location) {
+      throw new Error('Gemini Vertex configuration missing GCP_PROJECT or GCP_LOCATION.');
+    }
+    const endpoint = this.environment?.[geminiConfig.vertexEndpointEnv] || config.apiUrl;
+    const cached = this.vertexTokenCache;
+    if (cached && cached.expiresAt && cached.expiresAt > this.now() + 60_000) {
+      return { mode: 'vertex', accessToken: cached.token, project, location, endpoint };
+    }
+    const { token, expiresIn } = await this.getVertexAccessToken({ project, location, credentialsPath });
+    this.vertexTokenCache = {
+      token,
+      expiresAt: this.now() + (expiresIn * 1000),
+    };
+    return { mode: 'vertex', accessToken: token, project, location, endpoint };
+  }
+
+  async buildInvocationContext(providerId, config) {
+    const metadata = this.getProviderMetadata(providerId);
+    if (!metadata) {
+      throw new Error(`Unsupported provider: ${providerId}`);
+    }
+    if (!metadata.requiresKey) {
+      return { providerId: normaliseProvider(providerId), auth: { mode: 'none' } };
+    }
+    if (metadata.adapterKey === 'gemini') {
+      const auth = await this.resolveGeminiAuth(providerId, config);
+      return { providerId: normaliseProvider(providerId), auth };
+    }
+    const apiKey = await this.getApiKey(providerId, config);
+    const keyHash = hashValue(apiKey || '');
+    this.clearAuthFailure(providerId, keyHash);
+    if (!apiKey) {
+      throw new Error(`Missing ${getProviderDisplayName(providerId)} API key.`);
+    }
+    return { providerId: normaliseProvider(providerId), auth: { mode: 'apiKey', apiKey } };
+  }
+
+  async executeWithTimeout(providerId, operation, timeoutMs) {
+    if (timeoutMs > 0) {
+      return Promise.race([
+        operation(),
+        createTimeoutPromise(timeoutMs, `Provider ${providerId} timed out`),
+      ]);
+    }
+    return operation();
+  }
+
+  async invokeProvider(providerId, { text, language, metadata }) {
+    const resolved = normaliseProvider(providerId);
+    const config = await this.getProviderConfig(resolved);
+    const { auth } = await this.buildInvocationContext(resolved, config);
+    const adapter = await this.getAdapter(resolved);
+    const routing = this.getRoutingConfig();
+    const model = config.model || (auth.mode === 'vertex'
+      ? this.getGeminiConfig().defaultModelPaid
+      : this.getGeminiConfig().defaultModelFree);
+
+    const performCall = async () => {
+      const response = await adapter.summarise({
+        apiKey: auth.apiKey,
+        accessToken: auth.accessToken,
+        project: auth.project,
+        location: auth.location,
+        endpoint: auth.endpoint,
+        text,
+        language,
+        model,
+      });
+      const summary = response?.summary || '';
+      const promptTokens = typeof response?.promptTokens === 'number'
+        ? response.promptTokens
+        : this.costTracker?.estimateTokensFromText(text) || 0;
+      const completionTokens = typeof response?.completionTokens === 'number'
+        ? response.completionTokens
+        : this.costTracker?.estimateTokensFromText(summary) || 0;
+      const modelUsed = response?.model || model;
+      const cost = await this.recordCost(modelUsed, promptTokens, completionTokens, {
+        provider: resolved,
+        type: metadata?.type || 'summary',
+        url: metadata?.url,
+        segmentId: metadata?.segmentId,
+      });
+      this.markProviderSuccess(resolved, { tokensIn: promptTokens, tokensOut: completionTokens, cost });
+      return {
+        text: summary,
+        tokensIn: promptTokens,
+        tokensOut: completionTokens,
+        model: modelUsed,
+        provider: resolved,
+        cost,
+      };
+    };
+
+    const retryLimit = routing.retryLimit ?? DEFAULT_ROUTING_CONFIG.retryLimit;
+    let attempt = 0;
+    let lastError;
+    let backoff = DEFAULT_BACKOFF_MS;
+
+    while (attempt <= retryLimit) {
+      try {
+        const result = await this.executeWithTimeout(resolved, performCall, routing.timeoutMs);
+        return result;
+      } catch (error) {
+        lastError = error;
+        if (isAuthError(error)) {
+          this.markProviderFailure(resolved, error);
+          throw error;
+        }
+        attempt += 1;
+        if (attempt > retryLimit) {
+          this.markProviderFailure(resolved, error);
+          throw error;
+        }
+        const jitter = backoff * (0.5 + this.random());
+        await delay(Math.min(backoff + jitter, MAX_BACKOFF_MS));
+        backoff = Math.min(backoff * 2, MAX_BACKOFF_MS);
+      }
+    }
+
+    throw lastError || new Error(`Provider ${resolved} failed unexpectedly.`);
+  }
+
+  async generate({
+    text,
+    language = 'en',
+    providerPreference = null,
+    metadata = {},
+  } = {}) {
+    if (!text) {
+      throw new Error('generate requires source text.');
+    }
+    await this.ensureAgentConfigLoaded();
+    const routing = this.getRoutingConfig();
+    const order = this.getRoutingOrder(providerPreference);
+    const failures = [];
+    const disablePaid = routing.disablePaid === true;
+
+    for (const providerId of order) {
+      if (!providerId) {
+        continue;
+      }
+      const resolved = normaliseProvider(providerId);
+      const metadataEntry = this.getProviderMetadata(resolved);
+      if (!metadataEntry) {
+        continue;
+      }
+      if (disablePaid && metadataEntry.tier === PROVIDER_TIERS.PAID) {
+        this.logger.info(`[LLMRouter] ${resolved} skipped (paid disabled).`);
+        continue;
+      }
+      if (this.isBlocked(resolved)) {
+        this.logger.warn(`[LLMRouter] ${resolved} circuit open, skipping.`);
+        continue;
+      }
+
+      const config = await this.getProviderConfig(resolved);
+      const model = config.model || metadataEntry.adapterKey || 'unknown-model';
+      const canSpend = await this.ensureCostBudget(model, text);
+      if (!canSpend) {
+        this.logger.warn(`[LLMRouter] ${resolved} skipped (cost cap reached).`);
+        failures.push({ provider: resolved, reason: 'cost_cap' });
+        continue;
+      }
+
+      if (routing.dryRun) {
+        this.logger.info(`[LLMRouter] DRY_RUN → ${resolved} selected.`);
+        return {
+          text: '[dry-run] no request sent',
+          tokensIn: 0,
+          tokensOut: 0,
+          model,
+          provider: resolved,
+          cost: 0,
+          dryRun: true,
+        };
+      }
+
+      try {
+        const result = await this.invokeProvider(resolved, { text, language, metadata });
+        this.logger.info(`[LLMRouter] ${resolved} selected (${metadataEntry.tier}).`);
+        return {
+          text: result.text,
+          tokens_in: result.tokensIn,
+          tokens_out: result.tokensOut,
+          model: result.model,
+          provider: resolved,
+          cost_estimate: result.cost,
+        };
+      } catch (error) {
+        this.markProviderFailure(resolved, error);
+        this.logger.warn(`[LLMRouter] ${resolved} failed: ${error.message}`);
+        failures.push({ provider: resolved, error });
+      }
+    }
+
+    if (disablePaid) {
+      throw new Error('No free providers available and paid disabled.');
+    }
+
+    const errorMessages = failures
+      .map(entry => `${entry.provider}: ${entry.reason || entry.error?.message || 'unavailable'}`)
+      .join('; ');
+    throw new Error(`All providers failed. Attempts: ${errorMessages}`);
+  }
+}
+
+export { PROVIDER_TIERS };

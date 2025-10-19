@@ -11,17 +11,26 @@ function ensureFetch(options) {
   return (...args) => globalThis.fetch(...args);
 }
 
-function ensureApiKey(apiKey) {
-  if (!apiKey) {
-    throw new Error('Missing Gemini API key.');
-  }
-}
-
-function buildEndpoint(baseUrl, model, apiKey) {
+function buildAiStudioEndpoint(baseUrl, model, apiKey) {
   const trimmedBase = (baseUrl || DEFAULT_API_BASE).replace(/\/$/, '');
   const encodedModel = encodeURIComponent(model || DEFAULT_GEMINI_MODEL);
   const separator = trimmedBase.endsWith('/models') ? '' : '/models';
-  return `${trimmedBase}${separator}/${encodedModel}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  const query = apiKey ? `?key=${encodeURIComponent(apiKey)}` : '';
+  return `${trimmedBase}${separator}/${encodedModel}:generateContent${query}`;
+}
+
+function buildVertexEndpoint({ baseUrl, project, location, model }) {
+  const resolvedLocation = location || 'us-central1';
+  const resolvedProject = project;
+  if (!resolvedProject) {
+    throw new Error('Gemini Vertex configuration missing project.');
+  }
+  const base = (baseUrl || '').replace('{project}', resolvedProject).replace('{location}', resolvedLocation);
+  const trimmedBase = base.replace(/\/$/, '');
+  const encodedModel = encodeURIComponent(model || DEFAULT_GEMINI_MODEL);
+  const hasModels = trimmedBase.endsWith('/models');
+  const modelsBase = hasModels ? trimmedBase : `${trimmedBase}/models`;
+  return `${modelsBase}/${encodedModel}:generateContent`;
 }
 
 function extractSummary(data) {
@@ -64,11 +73,26 @@ export class GeminiAdapter {
     };
   }
 
-  async summarise({ apiKey, text, language, model }) {
-    ensureApiKey(apiKey);
+  async summarise({ apiKey, accessToken, project, location, endpoint, text, language, model }) {
     const modelToUse = model || this.config.model || DEFAULT_GEMINI_MODEL;
     const prompt = `Provide a concise, listener-friendly summary of the following webpage content. Use ${language} language.\n\n${text}`;
-    const endpoint = buildEndpoint(this.config.apiUrl, modelToUse, apiKey);
+    let url;
+    const headers = { ...this.headers };
+
+    if (accessToken) {
+      headers.Authorization = `Bearer ${accessToken}`;
+      url = buildVertexEndpoint({
+        baseUrl: endpoint || this.config.vertexEndpoint || this.config.apiUrl,
+        project,
+        location,
+        model: modelToUse,
+      });
+    } else {
+      if (!apiKey) {
+        throw new Error('Missing Gemini API key.');
+      }
+      url = buildAiStudioEndpoint(this.config.apiUrl, modelToUse, apiKey);
+    }
 
     const body = {
       contents: [
@@ -87,9 +111,9 @@ export class GeminiAdapter {
       body.generationConfig = generationConfig;
     }
 
-    const response = await this.fetch(endpoint, {
+    const response = await this.fetch(url, {
       method: 'POST',
-      headers: this.headers,
+      headers,
       body: JSON.stringify(body),
     });
 
@@ -101,7 +125,9 @@ export class GeminiAdapter {
       } catch (error) {
         message = response.statusText;
       }
-      throw new Error(`Gemini error (${response.status} ${response.statusText}): ${message}`);
+      const error = new Error(`Gemini error (${response.status} ${response.statusText}): ${message}`);
+      error.status = response.status;
+      throw error;
     }
 
     const data = await response.json();

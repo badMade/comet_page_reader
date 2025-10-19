@@ -81,7 +81,9 @@ export class OpenAIAdapter {
 
     if (!response.ok) {
       const message = await response.text();
-      throw new Error(`OpenAI error (${response.status}): ${message}`);
+      const error = new Error(`OpenAI error (${response.status}): ${message}`);
+      error.status = response.status;
+      throw error;
     }
 
     const data = await response.json();
@@ -117,7 +119,9 @@ export class OpenAIAdapter {
 
     if (!response.ok) {
       const message = await response.text();
-      throw new Error(`Transcription failed (${response.status}): ${message}`);
+      const error = new Error(`Transcription failed (${response.status}): ${message}`);
+      error.status = response.status;
+      throw error;
     }
 
     const data = await response.json();
@@ -141,7 +145,9 @@ export class OpenAIAdapter {
 
     if (!response.ok) {
       const message = await response.text();
-      throw new Error(`Speech synthesis failed (${response.status}): ${message}`);
+      const error = new Error(`Speech synthesis failed (${response.status}): ${message}`);
+      error.status = response.status;
+      throw error;
     }
 
     const mimeType = response.headers.get('content-type') || `audio/${format}`;

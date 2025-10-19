@@ -89,6 +89,41 @@ test('summarise surfaces HTTP errors verbosely', async () => {
   );
 });
 
+test('summarise supports Vertex access tokens', async () => {
+  let capturedRequest;
+  const fetchStub = async (url, options) => {
+    capturedRequest = { url, options };
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        model: 'publishers/google/models/gemini-1.5-pro',
+        candidates: [
+          { content: { parts: [{ text: 'Vertex summary.' }] } },
+        ],
+        usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 12 },
+      }),
+    };
+  };
+
+  const adapter = createAdapter({ apiUrl: 'https://us-central1-aiplatform.googleapis.com/v1/projects/demo/locations/us-central1/publishers/google/models' }, { fetchImpl: fetchStub });
+  const result = await adapter.summarise({
+    accessToken: 'vertex-token',
+    project: 'demo',
+    location: 'us-central1',
+    endpoint: 'https://us-central1-aiplatform.googleapis.com/v1/projects/demo/locations/us-central1/publishers/google/models',
+    text: 'Vertex content',
+    language: 'en',
+    model: 'gemini-1.5-pro',
+  });
+
+  assert.match(capturedRequest.url, /projects\/demo\/locations\/us-central1\/publishers\/google\/models\/gemini-1\.5-pro:generateContent/);
+  assert.equal(capturedRequest.options.headers.Authorization, 'Bearer vertex-token');
+  assert.equal(result.summary, 'Vertex summary.');
+  assert.equal(result.promptTokens, 10);
+  assert.equal(result.completionTokens, 12);
+});
+
 test('summarise requires an API key', async () => {
   const adapter = createAdapter();
   await assert.rejects(

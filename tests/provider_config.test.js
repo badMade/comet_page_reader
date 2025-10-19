@@ -4,7 +4,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
 
-import { loadProviderConfig, getFallbackProviderConfig } from '../utils/providerConfig.js';
+import {
+  loadProviderConfig,
+  getFallbackProviderConfig,
+  loadAgentConfiguration,
+  buildProviderConfig,
+} from '../utils/providerConfig.js';
 import { loadEnv } from '../scripts/loadEnv.js';
 
 test('loadProviderConfig merges provider overrides from agent.yaml', async () => {
@@ -38,6 +43,28 @@ test('loadProviderConfig falls back to defaults when suppressErrors is enabled',
   assert.equal(config.model, 'gpt-4o-mini');
   assert.equal(config.apiUrl, 'https://api.openai.com/v1/chat/completions');
   assert.equal(config.apiKeyEnvVar, 'OPENAI_API_KEY');
+});
+
+test('loadAgentConfiguration merges routing overrides and honours env order', async () => {
+  const originalOrder = process.env.PROVIDER_ORDER;
+  const yamlSource = `routing:\n  provider_order:\n    - gemini_free\n    - openai_paid\n  max_cost_per_call_usd: 0.02\n  max_monthly_cost_usd: 5\n`;
+  process.env.PROVIDER_ORDER = 'ollama,huggingface_free';
+
+  try {
+    const agentConfig = await loadAgentConfiguration({ source: yamlSource });
+    assert.deepEqual(agentConfig.routing.providerOrder, ['ollama', 'huggingface_free']);
+    assert.equal(agentConfig.routing.maxCostPerCallUsd, 0.02);
+    assert.equal(agentConfig.routing.maxMonthlyCostUsd, 5);
+
+    const providerConfig = buildProviderConfig(agentConfig, 'gemini_free');
+    assert.equal(providerConfig.provider, 'gemini_free');
+  } finally {
+    if (typeof originalOrder === 'undefined') {
+      delete process.env.PROVIDER_ORDER;
+    } else {
+      process.env.PROVIDER_ORDER = originalOrder;
+    }
+  }
 });
 
 test('getFallbackProviderConfig returns an independent copy', () => {
