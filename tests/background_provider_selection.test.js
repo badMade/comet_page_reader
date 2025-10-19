@@ -66,7 +66,7 @@ test('falls back to default provider when adapter registration fails', async () 
     assert.equal(persistentStore['comet:apiKey:openai_paid'], 'openai-key');
     const details = await module.getApiKeyDetails();
     assert.equal(details.provider, 'openai_paid');
-    assert.equal(details.requestedProvider, 'openai_paid');
+    assert.equal(details.requestedProvider, 'auto');
   } finally {
     __clearAgentYamlOverrideForTests();
     uninstall();

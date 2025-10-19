@@ -72,7 +72,12 @@ test('popup initialises immediately when DOMContentLoaded already fired', async 
     sendMessage(message, callback) {
       recordedMessages.push(message);
       const responses = {
-        'comet:getApiKeyDetails': { provider: 'openai', apiKey: null, lastUpdated: null },
+        'comet:getApiKeyDetails': {
+          provider: 'openai',
+          requestedProvider: 'auto',
+          apiKey: null,
+          lastUpdated: null,
+        },
         'comet:getUsage': { totalCostUsd: 0, limitUsd: 5, lastReset: Date.now() },
         'comet:setProvider': { provider: 'openai', requiresApiKey: true },
         'comet:setApiKey': null,
@@ -137,6 +142,9 @@ test('popup initialises immediately when DOMContentLoaded already fired', async 
     const apiForm = getElement('api-form');
     const submitHandlers = apiForm.listeners.get('submit') || [];
     assert.ok(submitHandlers.length > 0, 'submit handler should be registered immediately');
+
+    const providerSelect = getElement('providerSelect');
+    assert.equal(providerSelect.value, 'auto');
 
     const apiKeyInput = getElement('apiKey');
     apiKeyInput.value = 'test-key';
