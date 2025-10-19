@@ -176,3 +176,25 @@ test('content script disposes observers when the extension context is invalidate
     },
   );
 });
+
+test('content script aborts quietly when utilities import fails due to context invalidation', async () => {
+  await withContentScriptEnvironment(
+    '<p>Import guard</p>',
+    'https://example.com/import-failure',
+    async ({ listeners, runtime }) => {
+      runtime.getURL = () => {
+        throw new Error('Extension context invalidated.');
+      };
+
+      await assert.doesNotReject(
+        async () => {
+          await import(`../content/content.js?importFailureTest=${Date.now()}`);
+        },
+        undefined,
+        'Importing the content script should not propagate context invalidation errors.',
+      );
+
+      assert.equal(listeners.length, 0, 'Runtime listeners should not be registered when initialisation fails.');
+    },
+  );
+});
