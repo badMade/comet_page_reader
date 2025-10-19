@@ -128,6 +128,71 @@ function setStatus(message) {
  * @param {Function} handler - Async handler invoked in response to an event.
  * @returns {Function} Decorated handler that reports errors via setStatus.
  */
+const DOM_EXCEPTION_FRIENDLY_MESSAGES = {
+  NotAllowedError: 'Microphone access was blocked. Allow microphone access and try again.',
+  NotFoundError: 'No microphone was found. Check your input device and try again.',
+  NotReadableError:
+    'The microphone is already in use. Close other applications that might be using it and try again.',
+  AbortError: 'Recording was interrupted before it could finish. Try again.',
+  SecurityError: 'Microphone access is blocked by your browser. Update the permission settings and retry.',
+};
+
+function resolveStatusMessage(error, fallbackMessage = 'Something went wrong.') {
+  if (!error) {
+    return fallbackMessage;
+  }
+
+  if (typeof error === 'string') {
+    const trimmed = error.trim();
+    return trimmed.length > 0 ? trimmed : fallbackMessage;
+  }
+
+  const rawMessage = typeof error.message === 'string' ? error.message.trim() : '';
+  if (rawMessage && rawMessage !== '[object DOMException]') {
+    return rawMessage;
+  }
+
+  const isDomException =
+    typeof DOMException !== 'undefined' &&
+    error instanceof DOMException;
+  if (isDomException) {
+    const friendly = DOM_EXCEPTION_FRIENDLY_MESSAGES[error.name];
+    if (friendly) {
+      return friendly;
+    }
+    if (typeof error.name === 'string') {
+      const trimmedName = error.name.trim();
+      if (trimmedName.length > 0 && trimmedName !== 'Error') {
+        return `Request failed: ${trimmedName}`;
+      }
+    }
+  }
+
+  if (typeof error.name === 'string') {
+    const trimmedName = error.name.trim();
+    if (trimmedName.length > 0 && trimmedName !== 'Error') {
+      return trimmedName;
+    }
+  }
+
+  try {
+    const stringified = String(error);
+    const trimmed = stringified.trim();
+    if (
+      trimmed &&
+      trimmed !== '[object Object]' &&
+      trimmed !== '[object DOMException]' &&
+      trimmed !== 'Error'
+    ) {
+      return trimmed;
+    }
+  } catch (stringifyError) {
+    console.debug('Failed to stringify error for status message', stringifyError);
+  }
+
+  return fallbackMessage;
+}
+
 function withErrorHandling(handler) {
   return async event => {
     event?.preventDefault?.();
@@ -135,7 +200,7 @@ function withErrorHandling(handler) {
       await handler(event);
     } catch (error) {
       console.error(error);
-      setStatus(error.message || 'Something went wrong.');
+      setStatus(resolveStatusMessage(error));
     }
   };
 }
@@ -903,6 +968,7 @@ const __TESTING__ = {
   normaliseError,
   isContextInvalidatedError,
   createContextInvalidatedError,
+  resolveStatusMessage,
 };
 
 export { sendMessageToTab, sendMessage, __TESTING__ };
