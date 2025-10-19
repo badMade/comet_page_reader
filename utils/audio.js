@@ -53,7 +53,7 @@ export function bufferToWave(buffer, sampleRate) {
 }
 
 /**
- * Decodes base64 audio payloads returned by the OpenAI TTS API.
+ * Decodes base64 audio payloads returned by text-to-speech APIs.
  *
  * @param {string} base64 - Encoded audio data.
  * @returns {ArrayBuffer} Raw binary representation.

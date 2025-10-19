@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Comet Page Reader",
-  "description": "Summarise and read webpages aloud using connected AI services.",
+  "description": "Summarise and read webpages aloud using your chosen AI provider.",
   "version": "0.1.0",
   "minimum_chrome_version": "109",
   "permissions": [

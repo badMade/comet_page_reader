@@ -30,7 +30,7 @@ const MODEL_PRICING = {
 };
 
 /**
- * Tracks OpenAI usage across multiple API calls to enforce a configurable cost
+ * Tracks AI provider usage across multiple API calls to enforce a configurable cost
  * ceiling. The tracker records every request for display in the popup UI.
  */
 export class CostTracker {
@@ -125,7 +125,7 @@ export class CostTracker {
 
   /**
    * Provides a rough token estimate based on the word count. Used for
-   * projecting costs when OpenAI does not return token usage data.
+   * projecting costs when a provider does not return token usage data.
    *
    * @param {string} text - Input text.
    * @returns {number} Estimated token count.

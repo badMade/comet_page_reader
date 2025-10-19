@@ -58,7 +58,7 @@ const mockHandlers = {
       summaries: [
         {
           id: 'segment-1',
-          summary: 'This is a mock summary returned without calling OpenAI.',
+          summary: 'This is a mock summary returned without contacting the provider.',
         },
       ],
       usage: { totalCostUsd: 0.0123, limitUsd: 5, lastReset: Date.now() - 3600 * 1000 },
