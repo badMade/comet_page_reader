@@ -37,6 +37,32 @@ let fsModule;
 
 const isNode = typeof process !== 'undefined' && !!process.versions && !!process.versions.node;
 
+function resolveConfigPath(configPath) {
+  if (typeof configPath !== 'string' || configPath.length === 0) {
+    return configPath;
+  }
+
+  if (isNode) {
+    return configPath;
+  }
+
+  try {
+    const runtime = globalThis?.chrome?.runtime?.getURL
+      ? globalThis.chrome.runtime
+      : globalThis?.browser?.runtime?.getURL
+      ? globalThis.browser.runtime
+      : null;
+
+    if (runtime?.getURL) {
+      return runtime.getURL(configPath);
+    }
+  } catch (error) {
+    // Ignore resolution failures and fall back to the provided path.
+  }
+
+  return configPath;
+}
+
 function normaliseLevel(level) {
   if (typeof level !== 'string') {
     return activeConfig.level;
@@ -269,7 +295,8 @@ export async function loadLoggingConfig(configPath = 'logging_config.yaml') {
         return;
       }
     } else if (typeof fetch === 'function') {
-      const response = await fetch(configPath);
+      const resolvedPath = resolveConfigPath(configPath);
+      const response = await fetch(resolvedPath);
       if (response.ok) {
         rawConfig = await response.text();
       } else if (configPath !== 'logging_config.yaml') {
