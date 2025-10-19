@@ -146,30 +146,32 @@ test('API key metadata is stored and cleared alongside the key', async () => {
     const moduleUrl = new URL('../utils/apiKeyStore.js', import.meta.url);
     moduleUrl.searchParams.set('cacheBust', `${Date.now()}-${Math.random()}`);
     const {
-      API_KEY_METADATA_STORAGE_KEY,
-      API_KEY_STORAGE_KEY,
+      DEFAULT_PROVIDER,
+      getProviderStorageKeys,
       fetchApiKeyDetails,
       saveApiKey,
     } = await import(moduleUrl.href);
 
+    const { apiKey: storageKey, metadata: metadataKey } = getProviderStorageKeys(DEFAULT_PROVIDER);
     const before = Date.now();
     await saveApiKey('test-key', overrides);
     const details = await fetchApiKeyDetails(overrides);
     assert.equal(details.apiKey, 'test-key');
     assert.equal(typeof details.lastUpdated, 'number');
     assert.ok(details.lastUpdated >= before);
+    assert.equal(details.provider, DEFAULT_PROVIDER);
 
-    const storedMeta = persistentStore.get(API_KEY_METADATA_STORAGE_KEY);
+    const storedMeta = persistentStore.get(metadataKey);
     assert.ok(storedMeta);
     assert.equal(typeof storedMeta.lastUpdated, 'number');
-    assert.equal(persistentStore.get(API_KEY_STORAGE_KEY), 'test-key');
+    assert.equal(persistentStore.get(storageKey), 'test-key');
 
     await saveApiKey('   ', overrides);
     const cleared = await fetchApiKeyDetails(overrides);
     assert.equal(cleared.apiKey, null);
     assert.equal(cleared.lastUpdated, null);
-    assert.equal(persistentStore.has(API_KEY_METADATA_STORAGE_KEY), false);
-    assert.equal(persistentStore.has(API_KEY_STORAGE_KEY), false);
+    assert.equal(persistentStore.has(metadataKey), false);
+    assert.equal(persistentStore.has(storageKey), false);
   } finally {
     uninstall();
   }
@@ -183,21 +185,23 @@ test('API key writes fall back to local storage when sync storage fails', async 
     const moduleUrl = new URL('../utils/apiKeyStore.js', import.meta.url);
     moduleUrl.searchParams.set('cacheBust', `${Date.now()}-${Math.random()}`);
     const {
-      API_KEY_METADATA_STORAGE_KEY,
-      API_KEY_STORAGE_KEY,
+      DEFAULT_PROVIDER,
+      getProviderStorageKeys,
       fetchApiKeyDetails,
       saveApiKey,
     } = await import(moduleUrl.href);
 
+    const { apiKey: storageKey, metadata: metadataKey } = getProviderStorageKeys(DEFAULT_PROVIDER);
     const before = Date.now();
     await saveApiKey('sync-disabled');
     const details = await fetchApiKeyDetails();
     assert.equal(details.apiKey, 'sync-disabled');
     assert.ok(details.lastUpdated >= before);
+    assert.equal(details.provider, DEFAULT_PROVIDER);
 
-    const storedKey = persistentStore.get(API_KEY_STORAGE_KEY);
+    const storedKey = persistentStore.get(storageKey);
     assert.equal(storedKey, 'sync-disabled');
-    const metadata = persistentStore.get(API_KEY_METADATA_STORAGE_KEY);
+    const metadata = persistentStore.get(metadataKey);
     assert.ok(metadata);
     assert.equal(typeof metadata.lastUpdated, 'number');
 
@@ -226,11 +230,21 @@ test('saveApiKey falls back to local storage when sync set reports disabled sync
         wrappedCallback();
       }
     },
+    remove(_keys, callback) {
+      if (typeof callback === 'function') {
+        callback();
+      }
+    },
   };
 
   const localArea = {
     set(items, callback) {
       localSetCalls.push({ ...items });
+      if (typeof callback === 'function') {
+        callback();
+      }
+    },
+    remove(_keys, callback) {
       if (typeof callback === 'function') {
         callback();
       }
@@ -245,23 +259,78 @@ test('saveApiKey falls back to local storage when sync set reports disabled sync
   try {
     const moduleUrl = new URL('../utils/apiKeyStore.js', import.meta.url);
     moduleUrl.searchParams.set('cacheBust', `${Date.now()}-${Math.random()}`);
-    const { saveApiKey, API_KEY_STORAGE_KEY, API_KEY_METADATA_STORAGE_KEY } = await import(
-      moduleUrl.href
-    );
+    const { DEFAULT_PROVIDER, getProviderStorageKeys, saveApiKey } = await import(moduleUrl.href);
 
     const storedKey = await saveApiKey('sample-key');
     assert.equal(storedKey, 'sample-key');
 
     assert.equal(localSetCalls.length, 2);
-    const keyWrite = localSetCalls.find(call => API_KEY_STORAGE_KEY in call);
-    assert.deepEqual(keyWrite, { [API_KEY_STORAGE_KEY]: 'sample-key' });
+    const { apiKey: storageKey, metadata: metadataKey } = getProviderStorageKeys(DEFAULT_PROVIDER);
+    const keyWrite = localSetCalls.find(call => storageKey in call);
+    assert.deepEqual(keyWrite, { [storageKey]: 'sample-key' });
 
-    const metadataWrite = localSetCalls.find(call => API_KEY_METADATA_STORAGE_KEY in call);
+    const metadataWrite = localSetCalls.find(call => metadataKey in call);
     assert.ok(metadataWrite);
-    const metadata = metadataWrite[API_KEY_METADATA_STORAGE_KEY];
+    const metadata = metadataWrite[metadataKey];
     assert.equal(typeof metadata, 'object');
     assert.equal(typeof metadata.lastUpdated, 'number');
   } finally {
     delete globalThis.chrome;
   }
+});
+
+test('API keys are isolated per provider and can be cleared independently', async () => {
+  const persistentStore = new Map();
+
+  const overrides = {
+    getValue: async key => persistentStore.get(key),
+    setValue: async (key, value) => {
+      persistentStore.set(key, value);
+      return value;
+    },
+    removeValue: async key => {
+      persistentStore.delete(key);
+    },
+  };
+
+  const moduleUrl = new URL('../utils/apiKeyStore.js', import.meta.url);
+  moduleUrl.searchParams.set('cacheBust', `${Date.now()}-${Math.random()}`);
+  const {
+    getProviderStorageKeys,
+    fetchApiKeyDetails,
+    saveApiKey,
+    deleteApiKey,
+  } = await import(moduleUrl.href);
+
+  await saveApiKey('openai-key', { provider: 'openai', overrides });
+  await saveApiKey('anthropic-key', { provider: 'anthropic', overrides });
+
+  const openaiKeys = getProviderStorageKeys('openai');
+  const anthropicKeys = getProviderStorageKeys('anthropic');
+
+  assert.equal(persistentStore.get(openaiKeys.apiKey), 'openai-key');
+  assert.equal(persistentStore.get(anthropicKeys.apiKey), 'anthropic-key');
+
+  const openaiDetails = await fetchApiKeyDetails({ provider: 'openai', overrides });
+  const anthropicDetails = await fetchApiKeyDetails({ provider: 'anthropic', overrides });
+
+  assert.equal(openaiDetails.apiKey, 'openai-key');
+  assert.equal(openaiDetails.provider, 'openai');
+  assert.equal(typeof openaiDetails.lastUpdated, 'number');
+
+  assert.equal(anthropicDetails.apiKey, 'anthropic-key');
+  assert.equal(anthropicDetails.provider, 'anthropic');
+  assert.equal(typeof anthropicDetails.lastUpdated, 'number');
+
+  await deleteApiKey({ provider: 'anthropic', overrides });
+
+  const anthropicAfterDelete = await fetchApiKeyDetails({ provider: 'anthropic', overrides });
+  assert.equal(anthropicAfterDelete.apiKey, null);
+  assert.equal(anthropicAfterDelete.lastUpdated, null);
+  assert.equal(persistentStore.has(anthropicKeys.apiKey), false);
+  assert.equal(persistentStore.has(anthropicKeys.metadata), false);
+
+  const openaiAfterDelete = await fetchApiKeyDetails({ provider: 'openai', overrides });
+  assert.equal(openaiAfterDelete.apiKey, 'openai-key');
+  assert.equal(persistentStore.get(openaiKeys.apiKey), 'openai-key');
 });
