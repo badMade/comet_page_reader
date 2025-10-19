@@ -448,15 +448,85 @@ async function synthesiseSpeech({ text, voice = 'alloy', format = 'mp3', provide
 }
 
 async function getSummary({ url, segment, language, provider }) {
-  const providerId = await getActiveProviderId(provider);
-  const cacheKey = getCacheKey({
+  const router = await ensureRouter();
+  const normaliseForCache = value => {
+    if (!value) {
+      return null;
+    }
+    const resolved = resolveAlias(value);
+    const normalised = normaliseProviderId(resolved, resolved);
+    return normalised === 'auto' ? null : normalised;
+  };
+
+  const candidateProviders = [];
+  const seenCandidates = new Set();
+  const addCandidate = value => {
+    const normalised = normaliseForCache(value);
+    if (!normalised || seenCandidates.has(normalised)) {
+      return;
+    }
+    seenCandidates.add(normalised);
+    candidateProviders.push(normalised);
+  };
+
+  if (router && typeof router.getRoutingOrder === 'function') {
+    try {
+      const order = router.getRoutingOrder(provider) || [];
+      order.forEach(addCandidate);
+    } catch (error) {
+      console.warn('Failed to derive routing order for cache lookup.', error);
+    }
+  }
+
+  const activeProviderRaw = await getActiveProviderId(provider);
+  addCandidate(activeProviderRaw);
+
+  const baseKeyArgs = {
     url,
-    segmentId: segment.id,
+    segmentId: segment?.id,
     language,
-    providerId,
-  });
-  if (memoryCache.has(cacheKey)) {
+  };
+
+  const checkedKeys = new Set();
+  for (const candidate of candidateProviders) {
+    const cacheKey = getCacheKey({ ...baseKeyArgs, providerId: candidate });
+    if (checkedKeys.has(cacheKey)) {
+      continue;
+    }
+    checkedKeys.add(cacheKey);
     const cached = memoryCache.get(cacheKey);
+    if (!cached) {
+      continue;
+    }
+    if (typeof cached === 'string') {
+      return cached;
+    }
+    if (cached && typeof cached === 'object') {
+      const cachedProvider = normaliseForCache(cached.provider) || candidate;
+      if (cachedProvider && cachedProvider !== candidate) {
+        memoryCache.delete(cacheKey);
+        continue;
+      }
+      if (typeof cached.summary === 'string') {
+        return cached.summary;
+      }
+    }
+  }
+
+  for (const [key, cached] of memoryCache.entries()) {
+    if (checkedKeys.has(key)) {
+      continue;
+    }
+    const parsed = parseCacheKey(key);
+    if (!parsed) {
+      continue;
+    }
+    const sameUrl = parsed.url === url;
+    const sameSegment = parsed.segmentId === segment?.id;
+    const sameLanguage = (parsed.language || 'en') === (language || 'en');
+    if (!sameUrl || !sameSegment || !sameLanguage) {
+      continue;
+    }
     if (typeof cached === 'string') {
       return cached;
     }
@@ -464,11 +534,24 @@ async function getSummary({ url, segment, language, provider }) {
       return cached.summary;
     }
   }
+
   const result = await requestSummary({ url, segment, language, provider });
   const summary = typeof result?.text === 'string' ? result.text : '';
+  const routedProvider = normaliseForCache(result?.provider);
+  const activeProvider = normaliseForCache(activeProviderRaw);
+  const targetProvider = routedProvider || activeProvider || candidateProviders[0] || DEFAULT_PROVIDER_ID;
+  const cacheKey = getCacheKey({ ...baseKeyArgs, providerId: targetProvider });
+
+  if (activeProvider && targetProvider !== activeProvider) {
+    const staleKey = getCacheKey({ ...baseKeyArgs, providerId: activeProvider });
+    if (staleKey !== cacheKey) {
+      memoryCache.delete(staleKey);
+    }
+  }
+
   memoryCache.set(cacheKey, {
     summary,
-    provider: result?.provider,
+    provider: targetProvider,
     model: result?.model,
     cost: result?.cost_estimate,
   });
