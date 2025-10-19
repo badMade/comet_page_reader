@@ -49,20 +49,8 @@
     return;
   }
 
-  let loggerModulePromise;
-  let domModulePromise;
-
-  try {
-    loggerModulePromise = import(resolveRuntimeUrl('utils/logger.js'));
-    domModulePromise = import(resolveRuntimeUrl('utils/dom.js'));
-  } catch (error) {
-    if (isContextInvalidated(error)) {
-      console.debug('Extension context invalidated before resources resolved.', error);
-      return;
-    }
-    console.error('Failed to resolve extension resources for content script.', error);
-    return;
-  }
+  const loggerModulePromise = import(resolveRuntimeUrl('utils/logger.js'));
+  const domModulePromise = import(resolveRuntimeUrl('utils/dom.js'));
 
   let createLogger;
   let loadLoggingConfig;
