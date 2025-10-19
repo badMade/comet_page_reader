@@ -1,3 +1,11 @@
+/**
+ * Provider metadata helpers used by both the popup and background worker. The
+ * utilities here keep label rendering, alias resolution, and capability checks
+ * consistent across the extension.
+ *
+ * @module utils/providers
+ */
+
 const DEFAULT_PROVIDER_ID = 'auto';
 
 const PROVIDER_ALIASES = Object.freeze({
@@ -26,6 +34,15 @@ const PROVIDERS = Object.freeze([
   Object.freeze({ id: 'gemini', label: 'Google Gemini (Legacy)', requiresApiKey: true }),
 ]);
 
+/**
+ * Normalises provider identifiers, trimming whitespace and lowering the case
+ * while falling back to a sensible default when the input is invalid.
+ *
+ * @param {string} value - Candidate provider identifier.
+ * @param {string} [fallback=DEFAULT_PROVIDER_ID] - Value returned when the
+ *   input is missing.
+ * @returns {string} Sanitised provider identifier.
+ */
 function normaliseProviderId(value, fallback = DEFAULT_PROVIDER_ID) {
   if (typeof value !== 'string') {
     return fallback;
@@ -34,6 +51,13 @@ function normaliseProviderId(value, fallback = DEFAULT_PROVIDER_ID) {
   return trimmed || fallback;
 }
 
+/**
+ * Returns a copy of the provider catalogue describing each adapter exposed to
+ * the user interface.
+ *
+ * @returns {Array<{id: string, label: string, requiresApiKey: boolean}>}
+ *   Provider definitions ordered for display.
+ */
 function listProviders() {
   return PROVIDERS.map(provider => ({ ...provider }));
 }
@@ -43,6 +67,13 @@ function findProvider(providerId) {
   return PROVIDERS.find(provider => provider.id === normalised) || null;
 }
 
+/**
+ * Normalises provider identifiers so legacy aliases resolve to the modern
+ * provider IDs expected by the router and adapters.
+ *
+ * @param {string} providerId - Provider identifier or alias.
+ * @returns {string} Canonical provider identifier.
+ */
 function resolveAlias(providerId) {
   if (!providerId) {
     return providerId;
@@ -51,6 +82,13 @@ function resolveAlias(providerId) {
   return PROVIDER_ALIASES[normalised] || normalised;
 }
 
+/**
+ * Indicates whether the selected provider requires an API key. Unknown
+ * providers default to requiring authentication.
+ *
+ * @param {string} providerId - Provider identifier to evaluate.
+ * @returns {boolean} True when an API key is mandatory.
+ */
 function providerRequiresApiKey(providerId) {
   const provider = findProvider(providerId);
   if (!provider) {
@@ -63,6 +101,13 @@ function capitaliseWords(value) {
   return value.replace(/\b([a-z])/g, (_, char) => char.toUpperCase());
 }
 
+/**
+ * Generates a human-readable label for the given provider. Custom display names
+ * fall back to a capitalised identifier when metadata is missing.
+ *
+ * @param {string} providerId - Provider identifier or alias.
+ * @returns {string} Render-friendly provider label.
+ */
 function getProviderDisplayName(providerId) {
   if (!providerId) {
     return 'Provider';
@@ -75,6 +120,13 @@ function getProviderDisplayName(providerId) {
   return capitaliseWords(normalised);
 }
 
+/**
+ * Determines whether the supplied provider identifier is recognised by the
+ * extension.
+ *
+ * @param {string} providerId - Provider identifier or alias.
+ * @returns {boolean} True when the provider is available.
+ */
 function isSupportedProvider(providerId) {
   return Boolean(findProvider(providerId));
 }
