@@ -76,6 +76,21 @@ function assertMissingKey(Adapter, providerKey) {
   });
 }
 
+function assertOllamaAllowsMissingKey() {
+  const adapter = new OllamaAdapter(createAdapterConfig('ollama'));
+  let captured;
+  try {
+    adapter.summarise({ apiKey: null, text: SAMPLE_TEXT, language: SAMPLE_LANGUAGE });
+  } catch (error) {
+    captured = error;
+  }
+  assert.ok(captured instanceof Error);
+  assert.match(captured.message, /adapter placeholder/);
+  const payload = extractPlaceholderPayload(captured);
+  assert.equal(payload.endpoint, 'https://api.ollama.example/v1/chat');
+  assert.equal(payload.model, 'ollama-model');
+}
+
 const adapters = [
   ['anthropic', AnthropicAdapter],
   ['mistral', MistralAdapter],
@@ -88,6 +103,10 @@ for (const [providerKey, Adapter] of adapters) {
     assertSummarisePlaceholder(Adapter, providerKey);
     assertTranscribePlaceholder(Adapter, providerKey);
     assertSynthesisePlaceholder(Adapter, providerKey);
-    assertMissingKey(Adapter, providerKey);
+    if (providerKey === 'ollama') {
+      assertOllamaAllowsMissingKey();
+    } else {
+      assertMissingKey(Adapter, providerKey);
+    }
   });
 }
