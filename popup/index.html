@@ -58,15 +58,15 @@
         <h2 id="actions-section">Actions</h2>
         <div class="actions">
           <button id="summariseBtn" class="primary">Summarise current page</button>
-          <button id="readBtn" class="secondary">Read highlighted segment</button>
-          <button id="readPageBtn" class="secondary">Read entire page</button>
+          <button id="readBtn" class="primary">Read highlighted segment</button>
+          <button id="readPageBtn" class="primary">Read entire page</button>
         </div>
       </section>
 
       <section aria-labelledby="speech-section">
         <h2 id="speech-section">Speech control</h2>
         <div class="microphone">
-          <button id="pushToTalkBtn" aria-pressed="false">Push to talk</button>
+          <button id="pushToTalkBtn" class="primary" aria-pressed="false">Push to talk</button>
           <span id="recordingStatus" role="status" aria-live="polite"></span>
         </div>
         <div class="playback">
@@ -82,9 +82,9 @@
             </select>
           </div>
           <div class="playback-controls">
-            <button id="playBtn" disabled>Play</button>
-            <button id="pauseBtn" disabled>Pause</button>
-            <button id="stopBtn" disabled>Stop</button>
+            <button id="playBtn" class="primary" disabled>Play</button>
+            <button id="pauseBtn" class="primary" disabled>Pause</button>
+            <button id="stopBtn" class="primary" disabled>Stop</button>
           </div>
         </div>
       </section>
@@ -92,7 +92,7 @@
       <section aria-labelledby="usage-section">
         <h2 id="usage-section">Usage</h2>
         <dl id="usageDetails" class="usage"></dl>
-        <button id="resetUsageBtn" class="link">Reset usage</button>
+        <button id="resetUsageBtn" class="primary">Reset usage</button>
       </section>
 
       <section aria-labelledby="disclaimer-section" class="disclaimer">
