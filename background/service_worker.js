@@ -488,6 +488,7 @@ async function getSummary({ url, segment, language, provider }) {
   };
 
   const checkedKeys = new Set();
+  const candidateSet = new Set(candidateProviders);
   for (const candidate of candidateProviders) {
     const cacheKey = getCacheKey({ ...baseKeyArgs, providerId: candidate });
     if (checkedKeys.has(cacheKey)) {
@@ -525,6 +526,16 @@ async function getSummary({ url, segment, language, provider }) {
     const sameSegment = parsed.segmentId === segment?.id;
     const sameLanguage = (parsed.language || 'en') === (language || 'en');
     if (!sameUrl || !sameSegment || !sameLanguage) {
+      continue;
+    }
+    const parsedProvider = normaliseForCache(parsed.providerId);
+    if (parsedProvider) {
+      if (candidateSet.size > 0 && !candidateSet.has(parsedProvider)) {
+        memoryCache.delete(key);
+        continue;
+      }
+    } else if (candidateSet.size > 0) {
+      memoryCache.delete(key);
       continue;
     }
     if (typeof cached === 'string') {
