@@ -1,7 +1,20 @@
+/**
+ * Utility for loading environment variables from a `.env` file during local
+ * development.
+ *
+ * @module scripts/loadEnv
+ */
+
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import dotenv from 'dotenv';
 
+/**
+ * Loads environment variables from a `.env` file using `dotenv`.
+ *
+ * @param {{cwd?: string, path?: string}} [options={}] - Loader options.
+ * @returns {Record<string, string>} Parsed environment variables.
+ */
 export function loadEnv(options = {}) {
   if (typeof process === 'undefined') {
     return {};

@@ -1,3 +1,10 @@
+/**
+ * Adapter responsible for interacting with Google Gemini across AI Studio and
+ * Vertex AI deployments.
+ *
+ * @module background/adapters/gemini
+ */
+
 const DEFAULT_GEMINI_MODEL = 'gemini-1.5-flash-latest';
 const DEFAULT_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 
@@ -57,13 +64,26 @@ function normaliseUsage(usageMetadata) {
   };
 }
 
+/**
+ * Provides helper methods for issuing Gemini summarisation requests.
+ */
 export class GeminiAdapter {
+  /**
+   * @param {object} config - Provider configuration block.
+   * @param {{fetchImpl?: Function}} [options={}] - Dependency overrides.
+   */
   constructor(config, options = {}) {
     this.config = config || {};
     this.fetch = ensureFetch(options);
     this.headers = { 'Content-Type': 'application/json', ...(this.config.headers || {}) };
   }
 
+  /**
+   * Declares cost metadata for the router. Gemini currently exposes summary
+   * costs only, so the remaining entries are placeholders.
+   *
+   * @returns {object} Cost metadata grouped by capability.
+   */
   getCostMetadata() {
     const model = this.config.model || DEFAULT_GEMINI_MODEL;
     return {
@@ -73,6 +93,22 @@ export class GeminiAdapter {
     };
   }
 
+  /**
+   * Issues a summarisation request to either AI Studio or Vertex Gemini.
+   *
+   * @param {{
+   *   apiKey?: string,
+   *   accessToken?: string,
+   *   project?: string,
+   *   location?: string,
+   *   endpoint?: string,
+   *   text: string,
+   *   language: string,
+   *   model?: string,
+   * }} params - Summarisation parameters.
+   * @returns {Promise<{summary: string, model: string, promptTokens?: number, completionTokens?: number}>}
+   *   Structured response payload.
+   */
   async summarise({ apiKey, accessToken, project, location, endpoint, text, language, model }) {
     const modelToUse = model || this.config.model || DEFAULT_GEMINI_MODEL;
     const prompt = `Provide a concise, listener-friendly summary of the following webpage content. Use ${language} language.\n\n${text}`;
@@ -142,10 +178,20 @@ export class GeminiAdapter {
     };
   }
 
+  /**
+   * Gemini currently lacks a transcription API, so this method throws.
+   *
+   * @throws {Error} Always, indicating the capability is unavailable.
+   */
   async transcribe() {
     throw new Error('Gemini transcription is not supported.');
   }
 
+  /**
+   * Gemini currently lacks a speech synthesis API, so this method throws.
+   *
+   * @throws {Error} Always, indicating the capability is unavailable.
+   */
   async synthesise() {
     throw new Error('Gemini speech synthesis is not supported.');
   }

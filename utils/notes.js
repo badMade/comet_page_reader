@@ -1,3 +1,11 @@
+/**
+ * Maintains the developer notes file shipped with the extension. The helper in
+ * this module rewrites `notes.txt` with canonical content so the repository
+ * always exposes the latest troubleshooting tips and setup guidance.
+ *
+ * @module utils/notes
+ */
+
 const NOTES_FILENAME = 'notes.txt';
 const NOTES_CONTENT = `# Comet Page Reader Notes
 
@@ -41,6 +49,14 @@ const NOTES_CONTENT = `# Comet Page Reader Notes
 - Debugging: Check the browser devtools consoles for the content script, popup, and background worker. Node-based tests log details to the terminal, and cached data persists via chrome.storage for easier inspection.
 `;
 
+/**
+ * Writes the curated notes file to disk when running in a Node.js environment.
+ * Browser contexts simply skip the update to avoid file-system errors.
+ *
+ * @returns {Promise<boolean>} True when the file was written successfully,
+ *   false when the environment does not support the operation or an error
+ *   occurred.
+ */
 export async function ensureNotesFile() {
   if (typeof process !== 'object' || !process?.versions?.node) {
     return false;

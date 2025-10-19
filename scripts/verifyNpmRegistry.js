@@ -1,3 +1,11 @@
+/**
+ * CLI utility that verifies connectivity to the configured npm registry. The
+ * script honours proxy environment variables and reports HTTP status codes for
+ * diagnostics.
+ *
+ * @module scripts/verifyNpmRegistry
+ */
+
 import http from 'node:http';
 import https from 'node:https';
 import { URL } from 'node:url';
