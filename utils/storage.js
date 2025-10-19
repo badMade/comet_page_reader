@@ -129,21 +129,56 @@ const callStorageArea = (area, method, args) => {
   }
 
   return new Promise((resolve, reject) => {
+    let settled = false;
+    const resolveOnce = value => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      resolve(value);
+    };
+    const rejectOnce = error => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      reject(error);
+    };
+
     try {
       const runtimeApi = getRuntime();
-      area[method](...args, result => {
+      const callback = result => {
+        if (settled) {
+          return;
+        }
         const err = runtimeApi.runtime && runtimeApi.runtime.lastError;
         clearRuntimeLastError(runtimeApi);
         if (err) {
           const storageError = new Error(err.message || 'Unknown storage error');
           storageError.isRuntimeError = true;
-          reject(storageError);
+          rejectOnce(storageError);
           return;
         }
-        resolve(result);
-      });
+        resolveOnce(result);
+      };
+
+      const maybePromise = area[method](...args, callback);
+      if (maybePromise && typeof maybePromise.then === 'function') {
+        maybePromise
+          .then(result => {
+            clearRuntimeLastError(runtimeApi);
+            resolveOnce(result);
+          })
+          .catch(error => {
+            const storageError = error instanceof Error ? error : new Error(String(error));
+            if (!storageError.isRuntimeError) {
+              storageError.isRuntimeError = true;
+            }
+            rejectOnce(storageError);
+          });
+      }
     } catch (error) {
-      reject(error);
+      rejectOnce(error);
     }
   });
 };
