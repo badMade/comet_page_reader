@@ -28,7 +28,7 @@ test('ensureInitialised hydrates stored limit for the cost tracker', async () =>
     await ensureInitialised();
     const usage = await handleUsageRequest();
 
-    assert.equal(usage.limitUsd, storedUsage.limitUsd);
+    assert.equal(usage.limitUsd, Math.min(storedUsage.limitUsd, 2));
     assert.equal(usage.totalCostUsd, storedUsage.totalCostUsd);
     assert.equal(usage.requests.length, storedUsage.requests.length);
     assert.equal(usage.lastReset, storedUsage.lastReset);

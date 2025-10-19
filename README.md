@@ -109,6 +109,45 @@ Key settings are embedded in source files so they remain easy to audit:
 - **Locales & strings:** Update the `MESSAGES` map inside `utils/i18n.js`.
 - **Permissions:** Modify `manifest.json` for additional scopes.
 
+### Free-First Routing
+
+The background worker now routes every generate request through a **free-first router**. Providers are attempted in the order defined by the `routing.provider_order` entry in `agent.yaml` (or the `PROVIDER_ORDER` environment variable), progressing from local/community options through trials and finally paid tiers. If `DISABLE_PAID=true`, the router stops before contacting paid providers and returns `No free providers available and paid disabled.`.
+
+```yaml
+# agent.yaml excerpt
+routing:
+  provider_order:
+    - ollama
+    - huggingface_free
+    - gemini_free
+    - openai_trial
+    - mistral_trial
+    - gemini_paid
+    - openai_paid
+    - anthropic_paid
+  disable_paid: false
+  timeout_ms: 20000
+  retry_limit: 2
+  max_cost_per_call_usd: 0.01
+  max_monthly_cost_usd: 2.0
+```
+
+The router enforces both per-call and monthly spending caps. Override them with `MAX_COST_PER_CALL_USD` / `MAX_MONTHLY_COST_USD` or by editing the YAML snippet above. Routing can be dry-run with `DRY_RUN=true`, which logs the selection without issuing network calls.
+
+#### Gemini configuration
+
+- **AI Studio (consumer/trial):** provide `GOOGLE_API_KEY`. The router uses the REST endpoint `https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent`.
+- **Vertex AI (enterprise):** set `GCP_PROJECT`, `GCP_LOCATION`, and `GCP_CREDENTIALS` (path to a service-account JSON). Optionally specify `VERTEX_ENDPOINT` to point at a private region or proxy. The adapter exchanges the credentials for an OAuth token and issues requests against `https://{location}-aiplatform.googleapis.com/v1/projects/{project}/locations/{location}/publishers/google/models/{model}:generateContent`.
+
+#### Adding a provider adapter
+
+1. Implement an adapter under `background/adapters/your-provider.js` exposing `summarise`, and optionally `transcribe` / `synthesise`.
+2. Register it in `background/adapters/registry.js` and add a metadata entry in `background/llm/router.js` (tier, adapter key, API key requirements).
+3. Define a configuration block in `agent.yaml` under `providers:` along with an entry in the `routing.provider_order` list.
+4. Update tests under `tests/` with success and failure fixtures so the free-first router can route to the new provider reliably.
+
+Quotas and daily caps should be mirrored into `agent.yaml` or environment overrides so the router can skip providers that would exceed their allocation without issuing an API request.
+
 ## Testing & Mocking
 
 To exercise the extension without incurring provider costs:

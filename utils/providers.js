@@ -1,12 +1,29 @@
 const DEFAULT_PROVIDER_ID = 'openai';
 
+const PROVIDER_ALIASES = Object.freeze({
+  openai: 'openai_paid',
+  mistral: 'mistral_paid',
+  anthropic: 'anthropic_paid',
+  gemini: 'gemini_paid',
+  huggingface: 'huggingface_free',
+});
+
 const PROVIDERS = Object.freeze([
-  Object.freeze({ id: 'openai', label: 'OpenAI', requiresApiKey: true }),
-  Object.freeze({ id: 'anthropic', label: 'Anthropic', requiresApiKey: true }),
-  Object.freeze({ id: 'mistral', label: 'Mistral', requiresApiKey: true }),
-  Object.freeze({ id: 'huggingface', label: 'Hugging Face', requiresApiKey: true }),
-  Object.freeze({ id: 'gemini', label: 'Google Gemini', requiresApiKey: true }),
-  Object.freeze({ id: 'ollama', label: 'Ollama (local)', requiresApiKey: false }),
+  Object.freeze({ id: 'auto', label: 'Auto (Free-first)', requiresApiKey: false }),
+  Object.freeze({ id: 'ollama', label: 'Ollama (Local)', requiresApiKey: false }),
+  Object.freeze({ id: 'huggingface_free', label: 'Hugging Face (Free/Tier)', requiresApiKey: true }),
+  Object.freeze({ id: 'gemini_free', label: 'Google Gemini (AI Studio Free/Trial)', requiresApiKey: true }),
+  Object.freeze({ id: 'openai_trial', label: 'OpenAI (Trial)', requiresApiKey: true }),
+  Object.freeze({ id: 'mistral_trial', label: 'Mistral (Trial)', requiresApiKey: true }),
+  Object.freeze({ id: 'gemini_paid', label: 'Google Gemini (Paid/Vertex)', requiresApiKey: true }),
+  Object.freeze({ id: 'openai_paid', label: 'OpenAI (Paid)', requiresApiKey: true }),
+  Object.freeze({ id: 'anthropic_paid', label: 'Anthropic (Paid)', requiresApiKey: true }),
+  Object.freeze({ id: 'mistral_paid', label: 'Mistral (Paid)', requiresApiKey: true }),
+  Object.freeze({ id: 'openai', label: 'OpenAI (Legacy)', requiresApiKey: true }),
+  Object.freeze({ id: 'anthropic', label: 'Anthropic (Legacy)', requiresApiKey: true }),
+  Object.freeze({ id: 'mistral', label: 'Mistral (Legacy)', requiresApiKey: true }),
+  Object.freeze({ id: 'huggingface', label: 'Hugging Face (Legacy)', requiresApiKey: true }),
+  Object.freeze({ id: 'gemini', label: 'Google Gemini (Legacy)', requiresApiKey: true }),
 ]);
 
 function normaliseProviderId(value, fallback = DEFAULT_PROVIDER_ID) {
@@ -24,6 +41,14 @@ function listProviders() {
 function findProvider(providerId) {
   const normalised = normaliseProviderId(providerId, providerId);
   return PROVIDERS.find(provider => provider.id === normalised) || null;
+}
+
+function resolveAlias(providerId) {
+  if (!providerId) {
+    return providerId;
+  }
+  const normalised = normaliseProviderId(providerId, providerId);
+  return PROVIDER_ALIASES[normalised] || normalised;
 }
 
 function providerRequiresApiKey(providerId) {
@@ -60,5 +85,6 @@ export {
   isSupportedProvider,
   listProviders,
   normaliseProviderId,
+  resolveAlias,
   providerRequiresApiKey,
 };

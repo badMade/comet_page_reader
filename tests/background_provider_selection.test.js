@@ -16,6 +16,20 @@ async function createConfigYaml(provider) {
     api_url: `https://api.${provider}.example/v1/chat`,
     api_key_var: `${provider.toUpperCase()}_KEY`,
     temperature: 0.5,
+    routing: {
+      provider_order: [provider],
+      max_cost_per_call_usd: 0.01,
+      max_monthly_cost_usd: 1,
+      disable_paid: false,
+    },
+    providers: {
+      [provider]: {
+        provider,
+        model: `${provider}-model`,
+        api_url: `https://api.${provider}.example/v1/chat`,
+        api_key_var: `${provider.toUpperCase()}_KEY`,
+      },
+    },
   });
 }
 
@@ -28,11 +42,11 @@ test('setApiKey scopes storage to the active provider from agent.yaml', async ()
     await module.ensureInitialised('mistral');
     await module.setApiKey('mistral-key');
 
-    assert.equal(persistentStore['comet:apiKey:mistral'], 'mistral-key');
-    assert.equal(typeof persistentStore['comet:apiKeyMeta:mistral'].lastUpdated, 'number');
+    assert.equal(persistentStore['comet:apiKey:mistral_paid'], 'mistral-key');
+    assert.equal(typeof persistentStore['comet:apiKeyMeta:mistral_paid'].lastUpdated, 'number');
 
     const details = await module.getApiKeyDetails();
-    assert.equal(details.provider, 'mistral');
+    assert.equal(details.provider, 'mistral_paid');
     assert.equal(details.apiKey, 'mistral-key');
   } finally {
     __clearAgentYamlOverrideForTests();
@@ -48,9 +62,9 @@ test('falls back to default provider when adapter registration fails', async () 
     const module = await importServiceWorker();
     await module.setApiKey('openai-key');
 
-    assert.equal(persistentStore['comet:apiKey:openai'], 'openai-key');
+    assert.equal(persistentStore['comet:apiKey:openai_paid'], 'openai-key');
     const details = await module.getApiKeyDetails();
-    assert.equal(details.provider, 'openai');
+    assert.equal(details.provider, 'openai_paid');
   } finally {
     __clearAgentYamlOverrideForTests();
     uninstall();

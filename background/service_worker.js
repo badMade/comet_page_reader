@@ -2,11 +2,18 @@ import { createCostTracker, DEFAULT_LIMIT_USD } from '../utils/cost.js';
 import { ensureNotesFile } from '../utils/notes.js';
 import { DEFAULT_PROVIDER, fetchApiKeyDetails, readApiKey, saveApiKey } from '../utils/apiKeyStore.js';
 import { getValue, setValue, withLock, getSessionValue, setSessionValue, runtime } from '../utils/storage.js';
-import { getFallbackProviderConfig, loadProviderConfig } from '../utils/providerConfig.js';
+import {
+  getFallbackProviderConfig,
+  loadAgentConfiguration,
+  buildProviderConfig,
+  DEFAULT_ROUTING_CONFIG,
+  DEFAULT_GEMINI_CONFIG,
+} from '../utils/providerConfig.js';
 import {
   DEFAULT_PROVIDER_ID,
   getProviderDisplayName,
   normaliseProviderId,
+  resolveAlias,
   providerRequiresApiKey,
 } from '../utils/providers.js';
 import { registerAdapter, createAdapter } from './adapters/registry.js';
@@ -16,6 +23,7 @@ import { MistralAdapter } from './adapters/mistral.js';
 import { HuggingFaceAdapter } from './adapters/huggingface.js';
 import { OllamaAdapter } from './adapters/ollama.js';
 import { GeminiAdapter } from './adapters/gemini.js';
+import { LLMRouter } from './llm/router.js';
 
 registerAdapter('openai', config => new OpenAIAdapter(config));
 registerAdapter('anthropic', config => new AnthropicAdapter(config));
@@ -36,10 +44,29 @@ let costTracker;
 let memoryCache = new Map();
 let initialised = false;
 let providerConfig = getFallbackProviderConfig();
+let agentConfigSnapshot = null;
 let adapterInstance = null;
 let adapterLoadPromise = null;
 let loadingProviderId = null;
 let activeProviderId = providerConfig.provider || DEFAULT_PROVIDER;
+let routingSettings = DEFAULT_ROUTING_CONFIG;
+let llmRouter = null;
+
+const PROVIDER_ADAPTER_KEYS = Object.freeze({
+  openai_paid: 'openai',
+  openai_trial: 'openai',
+  gemini_free: 'gemini',
+  gemini_paid: 'gemini',
+  huggingface_free: 'huggingface',
+  mistral_trial: 'mistral',
+  mistral_paid: 'mistral',
+  anthropic_paid: 'anthropic',
+});
+
+function getAdapterKey(providerId) {
+  const normalised = normaliseProviderId(providerId, providerId);
+  return PROVIDER_ADAPTER_KEYS[normalised] || normalised;
+}
 
 function getCacheKey({ url, segmentId, language = 'en', providerId = DEFAULT_PROVIDER_ID }) {
   return JSON.stringify({
@@ -73,10 +100,56 @@ function parseCacheKey(key) {
   return null;
 }
 
+function createFallbackAgentConfig() {
+  const fallback = getFallbackProviderConfig();
+  return {
+    base: { ...fallback },
+    providers: {},
+    routing: DEFAULT_ROUTING_CONFIG,
+    gemini: DEFAULT_GEMINI_CONFIG,
+  };
+}
+
+async function ensureAgentConfig() {
+  if (agentConfigSnapshot) {
+    return agentConfigSnapshot;
+  }
+  try {
+    agentConfigSnapshot = await loadAgentConfiguration();
+  } catch (error) {
+    console.error('Failed to load agent configuration. Using defaults.', error);
+    agentConfigSnapshot = createFallbackAgentConfig();
+  }
+  routingSettings = agentConfigSnapshot.routing || DEFAULT_ROUTING_CONFIG;
+  return agentConfigSnapshot;
+}
+
+async function ensureRouter() {
+  await ensureAgentConfig();
+  if (!llmRouter) {
+    llmRouter = new LLMRouter({
+      costTracker,
+      agentConfig: agentConfigSnapshot,
+      environment: typeof process !== 'undefined' ? process.env : {},
+    });
+  } else {
+    llmRouter.setAgentConfig(agentConfigSnapshot);
+    if (costTracker) {
+      llmRouter.setCostTracker(costTracker);
+    }
+  }
+  return llmRouter;
+}
+
 async function ensureAdapter(providerId) {
-  const requestedProvider = providerId
+  const requestedProviderRaw = providerId
     ? normaliseProviderId(providerId, DEFAULT_PROVIDER_ID)
     : null;
+  const requestedProvider = requestedProviderRaw === 'auto'
+    ? null
+    : requestedProviderRaw
+      ? resolveAlias(requestedProviderRaw)
+      : null;
 
   if (adapterInstance && (!requestedProvider || activeProviderId === requestedProvider)) {
     return adapterInstance;
@@ -93,14 +166,14 @@ async function ensureAdapter(providerId) {
   }
 
   const storedPreference = await getValue(PROVIDER_STORAGE_KEY);
-  const overrideProvider = requestedProvider || storedPreference || null;
-  const fallbackProvider = normaliseProviderId(
-    providerConfig?.provider || activeProviderId || DEFAULT_PROVIDER_ID,
-    DEFAULT_PROVIDER_ID,
-  );
-  const preferredProvider = overrideProvider
-    ? normaliseProviderId(overrideProvider, DEFAULT_PROVIDER_ID)
-    : fallbackProvider;
+  const resolvedPreference = storedPreference === 'auto' ? null : storedPreference;
+  const overrideProvider = requestedProvider || (resolvedPreference ? resolveAlias(resolvedPreference) : null);
+  await ensureAgentConfig();
+  const baseFallbackProvider = providerConfig?.provider || activeProviderId || DEFAULT_PROVIDER_ID;
+  const fallbackProvider = baseFallbackProvider === 'auto'
+    ? DEFAULT_PROVIDER_ID
+    : resolveAlias(baseFallbackProvider);
+  const preferredProvider = overrideProvider || fallbackProvider;
 
   loadingProviderId = preferredProvider;
   adapterInstance = null;
@@ -108,39 +181,43 @@ async function ensureAdapter(providerId) {
   adapterLoadPromise = (async () => {
     let config;
     try {
-      const loadOptions = overrideProvider ? { provider: preferredProvider } : {};
-      config = await loadProviderConfig(loadOptions);
+      config = buildProviderConfig(agentConfigSnapshot, preferredProvider);
     } catch (error) {
       console.error(
-        `Failed to load agent.yaml for provider "${preferredProvider}". Falling back to default.`,
+        `Failed to resolve configuration for provider "${preferredProvider}". Falling back to default.`,
         error,
       );
-      config = getFallbackProviderConfig();
+      config = getFallbackProviderConfig({ provider: preferredProvider });
     }
 
     let adapter;
     try {
-      const resolvedProvider = normaliseProviderId(config.provider, DEFAULT_PROVIDER_ID);
-      adapter = createAdapter(resolvedProvider, config);
+      const adapterKey = getAdapterKey(config.provider);
+      adapter = createAdapter(adapterKey, config);
     } catch (error) {
       console.error(
         `Adapter for provider "${config.provider}" unavailable. Falling back to default.`,
         error,
       );
       config = getFallbackProviderConfig();
-      adapter = createAdapter(config.provider, config);
+      const fallbackAdapterKey = getAdapterKey(config.provider);
+      adapter = createAdapter(fallbackAdapterKey, config);
     }
 
     providerConfig = config;
     activeProviderId = config.provider || DEFAULT_PROVIDER_ID;
     await setValue(PROVIDER_STORAGE_KEY, activeProviderId);
+    if (llmRouter) {
+      llmRouter.setAgentConfig(agentConfigSnapshot);
+    }
     return adapter;
   })()
     .catch(error => {
       providerConfig = getFallbackProviderConfig();
       activeProviderId = providerConfig.provider || DEFAULT_PROVIDER_ID;
       console.error('Falling back to default adapter due to unexpected error.', error);
-      return createAdapter(activeProviderId, providerConfig);
+      const fallbackAdapterKey = getAdapterKey(activeProviderId);
+      return createAdapter(fallbackAdapterKey, providerConfig);
     })
     .finally(() => {
       adapterLoadPromise = null;
@@ -158,6 +235,7 @@ async function getActiveProviderId(providerId) {
 
 async function ensureInitialised(providerId) {
   const previousProvider = activeProviderId;
+  await ensureAgentConfig();
   await ensureAdapter(providerId);
   const providerChanged = previousProvider && previousProvider !== activeProviderId;
 
@@ -170,25 +248,35 @@ async function ensureInitialised(providerId) {
   }
 
   const storedUsage = await getValue(USAGE_STORAGE_KEY);
-  let limitUsd = DEFAULT_LIMIT_USD;
+  const configuredLimit = typeof routingSettings?.maxMonthlyCostUsd === 'number'
+    ? routingSettings.maxMonthlyCostUsd
+    : DEFAULT_LIMIT_USD;
+  let limitUsd = configuredLimit;
   let usage;
 
   if (storedUsage && typeof storedUsage === 'object') {
     const { limitUsd: savedLimit, ...snapshot } = storedUsage;
     if (typeof savedLimit === 'number' && Number.isFinite(savedLimit)) {
-      limitUsd = savedLimit;
+      limitUsd = Math.min(configuredLimit, savedLimit);
     }
     usage = Object.keys(snapshot).length > 0 ? snapshot : undefined;
   }
 
   costTracker = createCostTracker(limitUsd, usage);
+  if (llmRouter) {
+    llmRouter.setCostTracker(costTracker);
+  }
   const cachedEntries = (await getSessionValue(CACHE_STORAGE_KEY)) || {};
   memoryCache = new Map(Object.entries(cachedEntries));
+  await ensureRouter();
   initialised = true;
 }
 
 async function setActiveProvider(providerId) {
-  const desiredProvider = normaliseProviderId(providerId, activeProviderId || DEFAULT_PROVIDER_ID);
+  const normalised = normaliseProviderId(providerId, activeProviderId || DEFAULT_PROVIDER_ID);
+  const desiredProvider = normalised === 'auto'
+    ? DEFAULT_PROVIDER_ID
+    : resolveAlias(normalised);
   const previousProvider = activeProviderId;
   await ensureAdapter(desiredProvider);
   if (previousProvider && previousProvider !== activeProviderId) {
@@ -212,9 +300,36 @@ async function persistCache() {
   await setSessionValue(CACHE_STORAGE_KEY, entries);
 }
 
+async function readStoredApiKey(providerId) {
+  const direct = await readApiKey({ provider: providerId });
+  if (direct) {
+    return direct;
+  }
+  if (providerId.endsWith('_paid') || providerId.endsWith('_trial')) {
+    const legacy = providerId.replace(/_(paid|trial)$/, '');
+    const legacyKey = await readApiKey({ provider: legacy });
+    if (legacyKey) {
+      return legacyKey;
+    }
+  }
+  if (providerId === 'gemini_free' || providerId === 'gemini_paid') {
+    const geminiKey = await readApiKey({ provider: 'gemini' });
+    if (geminiKey) {
+      return geminiKey;
+    }
+  }
+  if (providerId === 'huggingface_free') {
+    const huggingfaceKey = await readApiKey({ provider: 'huggingface' });
+    if (huggingfaceKey) {
+      return huggingfaceKey;
+    }
+  }
+  return null;
+}
+
 async function resolveApiKey(providerId) {
   const activeProvider = await getActiveProviderId(providerId);
-  const storedKey = await readApiKey({ provider: activeProvider });
+  const storedKey = await readStoredApiKey(activeProvider);
   if (storedKey) {
     return { apiKey: storedKey, providerId: activeProvider };
   }
@@ -268,41 +383,15 @@ function getCostMetadata(adapter) {
 }
 
 async function requestSummary({ url, segment, language, provider }) {
-  const adapter = await ensureAdapter(provider);
-  const costMetadata = getCostMetadata(adapter);
-  const summaryMeta = costMetadata.summarise || {};
-  const model = summaryMeta.model || providerConfig.model;
-  const estimatedCost = costTracker.estimateCostForText(model, segment.text);
-  if (!costTracker.canSpend(estimatedCost)) {
-    throw new Error('Cost limit reached for summaries.');
-  }
-  const { apiKey, providerId } = await resolveApiKey(provider);
-  ensureKeyAvailable(apiKey, providerId);
-  const result = await adapter.summarise({
-    apiKey,
+  const router = await ensureRouter();
+  const result = await router.generate({
     text: segment.text,
-    url,
-    segmentId: segment.id,
     language,
-    model,
-  });
-
-  const summary = result?.summary || '';
-  const promptTokens = typeof result?.promptTokens === 'number'
-    ? result.promptTokens
-    : costTracker.estimateTokensFromText(segment.text);
-  const completionTokens = typeof result?.completionTokens === 'number'
-    ? result.completionTokens
-    : costTracker.estimateTokensFromText(summary);
-  const modelUsed = result?.model || model;
-
-  costTracker.record(modelUsed, promptTokens, completionTokens, {
-    url,
-    segmentId: segment.id,
-    type: 'summary',
+    providerPreference: provider,
+    metadata: { url, segmentId: segment.id, type: 'summary' },
   });
   await persistUsage();
-  return summary;
+  return result;
 }
 
 async function transcribeAudio({ base64, filename = 'speech.webm', mimeType = 'audio/webm', provider }) {
@@ -367,10 +456,22 @@ async function getSummary({ url, segment, language, provider }) {
     providerId,
   });
   if (memoryCache.has(cacheKey)) {
-    return memoryCache.get(cacheKey);
+    const cached = memoryCache.get(cacheKey);
+    if (typeof cached === 'string') {
+      return cached;
+    }
+    if (cached && typeof cached === 'object' && typeof cached.summary === 'string') {
+      return cached.summary;
+    }
   }
-  const summary = await requestSummary({ url, segment, language, provider });
-  memoryCache.set(cacheKey, summary);
+  const result = await requestSummary({ url, segment, language, provider });
+  const summary = typeof result?.text === 'string' ? result.text : '';
+  memoryCache.set(cacheKey, {
+    summary,
+    provider: result?.provider,
+    model: result?.model,
+    cost: result?.cost_estimate,
+  });
   await persistCache();
   return summary;
 }

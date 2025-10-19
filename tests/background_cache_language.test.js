@@ -26,7 +26,21 @@ test('summaries are cached per language for the same segment', async () => {
     },
   }));
 
-  __setAgentYamlOverrideForTests(() => 'provider: test\nmodel: stub-model\n');
+  __setAgentYamlOverrideForTests(() => [
+    'provider: test',
+    'model: stub-model',
+    'routing:',
+    '  provider_order:',
+    '    - test',
+    '  max_cost_per_call_usd: 0.05',
+    '  max_monthly_cost_usd: 5',
+    'providers:',
+    '  test:',
+    '    provider: test',
+    '    model: stub-model',
+    '    api_url: https://api.test.example/v1/chat',
+    '    api_key_var: TEST_KEY',
+  ].join('\n'));
 
   try {
     const module = await importServiceWorker();
