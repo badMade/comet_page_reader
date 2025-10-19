@@ -22,7 +22,7 @@ This document supplements the main README with implementation details, known iss
 
 The extension is intentionally modular:
 
-- `background/service_worker.js` orchestrates all LLM provider requests, tracks spend using `utils/cost.js`, and mediates messages.
+- `background/service_worker.js` orchestrates all OpenAI requests, tracks spend using `utils/cost.js`, and mediates messages.
 - `content/content.js` extracts visible text and reacts to highlight commands while protecting page integrity.
 - `popup/script.js` coordinates UI state, localisation, push-to-talk controls, and background messaging.
 - `utils/` houses pure helpers for DOM traversal, storage, audio, localisation, and cost tracking. These modules are designed to be imported into unit tests.
@@ -37,7 +37,7 @@ Refer to in-file JSDoc comments for argument and return types.
 
 ## Testing Strategies
 
-- **Mock mode:** Toggle `MOCK_MODE` in `popup/script.js` to simulate successful responses without contacting a live provider.
+- **Mock mode:** Toggle `MOCK_MODE` in `popup/script.js` to simulate successful responses without contacting OpenAI.
 - **Local API stubs:** Point `fetchWithAuth` in the service worker to a mock server to experiment with error handling.
 - **Unit tests:** Import `utils/dom.js`, `utils/cost.js`, or `utils/audio.js` into a test runner with DOM shims for targeted assertions.
 
