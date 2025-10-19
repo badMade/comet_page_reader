@@ -18,6 +18,7 @@
   let segments = [];
   let observer;
   let activeHighlightId = null;
+  let disposed = false;
 
   const runtime = (() => {
     if (typeof chrome === 'object' && chrome && chrome.runtime) {
@@ -34,23 +35,89 @@
     return;
   }
 
+  const CONTEXT_INVALIDATED_PATTERN = /Extension context invalidated/i;
+
+  function getRuntimeLastError() {
+    if (typeof chrome === 'object' && chrome?.runtime?.lastError) {
+      return chrome.runtime.lastError;
+    }
+    if (typeof browser === 'object' && browser?.runtime?.lastError) {
+      return browser.runtime.lastError;
+    }
+    return null;
+  }
+
+  function isContextInvalidated(error) {
+    if (!error) {
+      return false;
+    }
+    const message = typeof error.message === 'string' ? error.message : String(error);
+    return CONTEXT_INVALIDATED_PATTERN.test(message);
+  }
+
+  function dispose() {
+    if (disposed) {
+      return;
+    }
+    disposed = true;
+    if (observer) {
+      observer.disconnect();
+      observer = null;
+    }
+    document.removeEventListener('scroll', throttledUpdate);
+  }
+
+  function handleRuntimeFailure(error) {
+    if (!error) {
+      return;
+    }
+    if (isContextInvalidated(error)) {
+      console.debug('Comet Page Reader: extension context invalidated, disposing content script.');
+      dispose();
+      return;
+    }
+    console.debug('Comet Page Reader: segment update failed', error);
+  }
+
+  function safeSendRuntimeMessage(message) {
+    if (disposed || !runtime?.sendMessage) {
+      return;
+    }
+    try {
+      const maybePromise = runtime.sendMessage(message, () => {
+        const lastError = getRuntimeLastError();
+        if (lastError) {
+          handleRuntimeFailure(lastError);
+        }
+      });
+      if (maybePromise && typeof maybePromise.catch === 'function') {
+        maybePromise.catch(handleRuntimeFailure);
+      }
+    } catch (error) {
+      handleRuntimeFailure(error);
+    }
+  }
+
   /**
    * Rebuilds the list of text segments by traversing the document and informs
    * the background script of the latest segment metadata.
    */
   function buildSegments() {
+    if (disposed) {
+      return;
+    }
     const texts = extractVisibleText(document.body, {
       maxLength: 4000,
       minSegmentLength: 500,
     });
     segments = createSegmentMap(texts);
-    runtime.sendMessage({
+    safeSendRuntimeMessage({
       type: 'comet:segmentsUpdated',
       payload: {
         url: window.location.href,
         segments: segments.map(({ id, text }) => ({ id, length: text.length })),
       },
-    }).catch(error => console.debug('Comet Page Reader: segment update failed', error));
+    });
   }
 
   /**
@@ -61,6 +128,9 @@
    */
   function highlightSegment(segmentId) {
     clearHighlights();
+    if (disposed) {
+      return false;
+    }
     const segment = segments.find(item => item.id === segmentId);
     if (!segment) {
       return false;
@@ -85,11 +155,17 @@
 
   const throttledUpdate = throttle(buildSegments, 2000);
 
+  window.addEventListener('pagehide', dispose);
+  window.addEventListener('beforeunload', dispose);
+
   /**
    * Ensures DOM mutation and scroll observers rebuild segments when the page
    * structure changes.
    */
   function ensureObservers() {
+    if (disposed) {
+      return;
+    }
     if (observer) {
       observer.disconnect();
     }
@@ -103,6 +179,9 @@
   ensureObservers();
 
   runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (disposed) {
+      return false;
+    }
     if (!message || !message.type) {
       return false;
     }

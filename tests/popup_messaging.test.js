@@ -34,6 +34,9 @@ const createBaseDom = () => {
 const chromeStub = {
   runtime: {
     lastError: null,
+    sendMessage: () => {
+      throw new Error('sendMessage stub not configured');
+    },
   },
   tabs: {
     query: (_options, callback) => {
@@ -64,7 +67,7 @@ globalThis.chrome = chromeStub;
 
 test('popup messaging content script recovery', async t => {
   const module = await import('../popup/script.js');
-  const { sendMessageToTab } = module;
+  const { sendMessageToTab, sendMessage } = module;
 
   await t.test('retries after injecting the content script', async () => {
     let sendCount = 0;
@@ -121,5 +124,22 @@ test('popup messaging content script recovery', async t => {
       return true;
     });
     assert.equal(injectionCount, 1);
+  });
+
+  await t.test('sendMessage converts extension context invalidation into a friendly error', async () => {
+    chromeStub.runtime.sendMessage = (_message, callback) => {
+      chromeStub.runtime.lastError = { message: 'Extension context invalidated.' };
+      callback(undefined);
+    };
+
+    await assert.rejects(sendMessage('comet:getApiKeyDetails'), error => {
+      assert.equal(
+        error.message,
+        'The extension was reloaded. Close and reopen the popup to continue.',
+      );
+      return true;
+    });
+
+    chromeStub.runtime.lastError = null;
   });
 });

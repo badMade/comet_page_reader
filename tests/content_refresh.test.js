@@ -48,7 +48,7 @@ async function withContentScriptEnvironment(html, url, fn) {
   window.chrome = globalThis.chrome;
 
   try {
-    await fn({ window, dom, listeners });
+    await fn({ window, dom, listeners, runtime });
   } finally {
     await new Promise(resolve => setTimeout(resolve, 0));
 
@@ -143,6 +143,36 @@ test('comet:refreshSegments responds with url and segments result wrapper', asyn
       assert.ok(response.result, 'Refresh response should include a result payload');
       assert.equal(response.result.url, window.location.href, 'Response should include current URL');
       assert.ok(Array.isArray(response.result.segments), 'Segments should be returned as an array');
+    },
+  );
+});
+
+test('content script disposes observers when the extension context is invalidated', async () => {
+  await withContentScriptEnvironment(
+    '<p>Disposable</p>',
+    'https://example.com/dispose',
+    async ({ runtime, window }) => {
+      let removedScrollListener = false;
+      const originalRemove = window.document.removeEventListener.bind(window.document);
+      window.document.removeEventListener = (type, listener, options) => {
+        if (type === 'scroll') {
+          removedScrollListener = true;
+        }
+        return originalRemove(type, listener, options);
+      };
+
+      let sendCount = 0;
+      runtime.sendMessage = () => {
+        sendCount += 1;
+        throw new Error('Extension context invalidated.');
+      };
+
+      await import(`../content/content.js?disposeTest=${Date.now()}`);
+
+      await new Promise(resolve => setTimeout(resolve, 0));
+
+      assert.equal(sendCount, 1, 'Segment sync should stop after the first failure.');
+      assert.equal(removedScrollListener, true, 'Scroll observers should be removed after disposal.');
     },
   );
 });
