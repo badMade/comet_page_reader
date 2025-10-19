@@ -16,6 +16,43 @@ function createAdapter(overrides = {}, options = {}) {
   return new OpenAIAdapter(baseConfig, options);
 }
 
+test('uses the global fetch with the correct binding when no override is provided', async () => {
+  const originalFetch = globalThis.fetch;
+  let callCount = 0;
+  globalThis.fetch = function serviceWorkerFetch(url, options) {
+    if (this !== globalThis) {
+      throw new TypeError('Illegal invocation');
+    }
+    callCount += 1;
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        model: 'gpt-4o-mini',
+        choices: [
+          { message: { content: 'service worker summary' } },
+        ],
+        usage: {},
+      }),
+    };
+  };
+
+  const adapter = createAdapter();
+
+  try {
+    const result = await adapter.summarise({
+      apiKey: 'worker-key',
+      text: 'Content from worker',
+      language: 'English',
+    });
+
+    assert.equal(callCount, 1, 'global fetch should be invoked exactly once');
+    assert.equal(result.summary, 'service worker summary');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('summarise posts payloads with config defaults and trims the response', async () => {
   let capturedRequest;
   const fetchStub = async (url, options) => {
