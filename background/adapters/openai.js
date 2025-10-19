@@ -13,7 +13,14 @@ function base64ToUint8Array(base64) {
   throw new Error('Base64 conversion is not supported in this environment.');
 }
 
+/**
+ * Provides helper methods for calling the OpenAI REST API.
+ */
 export class OpenAIAdapter {
+  /**
+   * @param {object} config - Provider configuration block.
+   * @param {{fetchImpl?: Function}} [options={}] - Dependency overrides.
+   */
   constructor(config, options = {}) {
     this.config = config;
     this.logger = options.logger && typeof options.logger.child === 'function'
@@ -39,6 +46,11 @@ export class OpenAIAdapter {
     });
   }
 
+  /**
+   * Declares the cost metadata used by the router when estimating spend.
+   *
+   * @returns {object} Cost metadata grouped by capability.
+   */
   getCostMetadata() {
     return {
       summarise: {
@@ -57,6 +69,11 @@ export class OpenAIAdapter {
     };
   }
 
+  /**
+   * Validates that an API key has been supplied before performing a request.
+   *
+   * @param {string} apiKey - OpenAI API key.
+   */
   ensureKey(apiKey) {
     if (!apiKey) {
       this.logger.error('Missing API key for request.');
@@ -64,6 +81,14 @@ export class OpenAIAdapter {
     }
   }
 
+  /**
+   * Constructs HTTP headers for OpenAI endpoints, merging configuration
+   * overrides when present.
+   *
+   * @param {string} apiKey - OpenAI API key.
+   * @param {object} [extra={}] - Additional headers to include.
+   * @returns {object} Header map ready for fetch calls.
+   */
   buildHeaders(apiKey, extra = {}) {
     return {
       'Content-Type': 'application/json',
@@ -73,6 +98,14 @@ export class OpenAIAdapter {
     };
   }
 
+  /**
+   * Requests a textual summary from the OpenAI chat completions API.
+   *
+   * @param {{apiKey: string, text: string, language: string, model?: string}} params -
+   *   Summarisation parameters.
+   * @returns {Promise<{summary: string, model: string, promptTokens?: number, completionTokens?: number}>}
+   *   Structured response payload.
+   */
   async summarise({ apiKey, text, language, model }) {
     this.ensureKey(apiKey);
     const modelToUse = model || this.config.model || 'gpt-4o-mini';
@@ -132,6 +165,18 @@ export class OpenAIAdapter {
     }
   }
 
+  /**
+   * Submits an audio payload for transcription using the OpenAI audio API.
+   *
+   * @param {{
+   *   apiKey: string,
+   *   base64: string,
+   *   filename?: string,
+   *   mimeType?: string,
+   *   model?: string,
+   * }} params - Transcription arguments.
+   * @returns {Promise<{text: string}>} Transcription result.
+   */
   async transcribe({ apiKey, base64, filename = 'speech.webm', mimeType = 'audio/webm', model = DEFAULT_TRANSCRIPTION_MODEL }) {
     this.ensureKey(apiKey);
     const operationContext = {
@@ -177,6 +222,18 @@ export class OpenAIAdapter {
     }
   }
 
+  /**
+   * Calls the OpenAI text-to-speech endpoint to generate an audio clip.
+   *
+   * @param {{
+   *   apiKey: string,
+   *   text: string,
+   *   voice?: string,
+   *   format?: string,
+   *   model?: string,
+   * }} params - Speech synthesis parameters.
+   * @returns {Promise<{arrayBuffer: ArrayBuffer, mimeType: string}>} Synthesised audio payload.
+   */
   async synthesise({ apiKey, text, voice = 'alloy', format = 'mp3', model = DEFAULT_TTS_MODEL }) {
     this.ensureKey(apiKey);
     const operationContext = {

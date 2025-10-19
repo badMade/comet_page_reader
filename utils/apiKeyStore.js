@@ -53,6 +53,13 @@ function resolveDeps(overrides = {}) {
   return { ...defaultDeps, ...overrides };
 }
 
+/**
+ * Derives the persistent storage keys used to store credentials for the
+ * specified provider.
+ *
+ * @param {string} provider - Provider identifier supplied by the caller.
+ * @returns {{apiKey: string, metadata: string}} Namespaced storage keys.
+ */
 export function getProviderStorageKeys(provider) {
   const resolvedProvider = normaliseProvider(provider);
   return {
@@ -68,6 +75,16 @@ async function clearLegacyKeys(removeValueFn) {
   ]);
 }
 
+/**
+ * Stores the provided API key and persists metadata describing when the value
+ * was last updated. Passing an empty string removes the existing entry.
+ *
+ * @param {string|null|undefined} apiKey - API key captured from the UI.
+ * @param {{provider?: string, overrides?: object}} [options] - Behaviour
+ *   overrides, including a provider ID or custom storage functions.
+ * @returns {Promise<string|null>} Resolves to the stored key or null when the
+ *   value was removed.
+ */
 export async function saveApiKey(apiKey, options) {
   const { provider, overrides } = resolveOptions(options);
   const { setValue: setValueFn, removeValue: removeValueFn } = resolveDeps(overrides);
@@ -124,6 +141,15 @@ async function readLegacyKey(getValueFn) {
   };
 }
 
+/**
+ * Fetches the API key and associated metadata for the requested provider. When
+ * no provider is supplied, the default provider is assumed.
+ *
+ * @param {{provider?: string, overrides?: object}} [options] - Behaviour
+ *   overrides, including a provider ID or custom storage functions.
+ * @returns {Promise<{provider: string, apiKey: string|null, lastUpdated: number|null}>}
+ *   Stored key details including the last-updated timestamp.
+ */
 export async function fetchApiKeyDetails(options) {
   const { provider, overrides } = resolveOptions(options);
   const { getValue: getValueFn } = resolveDeps(overrides);
@@ -157,11 +183,27 @@ export async function fetchApiKeyDetails(options) {
   };
 }
 
+/**
+ * Convenience helper returning only the stored API key for the selected
+ * provider. Legacy keys are resolved transparently for backwards compatibility.
+ *
+ * @param {{provider?: string, overrides?: object}} [options] - Behaviour
+ *   overrides, including a provider ID or custom storage functions.
+ * @returns {Promise<string|null>} Stored API key or null when unavailable.
+ */
 export async function readApiKey(options) {
   const { apiKey } = await fetchApiKeyDetails(options);
   return apiKey;
 }
 
+/**
+ * Deletes the stored API key and metadata for the requested provider. Legacy
+ * keys are cleared when the default provider is targeted.
+ *
+ * @param {{provider?: string, overrides?: object}} [options] - Behaviour
+ *   overrides, including a provider ID or custom storage functions.
+ * @returns {Promise<void>} Resolves once the credentials are removed.
+ */
 export async function deleteApiKey(options) {
   const { provider, overrides } = resolveOptions(options);
   const { removeValue: removeValueFn } = resolveDeps(overrides);

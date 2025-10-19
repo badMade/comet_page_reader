@@ -263,6 +263,14 @@ function parseProviderOverrides(rawProviders = {}, baseHeaders = {}) {
   return overrides;
 }
 
+/**
+ * Converts raw YAML configuration into the structured format consumed by the
+ * router and adapters, applying defaults and normalising case for keys.
+ *
+ * @param {object} rawConfig - Parsed YAML configuration object.
+ * @returns {{base: object, providers: object, routing: object, gemini: object}}
+ *   Normalised agent configuration.
+ */
 function normaliseAgentConfig(rawConfig) {
   if (!rawConfig || typeof rawConfig !== 'object') {
     throw new Error('Invalid configuration structure.');
@@ -297,6 +305,15 @@ function normaliseAgentConfig(rawConfig) {
   return normalised;
 }
 
+/**
+ * Builds a provider-specific configuration object based on the agent
+ * configuration and an optional override identifier.
+ *
+ * @param {{base: object, providers?: object}} agentConfig - Normalised agent
+ *   configuration.
+ * @param {string} [providerOverride] - Provider identifier to target.
+ * @returns {object} Provider configuration ready for adapter instantiation.
+ */
 function buildProviderConfig(agentConfig, providerOverride) {
   if (!agentConfig || typeof agentConfig !== 'object') {
     logger.warn('Missing agent configuration when building provider config. Falling back to defaults.');
@@ -384,6 +401,16 @@ async function readAgentYaml({ source, fetchImpl } = {}) {
   throw new Error('Unable to load agent.yaml in the current environment.');
 }
 
+/**
+ * Loads provider configuration details, optionally targeting a specific
+ * provider override. The function parses `agent.yaml`, applies environment
+ * overrides, and merges defaults for missing fields.
+ *
+ * @param {{provider?: string, suppressErrors?: boolean, source?: string,
+ *   fetchImpl?: Function}} [options] - Loader configuration.
+ * @returns {Promise<object>} Normalised provider configuration suitable for
+ *   adapter construction.
+ */
 export async function loadProviderConfig(options = {}) {
   try {
     logger.debug('Loading provider configuration.', { provider: options.provider });
@@ -412,6 +439,16 @@ export async function loadProviderConfig(options = {}) {
   }
 }
 
+/**
+ * Reads and normalises the full agent configuration, including routing and
+ * provider overrides. Consumers typically cache the result to avoid repeated
+ * YAML parsing.
+ *
+ * @param {{source?: string, fetchImpl?: Function}} [options] - Loader options
+ *   used to supply alternate YAML content or fetch implementations.
+ * @returns {Promise<{base: object, providers: object, routing: object, gemini: object}>}
+ *   Complete agent configuration object.
+ */
 export async function loadAgentConfiguration(options = {}) {
   logger.debug('Loading agent configuration.');
   const yamlSource = await readAgentYaml(options);
@@ -425,6 +462,13 @@ export async function loadAgentConfiguration(options = {}) {
   return config;
 }
 
+/**
+ * Generates a provider configuration using only default values. Optional
+ * overrides can be supplied to adjust specific fields.
+ *
+ * @param {object} [overrides={}] - Field overrides merged into the defaults.
+ * @returns {object} Provider configuration snapshot.
+ */
 export function getFallbackProviderConfig(overrides = {}) {
   logger.debug('Providing fallback provider configuration.', {
     overrideKeys: Object.keys(overrides || {}),
@@ -432,13 +476,29 @@ export function getFallbackProviderConfig(overrides = {}) {
   return cloneDefaultConfig(overrides);
 }
 
-export { DEFAULT_PROVIDER_CONFIG, DEFAULT_ROUTING_CONFIG, DEFAULT_GEMINI_CONFIG, normaliseAgentConfig, buildProviderConfig };
+export {
+  DEFAULT_PROVIDER_CONFIG,
+  DEFAULT_ROUTING_CONFIG,
+  DEFAULT_GEMINI_CONFIG,
+  normaliseAgentConfig,
+  buildProviderConfig,
+};
 
+/**
+ * Injects an alternate YAML payload for tests. The override can be a string or
+ * a function returning a string, mirroring the behaviour of `readAgentYaml`.
+ *
+ * @param {string|Function} override - Alternate YAML content or supplier.
+ */
 export function __setAgentYamlOverrideForTests(override) {
   logger.warn('Setting agent.yaml override for tests.');
   agentYamlOverride = override;
 }
 
+/**
+ * Removes any previously configured YAML override, restoring the default
+ * loading behaviour.
+ */
 export function __clearAgentYamlOverrideForTests() {
   logger.warn('Clearing agent.yaml override for tests.');
   agentYamlOverride = undefined;

@@ -1,3 +1,10 @@
+/**
+ * Intelligent routing layer that prioritises cost-effective providers while
+ * respecting user preferences and spend controls.
+ *
+ * @module background/llm/router
+ */
+
 import {
   buildProviderConfig,
   loadAgentConfiguration,
@@ -207,7 +214,30 @@ async function fetchAccessToken({ credentialsPath, fetchImpl, scope }) {
   return { token: data.access_token, expiresIn: normaliseNumber(data.expires_in, 3600) };
 }
 
+/**
+ * Orchestrates provider selection for summarisation requests. The router keeps
+ * track of provider health, cost limits, and authentication so the extension
+ * can prioritise free tiers while respecting user preferences and budgets.
+ */
 export class LLMRouter {
+  /**
+   * Creates a router instance with optional dependency overrides used during
+   * testing.
+   *
+   * @param {{
+   *   logger?: Console,
+   *   readApiKeyFn?: Function,
+   *   environment?: object,
+   *   now?: Function,
+   *   random?: Function,
+   *   fetchImpl?: Function,
+   *   costTracker?: import('../../utils/cost.js').CostTracker,
+   *   loadAgentConfigurationFn?: Function,
+   *   agentConfig?: object,
+   *   routing?: object,
+   *   createAdapterFn?: Function,
+   * }} [options] - Dependency injection hooks.
+   */
   constructor(options = {}) {
     this.logger = getLogger(options.logger);
     this.readApiKeyFn = options.readApiKeyFn || (provider => readApiKey({ provider }));
@@ -226,10 +256,23 @@ export class LLMRouter {
     this.createAdapterFn = typeof options.createAdapterFn === 'function' ? options.createAdapterFn : createAdapter;
   }
 
+  /**
+   * Assigns the cost tracker instance used to enforce spend limits during
+   * routing decisions.
+   *
+   * @param {import('../../utils/cost.js').CostTracker} costTracker - Tracker
+   *   instance monitoring spend.
+   */
   setCostTracker(costTracker) {
     this.costTracker = costTracker;
   }
 
+  /**
+   * Updates the agent configuration snapshot and refreshes routing defaults
+   * derived from it.
+   *
+   * @param {{routing?: object}} agentConfig - Normalised configuration object.
+   */
   setAgentConfig(agentConfig) {
     this.agentConfig = agentConfig;
     if (agentConfig?.routing) {
@@ -240,11 +283,21 @@ export class LLMRouter {
     }
   }
 
+  /**
+   * Clears cached provider configurations and adapter instances so subsequent
+   * requests reload the latest configuration.
+   */
   clearCaches() {
     this.providerConfigCache.clear();
     this.adapterCache.clear();
   }
 
+  /**
+   * Ensures the agent configuration has been loaded from disk or the provided
+   * loader before attempting to route a request.
+   *
+   * @returns {Promise<void>} Resolves once the configuration is available.
+   */
   async ensureAgentConfigLoaded() {
     if (!this.agentConfig) {
       const config = await this.loadAgentConfigurationFn();
@@ -252,14 +305,33 @@ export class LLMRouter {
     }
   }
 
+  /**
+   * Returns the active routing configuration, falling back to defaults when
+   * missing.
+   *
+   * @returns {object} Routing configuration snapshot.
+   */
   getRoutingConfig() {
     return this.routing || DEFAULT_ROUTING_CONFIG;
   }
 
+  /**
+   * Provides the Gemini-specific configuration derived from the agent config or
+   * defaults.
+   *
+   * @returns {object} Gemini configuration block.
+   */
   getGeminiConfig() {
     return this.agentConfig?.gemini || DEFAULT_GEMINI_CONFIG;
   }
 
+  /**
+   * Retrieves metadata describing the specified provider, including tier and
+   * authentication requirements.
+   *
+   * @param {string} providerId - Provider identifier.
+   * @returns {{tier: string, requiresKey: boolean, adapterKey: string}} Provider metadata.
+   */
   getProviderMetadata(providerId) {
     const resolved = normaliseProvider(providerId);
     return PROVIDER_METADATA[resolved] || {
@@ -269,11 +341,24 @@ export class LLMRouter {
     };
   }
 
+  /**
+   * Indicates whether the provider belongs to a paid tier.
+   *
+   * @param {string} providerId - Provider identifier.
+   * @returns {boolean} True when the provider requires payment.
+   */
   isPaidProvider(providerId) {
     const metadata = this.getProviderMetadata(providerId);
     return metadata?.tier === PROVIDER_TIERS.PAID;
   }
 
+  /**
+   * Resolves the configuration block for the specified provider, caching the
+   * result for subsequent lookups.
+   *
+   * @param {string} providerId - Provider identifier or alias.
+   * @returns {Promise<object>} Provider configuration snapshot.
+   */
   async getProviderConfig(providerId) {
     const resolved = normaliseProvider(providerId);
     if (this.providerConfigCache.has(resolved)) {
@@ -285,6 +370,13 @@ export class LLMRouter {
     return config;
   }
 
+  /**
+   * Retrieves the adapter instance responsible for fulfilling requests against
+   * the given provider.
+   *
+   * @param {string} providerId - Provider identifier or alias.
+   * @returns {Promise<object>} Adapter instance implementing provider methods.
+   */
   async getAdapter(providerId) {
     const resolved = normaliseProvider(providerId);
     if (this.adapterCache.has(resolved)) {
@@ -300,6 +392,13 @@ export class LLMRouter {
     return adapter;
   }
 
+  /**
+   * Returns internal state tracking provider health, retries, and spend.
+   *
+   * @param {string} providerId - Provider identifier.
+   * @returns {{failures: number, blockedUntil: number, invalidAuth: boolean, lastKeyHash: number|null, calls: number, tokensIn: number, tokensOut: number, totalCost: number}}
+   *   Mutable state object.
+   */
   getProviderState(providerId) {
     const resolved = normaliseProvider(providerId);
     if (!this.providerState.has(resolved)) {
@@ -317,6 +416,13 @@ export class LLMRouter {
     return this.providerState.get(resolved);
   }
 
+  /**
+   * Records a provider failure and opens the circuit when repeated errors are
+   * observed.
+   *
+   * @param {string} providerId - Provider identifier.
+   * @param {Error} error - Error returned by the provider call.
+   */
   markProviderFailure(providerId, error) {
     const state = this.getProviderState(providerId);
     state.failures += 1;
@@ -328,6 +434,13 @@ export class LLMRouter {
     }
   }
 
+  /**
+   * Registers a successful provider invocation and updates aggregate metrics.
+   *
+   * @param {string} providerId - Provider identifier.
+   * @param {{tokensIn?: number, tokensOut?: number, cost?: number}} [details]
+   *   - Usage metrics supplied by the adapter.
+   */
   markProviderSuccess(providerId, { tokensIn = 0, tokensOut = 0, cost = 0 } = {}) {
     const state = this.getProviderState(providerId);
     state.failures = 0;
@@ -338,6 +451,13 @@ export class LLMRouter {
     state.totalCost += cost;
   }
 
+  /**
+   * Clears cached authentication failures when a different API key is detected
+   * for the provider.
+   *
+   * @param {string} providerId - Provider identifier.
+   * @param {number|null} apiKeyHash - Hash of the API key used for the request.
+   */
   clearAuthFailure(providerId, apiKeyHash) {
     const state = this.getProviderState(providerId);
     if (state.lastKeyHash !== apiKeyHash) {
@@ -346,11 +466,26 @@ export class LLMRouter {
     state.lastKeyHash = apiKeyHash;
   }
 
+  /**
+   * Determines whether the provider is currently blocked due to repeated
+   * failures.
+   *
+   * @param {string} providerId - Provider identifier.
+   * @returns {boolean} True when the provider should be skipped temporarily.
+   */
   isBlocked(providerId) {
     const state = this.getProviderState(providerId);
     return state.blockedUntil && state.blockedUntil > this.now();
   }
 
+  /**
+   * Resolves the API key for the provider from storage, legacy aliases, or the
+   * environment.
+   *
+   * @param {string} providerId - Provider identifier.
+   * @param {{apiKeyEnvVar?: string}} [config] - Provider configuration.
+   * @returns {Promise<string|null>} API key value or null when unavailable.
+   */
   async getApiKey(providerId, config) {
     const resolved = normaliseProvider(providerId);
     const stored = await this.readApiKeyFn(resolved);
@@ -371,6 +506,13 @@ export class LLMRouter {
     return null;
   }
 
+  /**
+   * Computes the provider routing order by combining configured defaults and
+   * the user's preferred provider when supplied.
+   *
+   * @param {string|null} preference - Optional preferred provider identifier.
+   * @returns {string[]} Ordered list of provider IDs to attempt.
+   */
   getRoutingOrder(preference) {
     const baseOrder = uniqueProviderOrder(this.getRoutingConfig().providerOrder || []);
     const resolvedPreference = normaliseProvider(preference);
@@ -386,6 +528,14 @@ export class LLMRouter {
     return combined.filter(providerId => providerId !== 'auto');
   }
 
+  /**
+   * Checks whether the upcoming request can be executed without breaching the
+   * configured per-call or cumulative cost ceilings.
+   *
+   * @param {string} model - Model identifier used for cost estimation.
+   * @param {string} text - Source text being summarised.
+   * @returns {Promise<boolean>} True when sufficient budget remains.
+   */
   async ensureCostBudget(model, text) {
     if (!this.costTracker) {
       return true;
@@ -398,6 +548,15 @@ export class LLMRouter {
     return this.costTracker.canSpend(estimate);
   }
 
+  /**
+   * Records the cost of a provider invocation when a tracker is available.
+   *
+   * @param {string} model - Model identifier used for cost lookups.
+   * @param {number} promptTokens - Tokens submitted in the request.
+   * @param {number} completionTokens - Tokens returned in the response.
+   * @param {object} metadata - Additional metadata stored alongside the entry.
+   * @returns {Promise<number>} Recorded USD cost.
+   */
   async recordCost(model, promptTokens, completionTokens, metadata) {
     if (!this.costTracker) {
       return 0;
@@ -405,6 +564,14 @@ export class LLMRouter {
     return this.costTracker.record(model, promptTokens, completionTokens, metadata);
   }
 
+  /**
+   * Obtains a Vertex AI access token using either environment variables or a
+   * service-account JSON file.
+   *
+   * @param {{project: string, location: string, credentialsPath?: string}} params -
+   *   Authentication parameters.
+   * @returns {Promise<{token: string, expiresIn: number}>} Access token details.
+   */
   async getVertexAccessToken({ project, location, credentialsPath }) {
     const envCandidates = ['VERTEX_ACCESS_TOKEN', 'GOOGLE_VERTEX_TOKEN', 'GCP_ACCESS_TOKEN'];
     for (const candidate of envCandidates) {
@@ -419,6 +586,14 @@ export class LLMRouter {
     return fetchAccessToken({ credentialsPath, fetchImpl: this.fetch, scope: TOKEN_SCOPES });
   }
 
+  /**
+   * Resolves the authentication strategy for Gemini providers, preferring API
+   * keys but falling back to Vertex credentials when required.
+   *
+   * @param {string} providerId - Provider identifier.
+   * @param {object} config - Provider configuration snapshot.
+   * @returns {Promise<object>} Authentication descriptor.
+   */
   async resolveGeminiAuth(providerId, config) {
     const apiKey = await this.getApiKey(providerId, config);
     const keyHash = hashValue(apiKey || '');
@@ -447,6 +622,14 @@ export class LLMRouter {
     return { mode: 'vertex', accessToken: token, project, location, endpoint };
   }
 
+  /**
+   * Builds the invocation context containing provider ID and authentication
+   * details ready to be passed to adapters.
+   *
+   * @param {string} providerId - Provider identifier.
+   * @param {object} config - Provider configuration snapshot.
+   * @returns {Promise<{providerId: string, auth: object}>} Invocation context.
+   */
   async buildInvocationContext(providerId, config) {
     const metadata = this.getProviderMetadata(providerId);
     if (!metadata) {
@@ -468,6 +651,15 @@ export class LLMRouter {
     return { providerId: normaliseProvider(providerId), auth: { mode: 'apiKey', apiKey } };
   }
 
+  /**
+   * Executes the supplied asynchronous operation, enforcing a timeout when the
+   * routing configuration specifies one.
+   *
+   * @param {string} providerId - Provider identifier for error context.
+   * @param {Function} operation - Function returning a promise.
+   * @param {number} timeoutMs - Timeout in milliseconds.
+   * @returns {Promise<*>} Result of the operation.
+   */
   async executeWithTimeout(providerId, operation, timeoutMs) {
     if (timeoutMs > 0) {
       return Promise.race([
@@ -478,6 +670,16 @@ export class LLMRouter {
     return operation();
   }
 
+  /**
+   * Invokes the specified provider to generate a summary while handling retries
+   * and cost accounting.
+   *
+   * @param {string} providerId - Provider identifier.
+   * @param {{text: string, language: string, metadata?: object}} payload -
+   *   Invocation parameters.
+   * @returns {Promise<{text: string, tokensIn: number, tokensOut: number, model: string, provider: string, cost: number}>}
+   *   Provider response enriched with accounting metadata.
+   */
   async invokeProvider(providerId, { text, language, metadata }) {
     const resolved = normaliseProvider(providerId);
     const config = await this.getProviderConfig(resolved);
@@ -553,6 +755,19 @@ export class LLMRouter {
     throw lastError || new Error(`Provider ${resolved} failed unexpectedly.`);
   }
 
+  /**
+   * Routes a summarisation request through the configured provider order,
+   * returning the first successful response or raising an aggregated error.
+   *
+   * @param {{
+   *   text: string,
+   *   language?: string,
+   *   providerPreference?: string|null,
+   *   metadata?: object,
+   * }} params - Request parameters supplied by the caller.
+   * @returns {Promise<object>} Summary payload compatible with popup
+   *   expectations.
+   */
   async generate({
     text,
     language = 'en',

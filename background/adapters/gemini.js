@@ -59,7 +59,14 @@ function normaliseUsage(usageMetadata) {
   };
 }
 
+/**
+ * Provides helper methods for issuing Gemini summarisation requests.
+ */
 export class GeminiAdapter {
+  /**
+   * @param {object} config - Provider configuration block.
+   * @param {{fetchImpl?: Function}} [options={}] - Dependency overrides.
+   */
   constructor(config, options = {}) {
     this.config = config || {};
     this.fetch = ensureFetch(options);
@@ -73,6 +80,12 @@ export class GeminiAdapter {
     });
   }
 
+  /**
+   * Declares cost metadata for the router. Gemini currently exposes summary
+   * costs only, so the remaining entries are placeholders.
+   *
+   * @returns {object} Cost metadata grouped by capability.
+   */
   getCostMetadata() {
     const model = this.config.model || DEFAULT_GEMINI_MODEL;
     this.logger.trace('Providing Gemini cost metadata.', { model });
@@ -83,6 +96,22 @@ export class GeminiAdapter {
     };
   }
 
+  /**
+   * Issues a summarisation request to either AI Studio or Vertex Gemini.
+   *
+   * @param {{
+   *   apiKey?: string,
+   *   accessToken?: string,
+   *   project?: string,
+   *   location?: string,
+   *   endpoint?: string,
+   *   text: string,
+   *   language: string,
+   *   model?: string,
+   * }} params - Summarisation parameters.
+   * @returns {Promise<{summary: string, model: string, promptTokens?: number, completionTokens?: number}>}
+   *   Structured response payload.
+   */
   async summarise({ apiKey, accessToken, project, location, endpoint, text, language, model }) {
     const modelToUse = model || this.config.model || DEFAULT_GEMINI_MODEL;
     const prompt = `Provide a concise, listener-friendly summary of the following webpage content. Use ${language} language.\n\n${text}`;
@@ -178,11 +207,21 @@ export class GeminiAdapter {
     }
   }
 
+  /**
+   * Gemini currently lacks a transcription API, so this method throws.
+   *
+   * @throws {Error} Always, indicating the capability is unavailable.
+   */
   async transcribe() {
     this.logger.warn('Gemini transcription requested but not supported.');
     throw new Error('Gemini transcription is not supported.');
   }
 
+  /**
+   * Gemini currently lacks a speech synthesis API, so this method throws.
+   *
+   * @throws {Error} Always, indicating the capability is unavailable.
+   */
   async synthesise() {
     this.logger.warn('Gemini speech synthesis requested but not supported.');
     throw new Error('Gemini speech synthesis is not supported.');

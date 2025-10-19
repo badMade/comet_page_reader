@@ -69,6 +69,9 @@ function createCorrelationId(prefix = 'bg') {
   return `${prefix}-${Date.now().toString(36)}-${random}`;
 }
 
+const testAdapterOverrides = new Map();
+let testCostTrackerOverride = null;
+
 const PROVIDER_ADAPTER_KEYS = Object.freeze({
   openai_paid: 'openai',
   openai_trial: 'openai',
@@ -250,6 +253,13 @@ async function ensureAdapter(providerId) {
     fallbackProvider,
   });
 
+  if (testAdapterOverrides.has(preferredProvider)) {
+    adapterInstance = testAdapterOverrides.get(preferredProvider);
+    activeProviderId = preferredProvider;
+    providerConfig = getFallbackProviderConfig({ provider: preferredProvider });
+    return adapterInstance;
+  }
+
   loadingProviderId = preferredProvider;
   adapterInstance = null;
 
@@ -353,6 +363,9 @@ async function ensureInitialised(providerId) {
   }
 
   costTracker = createCostTracker(limitUsd, usage);
+  if (testCostTrackerOverride) {
+    costTracker = testCostTrackerOverride;
+  }
   if (llmRouter) {
     llmRouter.setCostTracker(costTracker);
   }
@@ -486,6 +499,16 @@ function ensureKeyAvailable(apiKey, providerId) {
   }
 }
 
+function resolveFlatCost(metadata, fallback) {
+  const flatCost = metadata && typeof metadata.flatCost === 'number'
+    ? metadata.flatCost
+    : Number.NaN;
+  if (Number.isFinite(flatCost) && flatCost >= 0) {
+    return flatCost;
+  }
+  return fallback;
+}
+
 function toBase64(arrayBuffer) {
   const bytes = new Uint8Array(arrayBuffer);
   let binary = '';
@@ -533,9 +556,7 @@ async function transcribeAudio({ base64, filename = 'speech.webm', mimeType = 'a
   const adapter = await ensureAdapter(provider);
   const costMetadata = getCostMetadata(adapter);
   const transcribeMeta = costMetadata.transcribe || {};
-  const estimatedCost = typeof transcribeMeta.flatCost === 'number' && transcribeMeta.flatCost > 0
-    ? transcribeMeta.flatCost
-    : 0.005;
+  const estimatedCost = resolveFlatCost(transcribeMeta, 0.005);
   if (!costTracker.canSpend(estimatedCost)) {
     logger.warn('Transcription aborted due to cost limit.', { estimatedCost });
     throw new Error('Cost limit reached for transcription.');
@@ -565,9 +586,7 @@ async function synthesiseSpeech({ text, voice = 'alloy', format = 'mp3', provide
   const adapter = await ensureAdapter(provider);
   const costMetadata = getCostMetadata(adapter);
   const synthMeta = costMetadata.synthesise || {};
-  const estimatedCost = typeof synthMeta.flatCost === 'number' && synthMeta.flatCost > 0
-    ? synthMeta.flatCost
-    : 0.01;
+  const estimatedCost = resolveFlatCost(synthMeta, 0.01);
   if (!costTracker.canSpend(estimatedCost)) {
     logger.warn('Speech synthesis aborted due to cost limit.', { estimatedCost });
     throw new Error('Cost limit reached for speech synthesis.');
@@ -745,7 +764,54 @@ runtime.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 
-export { ensureInitialised, getApiKeyDetails, handleUsageRequest, setActiveProvider, setApiKey };
+function __setTestAdapterOverride(providerId, adapter) {
+  if (typeof providerId !== 'string') {
+    throw new Error('providerId must be a string');
+  }
+  testAdapterOverrides.set(providerId, adapter);
+  if (activeProviderId === providerId) {
+    adapterInstance = adapter;
+  }
+}
+
+function __setTestCostTrackerOverride(tracker) {
+  testCostTrackerOverride = tracker;
+  if (tracker) {
+    costTracker = tracker;
+  }
+}
+
+function __clearTestOverrides() {
+  testAdapterOverrides.clear();
+  testCostTrackerOverride = null;
+  adapterInstance = null;
+  adapterLoadPromise = null;
+  loadingProviderId = null;
+  costTracker = undefined;
+  memoryCache = new Map();
+  initialised = false;
+  providerConfig = getFallbackProviderConfig();
+  agentConfigSnapshot = null;
+  preferredProviderId = null;
+  routingSettings = DEFAULT_ROUTING_CONFIG;
+  llmRouter = null;
+}
+
+async function __transcribeForTests(payload) {
+  return transcribeAudio(payload);
+}
+
+export {
+  ensureInitialised,
+  getApiKeyDetails,
+  handleUsageRequest,
+  setActiveProvider,
+  setApiKey,
+  __clearTestOverrides,
+  __setTestAdapterOverride,
+  __setTestCostTrackerOverride,
+  __transcribeForTests,
+};
 
 ensureInitialised().catch(error => {
   logger.error('Failed to initialise service worker.', { error });
