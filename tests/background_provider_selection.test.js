@@ -5,7 +5,7 @@ import { installChromeStub, importServiceWorker } from './fixtures/chrome-stub.j
 import { __setAgentYamlOverrideForTests, __clearAgentYamlOverrideForTests } from '../utils/providerConfig.js';
 
 function createConfigYaml(provider) {
-  return `provider: ${provider}\nmodel: ${provider}-model\napi_url: https://api.${provider}.example/v1/chat\napi_key_var: ${provider.toUpperCase()}_KEY\ntemperature: 0.5\n`;
+  return YAML.stringify({ provider, model: `${provider}-model`, api_url: `https://api.${provider}.example/v1/chat`, api_key_var: `${provider.toUpperCase()}_KEY`, temperature: 0.5 });
 }
 
 test('setApiKey scopes storage to the active provider from agent.yaml', async () => {
