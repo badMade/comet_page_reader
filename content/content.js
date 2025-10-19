@@ -84,14 +84,28 @@
       return;
     }
     try {
-      const maybePromise = runtime.sendMessage(message, () => {
-        const lastError = getRuntimeLastError();
-        if (lastError) {
-          handleRuntimeFailure(lastError);
+      let maybePromise;
+      let usedCallback = false;
+      try {
+        maybePromise = runtime.sendMessage(message, () => {
+          const lastError = getRuntimeLastError();
+          if (lastError) {
+            handleRuntimeFailure(lastError);
+          }
+        });
+        usedCallback = true;
+      } catch (sendError) {
+        if (sendError instanceof TypeError) {
+          maybePromise = runtime.sendMessage(message);
+        } else {
+          throw sendError;
         }
-      });
+      }
+
       if (maybePromise && typeof maybePromise.catch === 'function') {
         maybePromise.catch(handleRuntimeFailure);
+      } else if (!usedCallback && typeof maybePromise === 'undefined') {
+        // Nothing else to inspect; assume fire-and-forget style APIs.
       }
     } catch (error) {
       handleRuntimeFailure(error);
