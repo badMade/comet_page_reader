@@ -784,7 +784,10 @@ async function playAudioPayload(audioPayload, controller) {
     };
 
     const onError = event => {
-      const error = event instanceof Error ? event : new Error('Audio playback failed.');
+      const mediaError = event.target?.error;
+      const message = mediaError?.message || 'Audio playback failed';
+      const code = mediaError?.code;
+      const error = new Error(code ? `${message} (code: ${code})` : message);
       rejectOnce(error);
     };
 
