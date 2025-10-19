@@ -8,8 +8,13 @@ import { createRecorder } from '../utils/audio.js';
  * @module popup/script
  */
 
-const hasBrowserApi = typeof browser !== 'undefined';
-const browserApi = hasBrowserApi ? browser : undefined;
+const browserApi =
+  typeof browser !== 'undefined'
+    ? browser
+    : typeof globalThis !== 'undefined'
+      ? globalThis.browser
+      : undefined;
+const hasBrowserApi = !!browserApi;
 const runtime = chrome?.runtime || browserApi?.runtime;
 const tabsApi = chrome?.tabs || browserApi?.tabs;
 const usesBrowserPromises =
