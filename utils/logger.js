@@ -46,9 +46,10 @@ function resolveConfigPath(configPath) {
     return configPath;
   }
 
-  // Avoid rewriting already absolute URLs (e.g. http(s), chrome-extension schemes).
-  const hasScheme = /^[a-zA-Z][a-zA-Z\d+\-.]*:/.test(configPath);
-  if (hasScheme) {
+  const hasScheme = /^[a-zA-Z]{2,}[a-zA-Z\d+\-.]*:/.test(configPath);
+  const isProtocolRelative = configPath.startsWith('//');
+
+  if (hasScheme || isProtocolRelative) {
     return configPath;
   }
 
