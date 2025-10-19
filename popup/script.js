@@ -151,6 +151,30 @@ function getRuntimeLastError() {
   return browserApi?.runtime?.lastError;
 }
 
+const CONTEXT_INVALIDATED_PATTERN = /Extension context invalidated/i;
+
+function isContextInvalidatedError(error) {
+  if (!error) {
+    return false;
+  }
+  const message = typeof error.message === 'string' ? error.message : String(error);
+  return CONTEXT_INVALIDATED_PATTERN.test(message);
+}
+
+function createContextInvalidatedError() {
+  return new Error('The extension was reloaded. Close and reopen the popup to continue.');
+}
+
+function normaliseError(error, fallbackMessage = 'Background request failed.') {
+  if (isContextInvalidatedError(error)) {
+    return createContextInvalidatedError();
+  }
+  const message = typeof error?.message === 'string' && error.message.trim().length > 0
+    ? error.message
+    : fallbackMessage;
+  return new Error(message);
+}
+
 /**
  * Sends a message to the background service worker, supporting both Chrome
  * callbacks and Firefox promises. Falls back to local mocks when MOCK_MODE is
@@ -178,27 +202,36 @@ function sendMessage(type, payload) {
         return response.result;
       })
       .catch(error => {
-        throw new Error(error.message || 'Background request failed.');
+        throw normaliseError(error);
       });
   }
 
   return new Promise((resolve, reject) => {
-    runtime.sendMessage(payloadMessage, response => {
-      const lastError = getRuntimeLastError();
-      if (lastError) {
-        reject(new Error(lastError.message));
-        return;
+    try {
+      const maybePromise = runtime.sendMessage(payloadMessage, response => {
+        const lastError = getRuntimeLastError();
+        if (lastError) {
+          reject(normaliseError(lastError));
+          return;
+        }
+        if (!response) {
+          reject(new Error('No response from background script.'));
+          return;
+        }
+        if (!response.ok) {
+          reject(new Error(response.error || 'Request failed.'));
+          return;
+        }
+        resolve(response.result);
+      });
+      if (maybePromise && typeof maybePromise.catch === 'function') {
+        maybePromise.catch(error => {
+          reject(normaliseError(error));
+        });
       }
-      if (!response) {
-        reject(new Error('No response from background script.'));
-        return;
-      }
-      if (!response.ok) {
-        reject(new Error(response.error || 'Request failed.'));
-        return;
-      }
-      resolve(response.result);
-    });
+    } catch (error) {
+      reject(normaliseError(error));
+    }
   });
 }
 
@@ -866,4 +899,10 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 });
 
-export { sendMessageToTab };
+const __TESTING__ = {
+  normaliseError,
+  isContextInvalidatedError,
+  createContextInvalidatedError,
+};
+
+export { sendMessageToTab, sendMessage, __TESTING__ };
