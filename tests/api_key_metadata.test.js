@@ -126,6 +126,67 @@ function installChromeStubWithDisabledSync(persistentStore) {
   };
 }
 
+function installBrowserStubWithPromiseStorage() {
+  const persistentStore = new Map();
+  const sessionStore = new Map();
+
+  const readFromStore = (store, keys) => {
+    const result = {};
+    if (typeof keys === 'undefined') {
+      for (const [key, value] of store.entries()) {
+        result[key] = value;
+      }
+      return result;
+    }
+    const resolvedKeys = Array.isArray(keys)
+      ? keys
+      : typeof keys === 'object' && keys !== null
+      ? Object.keys(keys)
+      : [keys];
+    resolvedKeys.forEach(key => {
+      if (store.has(key)) {
+        result[key] = store.get(key);
+      }
+    });
+    return result;
+  };
+
+  const createArea = backingStore => ({
+    async get(keys) {
+      return readFromStore(backingStore, keys);
+    },
+    async set(items) {
+      Object.entries(items).forEach(([key, value]) => {
+        backingStore.set(key, value);
+      });
+    },
+    async remove(keys) {
+      const resolvedKeys = Array.isArray(keys) ? keys : [keys];
+      resolvedKeys.forEach(key => backingStore.delete(key));
+    },
+  });
+
+  const browserStub = {
+    storage: {
+      sync: createArea(persistentStore),
+      local: createArea(persistentStore),
+      session: createArea(sessionStore),
+    },
+    runtime: {},
+  };
+
+  delete globalThis.chrome;
+  globalThis.browser = browserStub;
+
+  return {
+    persistentStore,
+    sessionStore,
+    uninstall() {
+      delete globalThis.browser;
+    },
+  };
+}
+
 test('API key metadata is stored and cleared alongside the key', async () => {
   const persistentStore = new Map();
 
@@ -333,4 +394,23 @@ test('API keys are isolated per provider and can be cleared independently', asyn
   const openaiAfterDelete = await fetchApiKeyDetails({ provider: 'openai', overrides });
   assert.equal(openaiAfterDelete.apiKey, 'openai-key');
   assert.equal(persistentStore.get(openaiKeys.apiKey), 'openai-key');
+});
+
+test('saveApiKey supports promise-based storage APIs', async () => {
+  const { uninstall, persistentStore } = installBrowserStubWithPromiseStorage();
+
+  try {
+    const moduleUrl = new URL('../utils/apiKeyStore.js', import.meta.url);
+    moduleUrl.searchParams.set('cacheBust', `${Date.now()}-${Math.random()}`);
+    const { saveApiKey, fetchApiKeyDetails, getProviderStorageKeys } = await import(moduleUrl.href);
+
+    await saveApiKey('promise-key');
+    const details = await fetchApiKeyDetails();
+    const { apiKey: storageKey } = getProviderStorageKeys(details.provider);
+
+    assert.equal(details.apiKey, 'promise-key');
+    assert.equal(persistentStore.get(storageKey), 'promise-key');
+  } finally {
+    uninstall();
+  }
 });
