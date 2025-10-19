@@ -16,6 +16,7 @@ test('setApiKey scopes storage to the active provider from agent.yaml', async ()
 
   try {
     const module = await importServiceWorker();
+    await module.ensureInitialised('mistral');
     await module.setApiKey('mistral-key');
 
     assert.equal(persistentStore['comet:apiKey:mistral'], 'mistral-key');
