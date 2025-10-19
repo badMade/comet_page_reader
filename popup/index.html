@@ -70,9 +70,22 @@
           <span id="recordingStatus" role="status" aria-live="polite"></span>
         </div>
         <div class="playback">
-          <button id="playBtn" disabled>Play</button>
-          <button id="pauseBtn" disabled>Pause</button>
-          <button id="stopBtn" disabled>Stop</button>
+          <div class="playback-rate">
+            <label id="playbackRateLabel" for="playbackRateSelect">Playback speed</label>
+            <select id="playbackRateSelect" name="playbackRate">
+              <option value="0.75">0.75×</option>
+              <option value="1">1×</option>
+              <option value="1.25">1.25×</option>
+              <option value="1.5">1.5×</option>
+              <option value="1.75">1.75×</option>
+              <option value="2">2×</option>
+            </select>
+          </div>
+          <div class="playback-controls">
+            <button id="playBtn" disabled>Play</button>
+            <button id="pauseBtn" disabled>Pause</button>
+            <button id="stopBtn" disabled>Stop</button>
+          </div>
         </div>
       </section>
 

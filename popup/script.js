@@ -78,6 +78,7 @@ const state = {
   audioSourceUrl: null,
   language: 'en',
   voice: 'alloy',
+  playbackRate: 1,
   provider: DEFAULT_PROVIDER_ID,
   providerOptions: listProviders().map(option => option.id),
   recorder: null,
@@ -114,6 +115,8 @@ function assignElements() {
   elements.apiKeyMeta = qs('apiKeyMeta');
   elements.language = qs('languageSelect');
   elements.voice = qs('voiceSelect');
+  elements.playbackRateLabel = qs('playbackRateLabel');
+  elements.playbackRate = qs('playbackRateSelect');
   elements.summarise = qs('summariseBtn');
   elements.read = qs('readBtn');
   elements.readPage = qs('readPageBtn');
@@ -125,6 +128,9 @@ function assignElements() {
   elements.usage = qs('usageDetails');
   elements.resetUsage = qs('resetUsageBtn');
   elements.usageRowTemplate = document.getElementById('usageRowTemplate');
+  if (elements.playbackRate) {
+    elements.playbackRate.value = String(state.playbackRate);
+  }
 }
 
 /**
@@ -136,6 +142,9 @@ function translateUi() {
   }
   if (elements.apiKeyLabel) {
     elements.apiKeyLabel.textContent = t('apiKeyLabel');
+  }
+  if (elements.playbackRateLabel) {
+    elements.playbackRateLabel.textContent = t('playbackSpeedLabel');
   }
   elements.summarise.textContent = t('summarise');
   elements.read.textContent = t('readAloud');
@@ -910,6 +919,9 @@ function ensureAudio() {
   if (!state.audio) {
     state.audio = new Audio();
   }
+  if (typeof state.audio.playbackRate === 'number') {
+    state.audio.playbackRate = state.playbackRate;
+  }
   return state.audio;
 }
 
@@ -995,6 +1007,9 @@ async function playAudioPayload(audioPayload, controller) {
     setPlaybackActive();
 
     try {
+      if (typeof audio.playbackRate === 'number') {
+        audio.playbackRate = state.playbackRate;
+      }
       const playResult = audio.play();
       if (playResult && typeof playResult.catch === 'function') {
         playResult.catch(rejectOnce);
@@ -1194,6 +1209,35 @@ async function updateVoice(event) {
 }
 
 /**
+ * Updates the playback rate used for audio output and persists the choice.
+ *
+ * @param {Event} event - Change event from the playback rate selector.
+ * @returns {Promise<void>} Resolves once the preference is stored.
+ */
+async function updatePlaybackRate(event) {
+  const value = Number.parseFloat(event.target.value);
+  if (!Number.isFinite(value) || value <= 0) {
+    event.target.value = String(state.playbackRate);
+    return;
+  }
+  state.playbackRate = value;
+  if (state.audio && typeof state.audio.playbackRate === 'number') {
+    state.audio.playbackRate = state.playbackRate;
+  }
+  if (chrome?.storage?.sync) {
+    await new Promise(resolve => {
+      chrome.storage.sync.set({ playbackRate: state.playbackRate }, () => {
+        const err = chrome.runtime.lastError;
+        if (err) {
+          console.debug('Failed to persist playback rate preference', err);
+        }
+        resolve();
+      });
+    });
+  }
+}
+
+/**
  * Loads persisted language and voice preferences from storage.
  *
  * @returns {Promise<void>} Resolves after UI state has been updated.
@@ -1204,7 +1248,7 @@ async function loadPreferences() {
       resolve({});
       return;
     }
-    chrome.storage.sync.get(['language', 'voice'], items => resolve(items || {}));
+    chrome.storage.sync.get(['language', 'voice', 'playbackRate'], items => resolve(items || {}));
   });
   if (stored.language && availableLocales().includes(stored.language)) {
     state.language = stored.language;
@@ -1214,6 +1258,19 @@ async function loadPreferences() {
   if (stored.voice) {
     state.voice = stored.voice;
     elements.voice.value = stored.voice;
+  }
+  const storedRate = stored.playbackRate;
+  if (storedRate !== undefined) {
+    const rate = Number.parseFloat(storedRate);
+    if (Number.isFinite(rate) && rate > 0 && elements.playbackRate) {
+      state.playbackRate = rate;
+      elements.playbackRate.value = String(rate);
+      if (state.audio && typeof state.audio.playbackRate === 'number') {
+        state.audio.playbackRate = state.playbackRate;
+      }
+    }
+  } else if (elements.playbackRate) {
+    elements.playbackRate.value = String(state.playbackRate);
   }
   translateUi();
 }
@@ -1351,6 +1408,9 @@ function bindEvents() {
   elements.readPage.addEventListener('click', withErrorHandling(readFullPage));
   elements.play.addEventListener('click', withErrorHandling(async () => {
     if (state.audio) {
+      if (typeof state.audio.playbackRate === 'number') {
+        state.audio.playbackRate = state.playbackRate;
+      }
       await state.audio.play();
       setPlaybackActive();
     }
@@ -1364,6 +1424,7 @@ function bindEvents() {
   elements.resetUsage.addEventListener('click', withErrorHandling(resetUsage));
   elements.language.addEventListener('change', withErrorHandling(updateLanguage));
   elements.voice.addEventListener('change', withErrorHandling(updateVoice));
+  elements.playbackRate.addEventListener('change', withErrorHandling(updatePlaybackRate));
   elements.pushToTalk.addEventListener('mousedown', withErrorHandling(startRecording));
   elements.pushToTalk.addEventListener('mouseup', withErrorHandling(stopRecording));
   elements.pushToTalk.addEventListener('mouseleave', withErrorHandling(stopRecording));
@@ -1421,6 +1482,7 @@ const __TESTING__ = {
   assignElements,
   setPlaybackReady,
   readFullPage,
+  ensureAudio,
 };
 
 export { sendMessageToTab, sendMessage, __TESTING__ };

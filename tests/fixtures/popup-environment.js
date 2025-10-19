@@ -51,6 +51,7 @@ export function setupPopupTestEnvironment() {
     constructor() {
       this.currentTime = 0;
       this.src = '';
+      this.playbackRate = 1;
     }
 
     addEventListener(name, handler) {

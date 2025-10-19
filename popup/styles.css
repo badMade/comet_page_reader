@@ -123,8 +123,25 @@ button:disabled {
 
 .playback {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.5rem;
   margin-top: 0.5rem;
+  align-items: flex-end;
+}
+
+.playback-rate {
+  flex: 1 1 100%;
+}
+
+.playback-controls {
+  display: flex;
+  gap: 0.5rem;
+  flex: 1 1 100%;
+}
+
+.playback-controls button {
+  flex: 1 1 0;
+  width: auto;
 }
 
 .usage {
