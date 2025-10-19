@@ -292,12 +292,19 @@ export async function loadLoggingConfig(configPath = 'logging_config.yaml') {
       }
     } else if (typeof fetch === 'function') {
       const resolvedPath = resolveConfigPath(configPath);
-      const response = await fetch(resolvedPath);
-      if (response.ok) {
-        rawConfig = await response.text();
-      } else if (configPath !== 'logging_config.yaml') {
-        throw new Error(`Failed to load logging configuration: ${response.status}`);
-      } else {
+      try {
+        const response = await fetch(resolvedPath);
+        if (response.ok) {
+          rawConfig = await response.text();
+        } else if (configPath !== 'logging_config.yaml') {
+          throw new Error(`Failed to load logging configuration: ${response.status}`);
+        } else {
+          return;
+        }
+      } catch (fetchError) {
+        if (configPath !== 'logging_config.yaml') {
+          throw fetchError;
+        }
         return;
       }
     }

@@ -63,3 +63,39 @@ test('loadLoggingConfig resolves extension URLs when fetch is available', async 
     }
   }
 });
+
+test('loadLoggingConfig ignores fetch failures for default config path', async () => {
+  const originalProcess = globalThis.process;
+  const originalFetch = globalThis.fetch;
+  const originalConsoleError = console.error;
+
+  const loggedErrors = [];
+
+  try {
+    globalThis.process = undefined;
+    globalThis.fetch = () => Promise.reject(new TypeError('Failed to fetch'));
+    console.error = (...args) => {
+      loggedErrors.push(args);
+    };
+
+    const moduleUrl = new URL(createModuleSpecifier(), import.meta.url);
+    const loggerModule = await import(moduleUrl.href);
+
+    await loggerModule.loadLoggingConfig('logging_config.yaml');
+
+    assert.equal(loggedErrors.length, 0, 'fetch failures for the default config should not log errors');
+    assert.equal(loggerModule.getLoggerConfig().level, 'info');
+  } finally {
+    if (typeof originalProcess === 'undefined') {
+      delete globalThis.process;
+    } else {
+      globalThis.process = originalProcess;
+    }
+    if (typeof originalFetch === 'undefined') {
+      delete globalThis.fetch;
+    } else {
+      globalThis.fetch = originalFetch;
+    }
+    console.error = originalConsoleError;
+  }
+});
