@@ -320,7 +320,14 @@ export async function getValue(key, defaultValue = undefined) {
  * @returns {Promise<*>} Stored value.
  */
 export async function setPersistentValues(entries) {
-  logger.debug('Setting persistent storage values.', { keys: Object.keys(entries) });
+  if (!entries || typeof entries !== 'object' || Array.isArray(entries)) {
+    throw new TypeError('Storage set entries must be an object.');
+  }
+  const keys = Object.keys(entries);
+  logger.debug('Setting persistent storage values.', { keys });
+  if (keys.length === 0) {
+    return entries;
+  }
   await setValuesWithFallback(entries);
   return entries;
 }

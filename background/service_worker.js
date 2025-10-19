@@ -804,6 +804,8 @@ async function __transcribeForTests(payload) {
 export {
   ensureInitialised,
   getApiKeyDetails,
+  getCacheKey,
+  parseCacheKey,
   handleUsageRequest,
   setActiveProvider,
   setApiKey,
