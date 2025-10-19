@@ -46,7 +46,12 @@ const MOCK_MODE = (() => {
 const mockHandlers = {
   'comet:getApiKey': () => Promise.resolve('sk-mock-1234'),
   'comet:getApiKeyDetails': () =>
-    Promise.resolve({ apiKey: 'sk-mock-1234', provider: 'openai', lastUpdated: Date.now() - 30 * 1000 }),
+    Promise.resolve({
+      apiKey: 'sk-mock-1234',
+      provider: DEFAULT_PROVIDER_ID,
+      requestedProvider: DEFAULT_PROVIDER_ID,
+      lastUpdated: Date.now() - 30 * 1000,
+    }),
   'comet:setApiKey': () => Promise.resolve(null),
   'comet:setProvider': () => Promise.resolve({ provider: DEFAULT_PROVIDER_ID }),
   'comet:getUsage': () =>

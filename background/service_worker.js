@@ -163,6 +163,10 @@ async function ensureAdapter(providerId) {
     : requestedProviderRaw
       ? resolveAlias(requestedProviderRaw)
       : null;
+  if (requestedProviderRaw && requestedProviderRaw !== 'auto') {
+    const preferredCandidate = resolveAlias(requestedProviderRaw) || requestedProviderRaw;
+    updatePreferredProvider(preferredCandidate);
+  }
 
   if (adapterInstance && (!requestedProvider || activeProviderId === requestedProvider)) {
     return adapterInstance;
@@ -191,6 +195,17 @@ async function ensureAdapter(providerId) {
   const overrideProvider = requestedProvider || resolvedPreference;
   await ensureAgentConfig();
   const baseFallbackProvider = providerConfig?.provider || activeProviderId || DEFAULT_PROVIDER_ID;
+  const baseAlias = resolveAlias(baseFallbackProvider);
+  if (!preferredProviderId && !storedPreference && !providerId) {
+    const matchesDefault =
+      baseFallbackProvider === DEFAULT_PROVIDER
+      || baseFallbackProvider === DEFAULT_PROVIDER_ID
+      || baseAlias === DEFAULT_PROVIDER
+      || baseAlias === DEFAULT_PROVIDER_ID;
+    if (matchesDefault) {
+      preferredProviderId = DEFAULT_PROVIDER_ID;
+    }
+  }
   const fallbackProvider = baseFallbackProvider === 'auto'
     ? DEFAULT_PROVIDER_ID
     : resolveAlias(baseFallbackProvider);
@@ -222,6 +237,10 @@ async function ensureAdapter(providerId) {
       );
       config = getFallbackProviderConfig();
       const fallbackAdapterKey = getAdapterKey(config.provider);
+      if (preferredProviderId === DEFAULT_PROVIDER_ID) {
+        const fallbackPreference = resolveAlias(config.provider) || config.provider;
+        updatePreferredProvider(fallbackPreference);
+      }
       adapter = createAdapter(fallbackAdapterKey, config);
     }
 

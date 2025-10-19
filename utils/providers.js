@@ -1,4 +1,4 @@
-const DEFAULT_PROVIDER_ID = 'openai';
+const DEFAULT_PROVIDER_ID = 'auto';
 
 const PROVIDER_ALIASES = Object.freeze({
   openai: 'openai_paid',

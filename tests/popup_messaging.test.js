@@ -165,7 +165,8 @@ test('mock mode bypasses runtime messaging and preserves provider metadata', asy
 
   const module = await importPopupModule({ mockMode: true });
   const details = await module.sendMessage('comet:getApiKeyDetails');
-  assert.equal(details.provider, 'openai');
+  assert.equal(details.provider, 'auto');
+  assert.equal(details.requestedProvider, 'auto');
   assert.equal(details.apiKey, 'sk-mock-1234');
 
   const usage = await module.sendMessage('comet:getUsage');
