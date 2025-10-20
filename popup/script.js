@@ -95,12 +95,14 @@ const mockHandlers = {
     Promise.resolve({ text: 'mock summary please', usage: { totalCostUsd: 0.02, limitUsd: 5, lastReset: Date.now() } }),
 };
 
+const DEFAULT_VOICE = 'alloy';
+
 const state = {
   summaries: [],
   audio: null,
   audioSourceUrl: null,
   language: 'en',
-  voice: 'alloy',
+  voice: DEFAULT_VOICE,
   playbackRate: 1,
   provider: DEFAULT_PROVIDER_ID,
   providerOptions: listProviders().map(option => option.id),
@@ -154,6 +156,37 @@ function assignElements() {
   if (elements.playbackRate) {
     elements.playbackRate.value = String(state.playbackRate);
   }
+  if (elements.voice) {
+    elements.voice.value = state.voice;
+  }
+}
+
+function getVoiceOptions() {
+  if (!elements.voice) {
+    return [];
+  }
+  const options = elements.voice.options;
+  if (!options || typeof options.length === 'undefined') {
+    return [];
+  }
+  return Array.from(options)
+    .map(option => option?.value)
+    .filter(value => typeof value === 'string' && value.length > 0);
+}
+
+async function persistVoicePreference(voice) {
+  if (!chrome?.storage?.sync) {
+    return;
+  }
+  await new Promise(resolve => {
+    chrome.storage.sync.set({ voice }, () => {
+      const err = chrome?.runtime?.lastError;
+      if (err) {
+        logger.debug('Failed to persist voice preference.', { error: err });
+      }
+      resolve();
+    });
+  });
 }
 
 /**
@@ -1362,17 +1395,7 @@ async function updateLanguage(event) {
  */
 async function updateVoice(event) {
   state.voice = event.target.value;
-  if (chrome?.storage?.sync) {
-    await new Promise(resolve => {
-      chrome.storage.sync.set({ voice: state.voice }, () => {
-        const err = chrome.runtime.lastError;
-        if (err) {
-          logger.debug('Failed to persist voice preference.', { error: err });
-        }
-        resolve();
-      });
-    });
-  }
+  await persistVoicePreference(state.voice);
 }
 
 /**
@@ -1424,8 +1447,35 @@ async function loadPreferences() {
     setLocale(state.language);
   }
   if (stored.voice) {
-    state.voice = stored.voice;
-    elements.voice.value = stored.voice;
+    const voiceOptions = getVoiceOptions();
+    if (voiceOptions.includes(stored.voice)) {
+      state.voice = stored.voice;
+      if (elements.voice) {
+        elements.voice.value = stored.voice;
+      }
+    } else {
+      const fallback =
+        voiceOptions.find(option => option === DEFAULT_VOICE) ??
+        voiceOptions[0] ??
+        state.voice;
+      state.voice = fallback;
+      if (elements.voice) {
+        elements.voice.value = state.voice;
+      }
+      if (stored.voice !== state.voice) {
+        await persistVoicePreference(state.voice);
+      }
+    }
+  } else if (elements.voice) {
+    const voiceOptions = getVoiceOptions();
+    if (voiceOptions.length > 0 && !voiceOptions.includes(state.voice)) {
+      const fallback =
+        voiceOptions.find(option => option === DEFAULT_VOICE) ??
+        voiceOptions[0] ??
+        state.voice;
+      state.voice = fallback;
+    }
+    elements.voice.value = state.voice;
   }
   const storedRate = stored.playbackRate;
   if (storedRate !== undefined) {
@@ -1687,6 +1737,7 @@ const __TESTING__ = {
   isTabUrlSupported,
   ensureSupportedTab,
   UNSUPPORTED_TAB_MESSAGE,
+  loadPreferences,
 };
 
 export { sendMessageToTab, sendMessage, __TESTING__ };
