@@ -1050,7 +1050,7 @@ function ensureSupportedTab(tab) {
     throw new Error(UNSUPPORTED_TAB_MESSAGE);
   }
 
-  const supportedUrl = resolveSupportedTabUrl(tab);
+  const supportedUrl = url;
 
   if (tab.url === supportedUrl) {
     return tab;
