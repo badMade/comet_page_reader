@@ -422,8 +422,7 @@ async function emitLog(level, loggerName, loggerContext, message, meta) {
   if (activeConfig.console?.enabled !== false) {
     const consoleMethod = level === 'error' ? 'error' : level === 'warn' ? 'warn' : level === 'debug' || level === 'trace' ? 'debug' : 'info';
     const consoleArgs = [formatLine(baseEntry)];
-    const hasContext = baseEntry.context && Object.keys(baseEntry.context).length > 0;
-    const consoleContext = hasContext ? serializeForConsole(baseEntry.context) : null;
+    const consoleContext = Object.keys(baseEntry.context).length > 0 ? serializeForConsole(baseEntry.context) : null;
     const consoleMeta = serializeForConsole(baseEntry.meta);
     const consoleError = serializeErrorForConsole(baseEntry.error);
     if (consoleContext) {
