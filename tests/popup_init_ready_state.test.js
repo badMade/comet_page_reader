@@ -48,6 +48,7 @@ function createElementStub() {
 test('popup initialises immediately when DOMContentLoaded already fired', async () => {
   const previousGlobals = {
     chrome: globalThis.chrome,
+    chromeOverride: globalThis.__COMET_CHROME_OVERRIDE__,
     document: globalThis.document,
     window: globalThis.window,
     navigator: globalThis.navigator,
@@ -109,6 +110,7 @@ test('popup initialises immediately when DOMContentLoaded already fired', async 
       tabs: { query: (_opts, cb) => cb?.([]) },
       scripting: { executeScript: (_opts, cb) => cb?.([{ result: true }]) },
     };
+    globalThis.__COMET_CHROME_OVERRIDE__ = globalThis.chrome;
     globalThis.window = { addEventListener: () => {} };
     globalThis.navigator = {
       mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) },
@@ -192,6 +194,11 @@ test('popup initialises immediately when DOMContentLoaded already fired', async 
       delete globalThis.chrome;
     } else {
       globalThis.chrome = previousGlobals.chrome;
+    }
+    if (previousGlobals.chromeOverride === undefined) {
+      delete globalThis.__COMET_CHROME_OVERRIDE__;
+    } else {
+      globalThis.__COMET_CHROME_OVERRIDE__ = previousGlobals.chromeOverride;
     }
     if (previousGlobals.document === undefined) {
       delete globalThis.document;

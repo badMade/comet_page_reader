@@ -28,11 +28,51 @@ function escapeHtml(str) {
 
 const hasBrowserApi = typeof browser !== 'undefined';
 const browserApi = hasBrowserApi ? browser : undefined;
-const runtime = chrome?.runtime || browserApi?.runtime;
-const tabsApi = chrome?.tabs || browserApi?.tabs;
-const scriptingApi = chrome?.scripting || browserApi?.scripting;
-const usesBrowserPromises =
-  !!browserApi && runtime === browserApi.runtime && tabsApi === browserApi.tabs;
+const documentApi = typeof document !== 'undefined' ? document : globalThis.document;
+const initialChromeApi = (() => {
+  if (globalThis.__COMET_CHROME_OVERRIDE__) {
+    return globalThis.__COMET_CHROME_OVERRIDE__;
+  }
+  try {
+    if (typeof chrome !== 'undefined') {
+      return chrome;
+    }
+  } catch (error) {
+    // Ignore ReferenceError when chrome is unavailable.
+  }
+  return globalThis.chrome;
+})();
+
+function getChromeApi() {
+  if (globalThis.__COMET_CHROME_OVERRIDE__) {
+    return globalThis.__COMET_CHROME_OVERRIDE__;
+  }
+  if (initialChromeApi) {
+    return initialChromeApi;
+  }
+  if (typeof chrome !== 'undefined') {
+    return chrome;
+  }
+  return globalThis.chrome;
+}
+
+function getRuntimeApi() {
+  return getChromeApi()?.runtime || browserApi?.runtime;
+}
+
+function getTabsApi() {
+  return getChromeApi()?.tabs || browserApi?.tabs;
+}
+
+function getScriptingApi() {
+  return getChromeApi()?.scripting || browserApi?.scripting;
+}
+
+function usesBrowserPromises() {
+  const runtimeApi = getRuntimeApi();
+  const tabsApi = getTabsApi();
+  return !!browserApi && runtimeApi === browserApi?.runtime && tabsApi === browserApi?.tabs;
+}
 
 const MOCK_MODE = (() => {
   if (typeof globalThis !== 'undefined' && Object.prototype.hasOwnProperty.call(globalThis, '__COMET_MOCK_MODE__')) {
@@ -104,6 +144,7 @@ const state = {
   playbackRate: 1,
   provider: DEFAULT_PROVIDER_ID,
   providerOptions: listProviders().map(option => option.id),
+  providerChangedByUser: false,
   recorder: null,
   mediaStream: null,
   playbackController: null,
@@ -119,7 +160,7 @@ const elements = {};
  * @returns {HTMLElement} Matched element.
  */
 function qs(id) {
-  const node = document.getElementById(id);
+  const node = documentApi?.getElementById?.(id);
   if (!node) {
     throw new Error(`Missing required element: ${id}`);
   }
@@ -150,7 +191,7 @@ function assignElements() {
   elements.stop = qs('stopBtn');
   elements.usage = qs('usageDetails');
   elements.resetUsage = qs('resetUsageBtn');
-  elements.usageRowTemplate = document.getElementById('usageRowTemplate');
+  elements.usageRowTemplate = documentApi?.getElementById?.('usageRowTemplate');
   if (elements.playbackRate) {
     elements.playbackRate.value = String(state.playbackRate);
   }
@@ -174,11 +215,11 @@ function translateUi() {
   elements.readPage.textContent = t('readPage');
   elements.pushToTalk.textContent = t('pushToTalk');
   elements.resetUsage.textContent = t('resetUsage');
-  const usageHeading = document.querySelector('#usage-section');
+  const usageHeading = documentApi?.querySelector?.('#usage-section');
   if (usageHeading) {
     usageHeading.textContent = t('usage');
   }
-  const disclaimer = document.querySelector('.disclaimer p');
+  const disclaimer = documentApi?.querySelector?.('.disclaimer p');
   if (disclaimer) {
     disclaimer.textContent = t('disclaimer');
   }
@@ -222,12 +263,13 @@ function readSupportedProvidersFromComment(source) {
 }
 
 async function readAgentProviderMetadata() {
-  if (!runtime?.getURL || typeof fetch !== 'function') {
+  const runtimeApi = getRuntimeApi();
+  if (!runtimeApi?.getURL || typeof fetch !== 'function') {
     return {};
   }
   try {
     logger.debug('Loading provider metadata from agent.yaml.');
-    const response = await fetch(runtime.getURL('agent.yaml'));
+    const response = await fetch(runtimeApi.getURL('agent.yaml'));
     if (!response.ok) {
       logger.warn('agent.yaml request did not return a successful response.', {
         status: response.status,
@@ -290,12 +332,30 @@ async function hydrateProviderSelector() {
       optionIds = filtered;
     }
   }
-  const initialSelection = defaultProvider && optionIds.includes(defaultProvider)
-    ? defaultProvider
-    : optionIds.includes(state.provider)
-    ? state.provider
-    : optionIds[0];
+  const previousProvider = state.provider;
+  const userOverrodeSelection = state.providerChangedByUser;
+  let initialSelection = state.provider;
+  if (!userOverrodeSelection) {
+    if (defaultProvider && optionIds.includes(defaultProvider)) {
+      initialSelection = defaultProvider;
+    } else if (!optionIds.includes(initialSelection)) {
+      initialSelection = optionIds[0];
+    }
+  } else if (!optionIds.includes(initialSelection)) {
+    initialSelection = optionIds[0];
+  }
   renderProviderOptions(optionIds, initialSelection || DEFAULT_PROVIDER_ID);
+  if (initialSelection && initialSelection !== previousProvider) {
+    logger.debug('Provider selection adjusted during hydration.', {
+      previousProvider,
+      nextProvider: initialSelection,
+      userOverrodeSelection,
+    });
+    if (userOverrodeSelection) {
+      state.providerChangedByUser = false;
+    }
+    await sendMessage('comet:setProvider', { provider: initialSelection });
+  }
   logger.debug('Provider selector hydrated.', {
     optionCount: optionIds.length,
     initialSelection: initialSelection || DEFAULT_PROVIDER_ID,
@@ -481,7 +541,7 @@ function withErrorHandling(handler) {
 }
 
 function getRuntimeLastError() {
-  const chromeLastError = chrome?.runtime?.lastError;
+  const chromeLastError = getChromeApi()?.runtime?.lastError;
   if (chromeLastError) {
     return chromeLastError;
   }
@@ -554,8 +614,12 @@ function sendMessage(type, payload) {
     }
   }
   const payloadMessage = { type, payload };
-  if (usesBrowserPromises) {
-    return runtime
+  const runtimeApi = getRuntimeApi();
+  if (!runtimeApi?.sendMessage) {
+    throw new Error('Background messaging API unavailable.');
+  }
+  if (usesBrowserPromises()) {
+    return runtimeApi
       .sendMessage(payloadMessage)
       .then(response => {
         if (!response) {
@@ -575,7 +639,7 @@ function sendMessage(type, payload) {
 
   return new Promise((resolve, reject) => {
     try {
-      const maybePromise = runtime.sendMessage(payloadMessage, response => {
+      const maybePromise = runtimeApi.sendMessage(payloadMessage, response => {
         const lastError = getRuntimeLastError();
         if (lastError) {
           logger.error('Background message rejected via callback.', { ...metadata, error: lastError });
@@ -660,6 +724,7 @@ async function saveApiKey(event) {
 async function handleProviderChange(event) {
   const providerId = normaliseProviderId(event.target?.value, state.provider);
   const previousProvider = state.provider;
+  state.providerChangedByUser = true;
   logger.info('Provider selection changed.', {
     previousProvider,
     nextProvider: providerId,
@@ -751,7 +816,11 @@ function renderApiKeyDetails(details) {
  * @returns {Promise<chrome.tabs.Tab[]>} Matched tabs.
  */
 function queryTabs(options) {
-  if (usesBrowserPromises) {
+  const tabsApi = getTabsApi();
+  if (!tabsApi?.query) {
+    return Promise.reject(new Error('Tabs API unavailable.'));
+  }
+  if (usesBrowserPromises()) {
     return tabsApi.query(options);
   }
   return new Promise((resolve, reject) => {
@@ -780,7 +849,11 @@ function queryTabs(options) {
 const injectedContentTabs = new Set();
 
 function dispatchTabMessage(tabId, message) {
-  if (usesBrowserPromises) {
+  const tabsApi = getTabsApi();
+  if (!tabsApi?.sendMessage) {
+    return Promise.reject(new Error('Tabs messaging API unavailable.'));
+  }
+  if (usesBrowserPromises()) {
     return tabsApi.sendMessage(tabId, message);
   }
   return new Promise((resolve, reject) => {
@@ -824,8 +897,10 @@ function executeContentScript(tabId) {
     injectedContentTabs.add(tabId);
   };
 
+  const scriptingApi = getScriptingApi();
+
   if (scriptingApi?.executeScript) {
-    if (usesBrowserPromises) {
+    if (usesBrowserPromises()) {
       return scriptingApi
         .executeScript({
           target: { tabId },
@@ -856,9 +931,10 @@ function executeContentScript(tabId) {
     });
   }
 
-  if (typeof tabsApi?.executeScript === 'function') {
-    if (usesBrowserPromises) {
-      return tabsApi
+  const legacyTabsApi = getTabsApi();
+  if (typeof legacyTabsApi?.executeScript === 'function') {
+    if (usesBrowserPromises()) {
+      return legacyTabsApi
         .executeScript(tabId, {
           file: 'content/content.js',
         })
@@ -866,7 +942,7 @@ function executeContentScript(tabId) {
     }
     return new Promise((resolve, reject) => {
       try {
-        tabsApi.executeScript(
+        legacyTabsApi.executeScript(
           tabId,
           {
             file: 'content/content.js',
@@ -1341,10 +1417,11 @@ async function updateLanguage(event) {
   state.language = event.target.value;
   setLocale(state.language);
   translateUi();
-  if (chrome?.storage?.sync) {
+  const chromeApi = getChromeApi();
+  if (chromeApi?.storage?.sync) {
     await new Promise(resolve => {
-      chrome.storage.sync.set({ language: state.language }, () => {
-        const err = chrome.runtime.lastError;
+      chromeApi.storage.sync.set({ language: state.language }, () => {
+        const err = chromeApi.runtime.lastError;
         if (err) {
           logger.debug('Failed to persist language preference.', { error: err });
         }
@@ -1362,10 +1439,11 @@ async function updateLanguage(event) {
  */
 async function updateVoice(event) {
   state.voice = event.target.value;
-  if (chrome?.storage?.sync) {
+  const chromeApi = getChromeApi();
+  if (chromeApi?.storage?.sync) {
     await new Promise(resolve => {
-      chrome.storage.sync.set({ voice: state.voice }, () => {
-        const err = chrome.runtime.lastError;
+      chromeApi.storage.sync.set({ voice: state.voice }, () => {
+        const err = chromeApi.runtime.lastError;
         if (err) {
           logger.debug('Failed to persist voice preference.', { error: err });
         }
@@ -1391,10 +1469,11 @@ async function updatePlaybackRate(event) {
   if (state.audio && typeof state.audio.playbackRate === 'number') {
     state.audio.playbackRate = state.playbackRate;
   }
-  if (chrome?.storage?.sync) {
+  const chromeApi = getChromeApi();
+  if (chromeApi?.storage?.sync) {
     await new Promise(resolve => {
-      chrome.storage.sync.set({ playbackRate: state.playbackRate }, () => {
-        const err = chrome.runtime.lastError;
+      chromeApi.storage.sync.set({ playbackRate: state.playbackRate }, () => {
+        const err = chromeApi.runtime.lastError;
         if (err) {
           logger.debug('Failed to persist playback rate preference.', { error: err });
         }
@@ -1411,12 +1490,13 @@ async function updatePlaybackRate(event) {
  */
 async function loadPreferences() {
   logger.info('Loading persisted preferences.');
+  const chromeApi = getChromeApi();
   const stored = await new Promise(resolve => {
-    if (!chrome?.storage?.sync) {
+    if (!chromeApi?.storage?.sync) {
       resolve({});
       return;
     }
-    chrome.storage.sync.get(['language', 'voice', 'playbackRate'], items => resolve(items || {}));
+    chromeApi.storage.sync.get(['language', 'voice', 'playbackRate'], items => resolve(items || {}));
   });
   if (stored.language && availableLocales().includes(stored.language)) {
     state.language = stored.language;
@@ -1667,8 +1747,8 @@ function bootstrap() {
   });
 }
 
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', bootstrap);
+if (documentApi?.readyState === 'loading') {
+  documentApi.addEventListener('DOMContentLoaded', bootstrap);
 } else {
   bootstrap();
 }

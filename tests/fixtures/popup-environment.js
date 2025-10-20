@@ -88,7 +88,15 @@ export function setupPopupTestEnvironment() {
   const chromeStub = {
     runtime: {
       lastError: null,
-      sendMessage: () => {
+      sendMessage: (message, callback) => {
+        if (message?.type === 'comet:setProvider') {
+          const response = { ok: true, result: { provider: message.payload?.provider } };
+          if (typeof callback === 'function') {
+            callback(response);
+            return undefined;
+          }
+          return Promise.resolve(response);
+        }
         throw new Error('sendMessage stub not configured');
       },
     },
@@ -117,6 +125,7 @@ export function setupPopupTestEnvironment() {
   };
 
   globalThis.chrome = chromeStub;
+  globalThis.__COMET_CHROME_OVERRIDE__ = chromeStub;
 
   return {
     chrome: chromeStub,
