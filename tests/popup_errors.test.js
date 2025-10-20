@@ -44,3 +44,12 @@ test('rejects unsupported chrome pages with a friendly message', async () => {
   }
 });
 
+test('accepts pending urls for tabs that are still loading', async () => {
+  const { __TESTING__ } = await modulePromise;
+  const tab = { id: 12, url: undefined, pendingUrl: 'https://example.com/article' };
+
+  assert.doesNotThrow(() => {
+    __TESTING__.ensureSupportedTab(tab);
+  });
+});
+

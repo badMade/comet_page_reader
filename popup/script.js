@@ -1003,6 +1003,20 @@ function normaliseTabUrl(url) {
   return url.trim();
 }
 
+function resolveTabUrl(tab) {
+  if (!tab || typeof tab !== 'object') {
+    return '';
+  }
+  const candidates = [tab.url, tab.pendingUrl];
+  for (const candidate of candidates) {
+    const normalised = normaliseTabUrl(candidate);
+    if (normalised) {
+      return normalised;
+    }
+  }
+  return '';
+}
+
 function isTabUrlSupported(url) {
   const normalised = normaliseTabUrl(url);
   if (!normalised) {
@@ -1012,7 +1026,8 @@ function isTabUrlSupported(url) {
 }
 
 function ensureSupportedTab(tab) {
-  if (!tab || typeof tab.id !== 'number' || !isTabUrlSupported(tab.url)) {
+  const url = resolveTabUrl(tab);
+  if (!tab || typeof tab.id !== 'number' || !isTabUrlSupported(url)) {
     throw new Error(UNSUPPORTED_TAB_MESSAGE);
   }
   return tab;
