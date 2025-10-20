@@ -105,6 +105,7 @@ const state = {
   voice: DEFAULT_VOICE,
   playbackRate: 1,
   provider: DEFAULT_PROVIDER_ID,
+  providerLastSynced: null,
   providerOptions: listProviders().map(option => option.id),
   recorder: null,
   mediaStream: null,
@@ -309,6 +310,19 @@ function ensureProviderOption(providerId) {
   renderProviderOptions(updated, normalised);
 }
 
+async function setAndSyncProvider(providerId) {
+  const normalised = normaliseProviderId(providerId, state.provider);
+  if (!normalised || state.providerLastSynced === normalised) {
+    return;
+  }
+  logger.debug('Synchronising provider selection with background.', {
+    nextProvider: normalised,
+    previousProvider: state.providerLastSynced,
+  });
+  await sendMessage('comet:setProvider', { provider: normalised });
+  state.providerLastSynced = normalised;
+}
+
 async function hydrateProviderSelector() {
   if (!elements.provider) {
     return;
@@ -323,12 +337,20 @@ async function hydrateProviderSelector() {
       optionIds = filtered;
     }
   }
-  const initialSelection = defaultProvider && optionIds.includes(defaultProvider)
-    ? defaultProvider
-    : optionIds.includes(state.provider)
+  const initialSelection = optionIds.includes(state.provider)
     ? state.provider
-    : optionIds[0];
+    : defaultProvider && optionIds.includes(defaultProvider)
+      ? defaultProvider
+      : optionIds[0];
   renderProviderOptions(optionIds, initialSelection || DEFAULT_PROVIDER_ID);
+  const nextProvider = elements.provider.value;
+  if (state.providerLastSynced !== nextProvider) {
+    try {
+      await setAndSyncProvider(nextProvider);
+    } catch (error) {
+      logger.warn('Failed to synchronise provider selection during hydration.', { error });
+    }
+  }
   logger.debug('Provider selector hydrated.', {
     optionCount: optionIds.length,
     initialSelection: initialSelection || DEFAULT_PROVIDER_ID,
@@ -708,7 +730,7 @@ async function handleProviderChange(event) {
   }
   state.provider = providerId;
   applyApiKeyRequirement();
-  await sendMessage('comet:setProvider', { provider: providerId });
+  await setAndSyncProvider(providerId);
   await loadApiKey({ provider: providerId });
   const providerName = getProviderDisplayName(providerId);
   if (providerRequiresApiKey(providerId)) {
@@ -750,6 +772,7 @@ function renderApiKeyDetails(details) {
     elements.provider.value = providerId;
   }
   state.provider = providerId;
+  state.providerLastSynced = providerId;
   applyApiKeyRequirement();
 
   const hasKey = typeof normalised.apiKey === 'string' && normalised.apiKey.trim().length > 0;
@@ -1699,15 +1722,19 @@ async function init() {
   bindEvents();
   const loggingConfigPromise = loadLoggingConfig().catch(() => {});
   logger.info('Popup initialising.');
-  await Promise.all([
-    loggingConfigPromise,
-    (async () => {
-      await hydrateProviderSelector();
-      await loadApiKey();
-    })(),
-    loadPreferences(),
-    refreshUsage(),
-  ]);
+  const preferencesPromise = loadPreferences();
+  const usagePromise = refreshUsage();
+  let loadApiKeyError;
+  try {
+    await loadApiKey();
+  } catch (error) {
+    loadApiKeyError = error;
+  }
+  await hydrateProviderSelector();
+  await Promise.all([loggingConfigPromise, preferencesPromise, usagePromise]);
+  if (loadApiKeyError) {
+    throw loadApiKeyError;
+  }
   logger.info('Popup initialised.');
 }
 
