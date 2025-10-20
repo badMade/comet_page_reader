@@ -570,6 +570,19 @@ function normaliseError(error, fallbackMessage = 'Background request failed.') {
   return new Error(message);
 }
 
+function responseIndicatesSuccess(response) {
+  if (!response || typeof response !== 'object') {
+    return false;
+  }
+  if (typeof response.success === 'boolean') {
+    return response.success;
+  }
+  if (typeof response.ok === 'boolean') {
+    return response.ok;
+  }
+  return Boolean(response.success);
+}
+
 /**
  * Sends a message to the background service worker, supporting both Chrome
  * callbacks and Firefox promises. Falls back to local mocks when MOCK_MODE is
@@ -616,7 +629,7 @@ function sendMessage(type, payload) {
         if (!response) {
           throw new Error('No response from background script.');
         }
-        if (!response.success) {
+        if (!responseIndicatesSuccess(response)) {
           throw new Error(response.error || 'Request failed.');
         }
         logger.debug('Background message resolved.', { ...metadata });
@@ -643,7 +656,7 @@ function sendMessage(type, payload) {
           reject(error);
           return;
         }
-        if (!response.success) {
+        if (!responseIndicatesSuccess(response)) {
           const error = new Error(response.error || 'Request failed.');
           logger.error('Background message returned error response.', { ...metadata, error });
           reject(error);
