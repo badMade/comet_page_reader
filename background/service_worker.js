@@ -61,6 +61,19 @@ let routingSettings = DEFAULT_ROUTING_CONFIG;
 let llmRouter = null;
 let loggingConfigured = false;
 
+function applyProviderLoggingContext(providerId) {
+  if (!providerId) {
+    return;
+  }
+  const normalised = normaliseProviderId(providerId, providerId);
+  const resolved = resolveAlias(normalised);
+  const label = getProviderDisplayName(resolved);
+  setGlobalContext({
+    aiProviderId: resolved,
+    aiProviderLabel: label,
+  });
+}
+
 function createCorrelationId(prefix = 'bg') {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID();
@@ -200,6 +213,7 @@ async function ensureAdapter(providerId) {
 
   if (adapterInstance && (!requestedProvider || activeProviderId === requestedProvider)) {
     logger.debug('Reusing existing adapter instance.', { activeProvider: activeProviderId });
+    applyProviderLoggingContext(activeProviderId);
     return adapterInstance;
   }
 
@@ -214,6 +228,7 @@ async function ensureAdapter(providerId) {
     await adapterLoadPromise;
     if (adapterInstance && (!requestedProvider || activeProviderId === requestedProvider)) {
       logger.debug('Adapter instance became available after awaiting existing load.');
+      applyProviderLoggingContext(activeProviderId);
       return adapterInstance;
     }
   }
@@ -257,6 +272,7 @@ async function ensureAdapter(providerId) {
     adapterInstance = testAdapterOverrides.get(preferredProvider);
     activeProviderId = preferredProvider;
     providerConfig = getFallbackProviderConfig({ provider: preferredProvider });
+    applyProviderLoggingContext(activeProviderId);
     return adapterInstance;
   }
 
@@ -299,6 +315,7 @@ async function ensureAdapter(providerId) {
     if (llmRouter) {
       llmRouter.setAgentConfig(agentConfigSnapshot);
     }
+    applyProviderLoggingContext(activeProviderId);
     logger.info('Adapter initialised.', { activeProvider: activeProviderId });
     return adapter;
   })()
@@ -307,7 +324,9 @@ async function ensureAdapter(providerId) {
       activeProviderId = providerConfig.provider || DEFAULT_PROVIDER_ID;
       logger.error('Falling back to default adapter due to unexpected error.', { error });
       const fallbackAdapterKey = getAdapterKey(activeProviderId);
-      return createAdapter(fallbackAdapterKey, providerConfig);
+      const adapter = createAdapter(fallbackAdapterKey, providerConfig);
+      applyProviderLoggingContext(activeProviderId);
+      return adapter;
     })
     .finally(() => {
       adapterLoadPromise = null;
@@ -316,6 +335,7 @@ async function ensureAdapter(providerId) {
     });
 
   adapterInstance = await adapterLoadPromise;
+  applyProviderLoggingContext(activeProviderId);
   return adapterInstance;
 }
 
@@ -540,11 +560,18 @@ async function requestSummary({ url, segment, language, provider }) {
     metadata: { url, segmentId: segment.id, type: 'summary' },
   });
   await persistUsage();
+  const fallbackProvider = resolveAlias(
+    normaliseProviderId(provider, activeProviderId || DEFAULT_PROVIDER_ID)
+  );
+  const resolvedProvider = result?.provider
+    ? resolveAlias(normaliseProviderId(result.provider, result.provider))
+    : fallbackProvider;
+  const resolvedResult = { ...result, provider: resolvedProvider };
   logger.debug('Summary generated.', {
-    provider: result?.provider,
-    model: result?.model,
+    provider: resolvedProvider,
+    model: resolvedResult?.model,
   });
-  return result;
+  return resolvedResult;
 }
 
 async function transcribeAudio({ base64, filename = 'speech.webm', mimeType = 'audio/webm', provider }) {
@@ -615,6 +642,7 @@ async function synthesiseSpeech({ text, voice = 'alloy', format = 'mp3', provide
 
 async function getSummary({ url, segment, language, provider }) {
   const providerId = await getActiveProviderId(provider);
+  const resolvedActiveProvider = resolveAlias(normaliseProviderId(providerId, providerId));
   const cacheKey = getCacheKey({
     url,
     segmentId: segment.id,
@@ -624,25 +652,56 @@ async function getSummary({ url, segment, language, provider }) {
   if (memoryCache.has(cacheKey)) {
     const cached = memoryCache.get(cacheKey);
     if (typeof cached === 'string') {
-      logger.debug('Summary cache hit (string).', { segmentId: segment.id });
-      return cached;
+      logger.debug('Summary cache hit (string).', {
+        segmentId: segment.id,
+        provider: resolvedActiveProvider,
+      });
+      return {
+        summary: cached,
+        provider: resolvedActiveProvider,
+        model: null,
+        source: 'cache',
+      };
     }
     if (cached && typeof cached === 'object' && typeof cached.summary === 'string') {
-      logger.debug('Summary cache hit.', { segmentId: segment.id });
-      return cached.summary;
+      const cachedProvider = cached.provider
+        ? resolveAlias(normaliseProviderId(cached.provider, cached.provider))
+        : resolvedActiveProvider;
+      logger.debug('Summary cache hit.', {
+        segmentId: segment.id,
+        provider: cachedProvider,
+      });
+      return {
+        summary: cached.summary,
+        provider: cachedProvider,
+        model: cached.model || null,
+        source: 'cache',
+      };
     }
   }
   logger.debug('Summary cache miss.', { segmentId: segment.id });
   const result = await requestSummary({ url, segment, language, provider });
-  const summary = typeof result?.text === 'string' ? result.text : '';
+  const summary = typeof result?.text === 'string'
+    ? result.text
+    : typeof result?.summary === 'string'
+      ? result.summary
+      : '';
+  const providerUsed = result?.provider
+    ? resolveAlias(normaliseProviderId(result.provider, result.provider))
+    : resolvedActiveProvider;
   memoryCache.set(cacheKey, {
     summary,
-    provider: result?.provider,
+    provider: providerUsed,
     model: result?.model,
     cost: result?.cost_estimate,
   });
   await persistCache();
-  return summary;
+  return {
+    summary,
+    provider: providerUsed,
+    model: result?.model || null,
+    source: 'network',
+  };
 }
 
 async function handleSummariseRequest(message) {
@@ -655,11 +714,34 @@ async function handleSummariseRequest(message) {
   });
   await ensureInitialised(provider);
   const summaries = [];
-  for (const segment of segments) {
-    const summary = await getSummary({ url, segment, language, provider });
+  const providersUsed = new Set();
+  const modelsUsed = new Set();
+  for (const segment of Array.isArray(segments) ? segments : []) {
+    const { summary, provider: summaryProvider, model } = await getSummary({
+      url,
+      segment,
+      language,
+      provider,
+    });
+    if (summaryProvider) {
+      providersUsed.add(summaryProvider);
+    }
+    if (model) {
+      modelsUsed.add(model);
+    }
     summaries.push({ id: segment.id, summary });
   }
-  logger.info('Summarise request completed.', { count: summaries.length });
+  const providerList = Array.from(providersUsed);
+  const modelList = Array.from(modelsUsed);
+  const completionMeta = { count: summaries.length };
+  if (providerList.length > 0) {
+    completionMeta.providers = providerList;
+    completionMeta.providerLabels = providerList.map(id => getProviderDisplayName(id));
+  }
+  if (modelList.length > 0) {
+    completionMeta.models = modelList;
+  }
+  logger.info('Summarise request completed.', completionMeta);
   return { summaries, usage: costTracker.toJSON() };
 }
 
