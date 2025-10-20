@@ -1639,15 +1639,24 @@ function bindEvents() {
  * @returns {Promise<void>} Resolves once initialisation completes.
  */
 async function init() {
-  await loadLoggingConfig().catch(() => {});
-  logger.info('Popup initialising.');
   assignElements();
   setPlaybackReady();
-  await hydrateProviderSelector();
-  await loadApiKey();
-  await loadPreferences();
-  await refreshUsage();
+  // Populate the provider selector immediately so the UI is interactive while
+  // background configuration loads. This prevents the dropdown from appearing
+  // empty when the popup opens and ensures required attributes are applied
+  // before asynchronous work completes.
+  renderProviderOptions(state.providerOptions, state.provider);
   bindEvents();
+  await loadLoggingConfig().catch(() => {});
+  logger.info('Popup initialising.');
+  await Promise.all([
+    (async () => {
+      await hydrateProviderSelector();
+      await loadApiKey();
+    })(),
+    loadPreferences(),
+    refreshUsage(),
+  ]);
   logger.info('Popup initialised.');
 }
 
