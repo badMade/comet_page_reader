@@ -145,6 +145,7 @@ const state = {
   provider: DEFAULT_PROVIDER_ID,
   providerOptions: listProviders().map(option => option.id),
   providerChangedByUser: false,
+  providerLastSynced: null,
   recorder: null,
   mediaStream: null,
   playbackController: null,
@@ -345,16 +346,20 @@ async function hydrateProviderSelector() {
     initialSelection = optionIds[0];
   }
   renderProviderOptions(optionIds, initialSelection || DEFAULT_PROVIDER_ID);
-  if (initialSelection && initialSelection !== previousProvider) {
+  const nextProvider = state.provider;
+  if (nextProvider !== previousProvider) {
     logger.debug('Provider selection adjusted during hydration.', {
       previousProvider,
-      nextProvider: initialSelection,
+      nextProvider,
       userOverrodeSelection,
     });
     if (userOverrodeSelection) {
       state.providerChangedByUser = false;
     }
-    await sendMessage('comet:setProvider', { provider: initialSelection });
+  }
+  if (state.providerLastSynced !== nextProvider) {
+    await sendMessage('comet:setProvider', { provider: nextProvider });
+    state.providerLastSynced = nextProvider;
   }
   logger.debug('Provider selector hydrated.', {
     optionCount: optionIds.length,
@@ -741,6 +746,7 @@ async function handleProviderChange(event) {
   state.provider = providerId;
   applyApiKeyRequirement();
   await sendMessage('comet:setProvider', { provider: providerId });
+  state.providerLastSynced = providerId;
   await loadApiKey({ provider: providerId });
   const providerName = getProviderDisplayName(providerId);
   if (providerRequiresApiKey(providerId)) {
