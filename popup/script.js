@@ -1649,10 +1649,14 @@ async function init() {
   bindEvents();
   await loadLoggingConfig().catch(() => {});
   logger.info('Popup initialising.');
-  await hydrateProviderSelector();
-  await loadApiKey();
-  await loadPreferences();
-  await refreshUsage();
+  await Promise.all([
+    (async () => {
+      await hydrateProviderSelector();
+      await loadApiKey();
+    })(),
+    loadPreferences(),
+    refreshUsage(),
+  ]);
   logger.info('Popup initialised.');
 }
 
