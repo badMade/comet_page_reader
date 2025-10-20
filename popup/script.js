@@ -1007,7 +1007,7 @@ function resolveTabUrl(tab) {
   if (!tab || typeof tab !== 'object') {
     return '';
   }
-  const candidates = [tab.url, tab.pendingUrl];
+  const candidates = [tab.pendingUrl, tab.url];
   for (const candidate of candidates) {
     const normalised = normaliseTabUrl(candidate);
     if (normalised) {
@@ -1030,7 +1030,7 @@ function resolveSupportedTabUrl(tab) {
     return '';
   }
 
-  const candidates = [tab.url, tab.pendingUrl];
+  const candidates = [tab.pendingUrl, tab.url];
   for (const candidate of candidates) {
     if (!candidate) {
       continue;
@@ -1049,6 +1049,8 @@ function ensureSupportedTab(tab) {
   if (!tab || typeof tab.id !== 'number' || !isTabUrlSupported(url)) {
     throw new Error(UNSUPPORTED_TAB_MESSAGE);
   }
+
+  const supportedUrl = resolveSupportedTabUrl(tab);
 
   if (tab.url === supportedUrl) {
     return tab;
