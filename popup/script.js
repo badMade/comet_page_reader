@@ -1011,11 +1011,40 @@ function isTabUrlSupported(url) {
   return !UNSUPPORTED_TAB_URL_PATTERN.test(normalised);
 }
 
+function resolveSupportedTabUrl(tab) {
+  if (!tab) {
+    return '';
+  }
+
+  const candidates = [tab.url, tab.pendingUrl];
+  for (const candidate of candidates) {
+    if (!candidate) {
+      continue;
+    }
+    const normalised = normaliseTabUrl(candidate);
+    if (normalised && isTabUrlSupported(normalised)) {
+      return normalised;
+    }
+  }
+
+  return '';
+}
+
 function ensureSupportedTab(tab) {
-  if (!tab || typeof tab.id !== 'number' || !isTabUrlSupported(tab.url)) {
+  if (!tab || typeof tab.id !== 'number') {
     throw new Error(UNSUPPORTED_TAB_MESSAGE);
   }
-  return tab;
+
+  const supportedUrl = resolveSupportedTabUrl(tab);
+  if (!supportedUrl) {
+    throw new Error(UNSUPPORTED_TAB_MESSAGE);
+  }
+
+  if (tab.url === supportedUrl) {
+    return tab;
+  }
+
+  return { ...tab, url: supportedUrl };
 }
 
 async function getActiveTabId() {
@@ -1774,6 +1803,7 @@ const __TESTING__ = {
   readFullPage,
   ensureAudio,
   getActiveTabId,
+  resolveSupportedTabUrl,
   isTabUrlSupported,
   ensureSupportedTab,
   UNSUPPORTED_TAB_MESSAGE,

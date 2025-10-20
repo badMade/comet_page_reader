@@ -44,3 +44,23 @@ test('rejects unsupported chrome pages with a friendly message', async () => {
   }
 });
 
+test('accepts tabs that only expose a pending URL when supported', async () => {
+  const { __TESTING__ } = await modulePromise;
+  const originalQuery = chrome.tabs.query;
+  chrome.tabs.query = (_options, callback) => {
+    const tabs = [{ id: 7, url: undefined, pendingUrl: 'https://example.com/article' }];
+    if (typeof callback === 'function') {
+      callback(tabs);
+      return undefined;
+    }
+    return Promise.resolve(tabs);
+  };
+
+  try {
+    const tabId = await __TESTING__.getActiveTabId();
+    assert.equal(tabId, 7);
+  } finally {
+    chrome.tabs.query = originalQuery;
+  }
+});
+
