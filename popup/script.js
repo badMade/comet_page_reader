@@ -1045,18 +1045,22 @@ function resolveSupportedTabUrl(tab) {
 }
 
 function ensureSupportedTab(tab) {
-  const url = resolveTabUrl(tab);
-  if (!tab || typeof tab.id !== 'number' || !isTabUrlSupported(url)) {
+  if (!tab || typeof tab.id !== 'number') {
     throw new Error(UNSUPPORTED_TAB_MESSAGE);
   }
 
-  const supportedUrl = url;
+  const supportedUrl = resolveSupportedTabUrl(tab);
+  const candidateUrl = supportedUrl || normaliseTabUrl(tab.url);
 
-  if (tab.url === supportedUrl) {
+  if (!candidateUrl || !isTabUrlSupported(candidateUrl)) {
+    throw new Error(UNSUPPORTED_TAB_MESSAGE);
+  }
+
+  if (tab.url === candidateUrl) {
     return tab;
   }
 
-  return { ...tab, url: supportedUrl };
+  return { ...tab, url: candidateUrl };
 }
 
 async function getActiveTabId() {
