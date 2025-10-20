@@ -37,6 +37,47 @@ let fsModule;
 
 let yamlParserPromise = null;
 
+function safeStringify(value) {
+  const seen = new WeakSet();
+  try {
+    return JSON.stringify(
+      value,
+      (key, val) => {
+        if (typeof val === 'object' && val !== null) {
+          if (seen.has(val)) {
+            return '[Circular]';
+          }
+          seen.add(val);
+        }
+        return val;
+      }
+    );
+  } catch (error) {
+    try {
+      return String(value);
+    } catch (stringifyError) {
+      return '[Unserializable]';
+    }
+  }
+}
+
+function formatDiagnostics(error, meta) {
+  if (!error && !meta) {
+    return null;
+  }
+
+  const payload = {};
+  if (error) {
+    payload.error = error;
+  }
+  if (meta) {
+    payload.meta = meta;
+  }
+
+  const result = safeStringify(payload);
+  return result && result !== '{}' ? result : null;
+}
+
 const isNode = typeof process !== 'undefined' && !!process.versions && !!process.versions.node;
 
 function parseScalar(value) {
@@ -340,6 +381,10 @@ async function emitLog(level, loggerName, loggerContext, message, meta) {
   if (additionalMeta && Object.keys(additionalMeta).length > 0 && !(Array.isArray(additionalMeta) && additionalMeta.length === 0)) {
     baseEntry.meta = additionalMeta;
   }
+  const formattedDiagnostics = formatDiagnostics(baseEntry.error, baseEntry.meta);
+  if (formattedDiagnostics) {
+    baseEntry.details = formattedDiagnostics;
+  }
   if (activeConfig.console?.enabled !== false) {
     const consoleMethod = level === 'error' ? 'error' : level === 'warn' ? 'warn' : level === 'debug' || level === 'trace' ? 'debug' : 'info';
     const consoleArgs = [formatLine(baseEntry)];
@@ -348,6 +393,9 @@ async function emitLog(level, loggerName, loggerContext, message, meta) {
     }
     if (baseEntry.error && !baseEntry.meta) {
       consoleArgs.push(baseEntry.error);
+    }
+    if (formattedDiagnostics) {
+      consoleArgs.push(formattedDiagnostics);
     }
     console[consoleMethod](...consoleArgs);
   }
