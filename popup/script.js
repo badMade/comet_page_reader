@@ -616,7 +616,7 @@ function sendMessage(type, payload) {
         if (!response) {
           throw new Error('No response from background script.');
         }
-        if (!response.ok) {
+        if (!response.success) {
           throw new Error(response.error || 'Request failed.');
         }
         logger.debug('Background message resolved.', { ...metadata });
@@ -643,7 +643,7 @@ function sendMessage(type, payload) {
           reject(error);
           return;
         }
-        if (!response.ok) {
+        if (!response.success) {
           const error = new Error(response.error || 'Request failed.');
           logger.error('Background message returned error response.', { ...metadata, error });
           reject(error);
