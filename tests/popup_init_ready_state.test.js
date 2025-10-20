@@ -140,6 +140,9 @@ test('popup initialises immediately when DOMContentLoaded already fired', async 
     const waitForTick = () => new Promise(resolve => setTimeout(resolve, 0));
     await waitForTick();
     await waitForTick();
+    for (let attempts = 0; attempts < 5 && requestedSyncKeys === undefined; attempts += 1) {
+      await waitForTick();
+    }
 
     const apiForm = getElement('api-form');
     const submitHandlers = apiForm.listeners.get('submit') || [];

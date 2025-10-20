@@ -85,19 +85,32 @@ export function setupPopupTestEnvironment() {
     revokeObjectURL: () => {},
   };
 
+  const messageHandlers = new Map();
+
   const chromeStub = {
     runtime: {
       lastError: null,
       sendMessage: (message, callback) => {
-        if (message?.type === 'comet:setProvider') {
-          const response = { ok: true, result: { provider: message.payload?.provider } };
-          if (typeof callback === 'function') {
-            callback(response);
-            return undefined;
-          }
-          return Promise.resolve(response);
+        const type = message?.type;
+        const handler = messageHandlers.get(type);
+        const responder = handler
+          || (type === 'comet:setProvider'
+            ? () => ({ ok: true, result: { provider: message.payload?.provider } })
+            : () => ({ ok: true, result: null }));
+        const response = responder(message);
+        if (typeof callback === 'function') {
+          callback(response);
+          return undefined;
         }
-        throw new Error('sendMessage stub not configured');
+        return Promise.resolve(response);
+      },
+      addMessageHandler: (type, handler) => {
+        if (typeof handler === 'function') {
+          messageHandlers.set(type, handler);
+        }
+      },
+      clearMessageHandlers: () => {
+        messageHandlers.clear();
       },
     },
     tabs: {

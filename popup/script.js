@@ -145,6 +145,7 @@ const state = {
   provider: DEFAULT_PROVIDER_ID,
   providerOptions: listProviders().map(option => option.id),
   providerChangedByUser: false,
+  pendingHydratedProvider: null,
   recorder: null,
   mediaStream: null,
   playbackController: null,
@@ -345,6 +346,7 @@ async function hydrateProviderSelector() {
     initialSelection = optionIds[0];
   }
   renderProviderOptions(optionIds, initialSelection || DEFAULT_PROVIDER_ID);
+  state.pendingHydratedProvider = null;
   if (initialSelection && initialSelection !== previousProvider) {
     logger.debug('Provider selection adjusted during hydration.', {
       previousProvider,
@@ -353,8 +355,10 @@ async function hydrateProviderSelector() {
     });
     if (userOverrodeSelection) {
       state.providerChangedByUser = false;
+      await sendMessage('comet:setProvider', { provider: initialSelection });
+    } else {
+      state.pendingHydratedProvider = initialSelection;
     }
-    await sendMessage('comet:setProvider', { provider: initialSelection });
   }
   logger.debug('Provider selector hydrated.', {
     optionCount: optionIds.length,
@@ -693,6 +697,41 @@ async function loadApiKey(options = {}) {
     provider: payload.provider || state.provider,
     hasKey: Boolean(response?.apiKey),
   });
+  return response;
+}
+
+async function syncHydratedProviderSelection(details) {
+  const pending = state.pendingHydratedProvider;
+  state.pendingHydratedProvider = null;
+  if (!pending) {
+    return;
+  }
+  const normalisedPending = normaliseProviderId(pending, state.provider);
+  const requested = details?.requestedProvider
+    ? normaliseProviderId(details.requestedProvider, details.provider || normalisedPending)
+    : null;
+  if (requested && requested !== 'auto' && requested !== normalisedPending) {
+    logger.debug('Skipping hydration provider sync because a persisted preference is available.', {
+      requestedProvider: requested,
+      pendingProvider: normalisedPending,
+    });
+    return;
+  }
+  const active = details?.provider
+    ? normaliseProviderId(details.provider, normalisedPending)
+    : null;
+  if (active === normalisedPending) {
+    logger.debug('Hydrated provider already active; no background sync required.', {
+      provider: normalisedPending,
+    });
+    return;
+  }
+  logger.info('Synchronising background provider after hydration.', {
+    pendingProvider: normalisedPending,
+    requestedProvider: requested,
+    activeProvider: active,
+  });
+  await sendMessage('comet:setProvider', { provider: normalisedPending });
 }
 
 /**
@@ -725,6 +764,7 @@ async function handleProviderChange(event) {
   const providerId = normaliseProviderId(event.target?.value, state.provider);
   const previousProvider = state.provider;
   state.providerChangedByUser = true;
+  state.pendingHydratedProvider = null;
   logger.info('Provider selection changed.', {
     previousProvider,
     nextProvider: providerId,
@@ -1732,7 +1772,8 @@ async function init() {
   await Promise.all([
     (async () => {
       await hydrateProviderSelector();
-      await loadApiKey();
+      const details = await loadApiKey();
+      await syncHydratedProviderSelection(details);
     })(),
     loadPreferences(),
     refreshUsage(),
