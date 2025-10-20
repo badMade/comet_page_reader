@@ -1,5 +1,3 @@
-import { parse as parseYaml } from 'yaml';
-
 const LOG_LEVELS = Object.freeze({
   error: 0,
   warn: 1,
@@ -37,7 +35,122 @@ let globalContext = {};
 let fileStream = null;
 let fsModule;
 
+let yamlParserPromise = null;
+
 const isNode = typeof process !== 'undefined' && !!process.versions && !!process.versions.node;
+
+function parseScalar(value) {
+  if (value === 'true') {
+    return true;
+  }
+  if (value === 'false') {
+    return false;
+  }
+  if (value === 'null') {
+    return null;
+  }
+  if (!Number.isNaN(Number(value))) {
+    return Number(value);
+  }
+  if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+    return value.slice(1, -1);
+  }
+  return value;
+}
+
+function parseIndentedYaml(rawConfig) {
+  const lines = rawConfig.split(/\r?\n/);
+  const stack = [{ indent: -1, value: {} }];
+
+  lines.forEach(line => {
+    if (!line || !line.trim() || line.trim().startsWith('#')) {
+      return;
+    }
+    const indent = line.match(/^ */)[0].length;
+    const trimmed = line.trim();
+
+    while (stack.length > 1 && indent <= stack[stack.length - 1].indent) {
+      stack.pop();
+    }
+
+    const parent = stack[stack.length - 1].value;
+    const separatorIndex = trimmed.indexOf(':');
+    if (separatorIndex === -1) {
+      throw new Error(`Unable to parse YAML line: "${trimmed}"`);
+    }
+
+    const key = trimmed.slice(0, separatorIndex).trim();
+    const remainder = trimmed.slice(separatorIndex + 1).trim();
+
+    if (!remainder) {
+      const child = {};
+      parent[key] = child;
+      stack.push({ indent, value: child });
+      return;
+    }
+
+    parent[key] = parseScalar(remainder);
+  });
+
+  return stack[0].value;
+}
+
+async function getYamlParser() {
+  if (yamlParserPromise) {
+    return yamlParserPromise;
+  }
+
+  if (!isNode) {
+    yamlParserPromise = Promise.resolve(null);
+    return yamlParserPromise;
+  }
+
+  yamlParserPromise = import('yaml')
+    .then(module => {
+      if (module && typeof module.parse === 'function') {
+        return module.parse.bind(module);
+      }
+      if (module?.default && typeof module.default.parse === 'function') {
+        return module.default.parse.bind(module.default);
+      }
+      return null;
+    })
+    .catch(error => {
+      console.error('[logger] Failed to load YAML parser module.', error);
+      return null;
+    });
+
+  return yamlParserPromise;
+}
+
+async function parseLoggingConfig(rawConfig) {
+  if (!rawConfig) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(rawConfig);
+  } catch (jsonError) {
+    // Continue to YAML parsing fallback paths.
+  }
+
+  const yamlParser = await getYamlParser();
+  if (yamlParser) {
+    try {
+      return yamlParser(rawConfig);
+    } catch (yamlError) {
+      console.error('[logger] Failed to parse YAML configuration using yaml module.', yamlError);
+    }
+  }
+
+  try {
+    return parseIndentedYaml(rawConfig);
+  } catch (fallbackError) {
+    console.error('[logger] Failed to parse YAML configuration using fallback parser.', fallbackError);
+  }
+
+  return null;
+}
 
 function resolveConfigPath(configPath) {
   if (typeof configPath !== 'string' || configPath.length === 0) {
@@ -313,7 +426,7 @@ export async function loadLoggingConfig(configPath = 'logging_config.yaml') {
     if (!rawConfig) {
       return;
     }
-    const parsed = parseYaml(rawConfig);
+    const parsed = await parseLoggingConfig(rawConfig);
     if (parsed && typeof parsed === 'object') {
       setLoggerConfig(parsed);
     }

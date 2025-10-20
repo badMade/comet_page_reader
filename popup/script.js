@@ -1647,9 +1647,10 @@ async function init() {
   // before asynchronous work completes.
   renderProviderOptions(state.providerOptions, state.provider);
   bindEvents();
-  await loadLoggingConfig().catch(() => {});
+  const loggingConfigPromise = loadLoggingConfig().catch(() => {});
   logger.info('Popup initialising.');
   await Promise.all([
+    loggingConfigPromise,
     (async () => {
       await hydrateProviderSelector();
       await loadApiKey();
