@@ -37,7 +37,7 @@ test('loadPreferences falls back to a supported voice and persists it', async ()
     };
     chrome.runtime.getURL = path => path;
     chrome.runtime.sendMessage = (_message, callback) => {
-      callback?.({ ok: true, result: null });
+      callback?.({ success: true, result: null, error: null });
     };
 
     const moduleUrl = new NativeURL('../popup/script.js', import.meta.url);

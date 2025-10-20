@@ -143,11 +143,12 @@ test('popup messaging content script recovery', async t => {
       dispatchedTypes.push(message.type);
       chromeStub.runtime.lastError = null;
       callback({
-        ok: true,
+        success: true,
         result: {
           audio: { base64: 'AA==', mimeType: 'audio/mpeg' },
           usage: { totalCostUsd: 0.01, limitUsd: 5, lastReset: Date.now() },
         },
+        error: null,
       });
     };
 

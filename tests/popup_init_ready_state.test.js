@@ -83,7 +83,7 @@ test('popup initialises immediately when DOMContentLoaded already fired', async 
         'comet:setApiKey': null,
       };
       if (callback) {
-        callback({ ok: true, result: responses[message.type] ?? null });
+        callback({ success: true, result: responses[message.type] ?? null, error: null });
       }
     },
     onMessage: { addListener: () => {} },

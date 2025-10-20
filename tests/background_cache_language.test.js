@@ -56,7 +56,7 @@ test('summaries are cached per language for the same segment', async () => {
       new Promise((resolve, reject) => {
         try {
           listener({ type: 'comet:summarise', payload }, {}, response => {
-            if (!response?.ok) {
+            if (!response?.success) {
               reject(new Error(response?.error || 'Unexpected error'));
               return;
             }
@@ -151,7 +151,7 @@ test('getSummary requests summary with the correct language from the message', a
       new Promise((resolve, reject) => {
         try {
           listener({ type: 'comet:summarise', payload }, {}, response => {
-            if (!response?.ok) {
+            if (!response?.success) {
               reject(new Error(response?.error || 'Unexpected error'));
               return;
             }
