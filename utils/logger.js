@@ -78,6 +78,40 @@ function formatDiagnostics(error, meta) {
   return result && result !== '{}' ? result : null;
 }
 
+function serializeForConsole(value) {
+  if (value === null || typeof value === 'undefined') {
+    return null;
+  }
+  if (typeof value === 'string') {
+    return value;
+  }
+  if (typeof value === 'object') {
+    return safeStringify(value);
+  }
+  return String(value);
+}
+
+function serializeErrorForConsole(error) {
+  if (!error) {
+    return null;
+  }
+  if (typeof error === 'string') {
+    return error;
+  }
+  if (typeof error === 'object') {
+    const stack = typeof error.stack === 'string' && error.stack.trim() ? error.stack : null;
+    if (stack) {
+      return stack;
+    }
+    const descriptor = [error.name, error.message].filter(Boolean).join(': ');
+    if (descriptor) {
+      return descriptor;
+    }
+    return safeStringify(error);
+  }
+  return String(error);
+}
+
 const isNode = typeof process !== 'undefined' && !!process.versions && !!process.versions.node;
 
 function parseScalar(value) {
@@ -388,11 +422,18 @@ async function emitLog(level, loggerName, loggerContext, message, meta) {
   if (activeConfig.console?.enabled !== false) {
     const consoleMethod = level === 'error' ? 'error' : level === 'warn' ? 'warn' : level === 'debug' || level === 'trace' ? 'debug' : 'info';
     const consoleArgs = [formatLine(baseEntry)];
-    if (baseEntry.meta) {
-      consoleArgs.push(baseEntry.meta);
+    const hasContext = baseEntry.context && Object.keys(baseEntry.context).length > 0;
+    const consoleContext = hasContext ? serializeForConsole(baseEntry.context) : null;
+    const consoleMeta = serializeForConsole(baseEntry.meta);
+    const consoleError = serializeErrorForConsole(baseEntry.error);
+    if (consoleContext) {
+      consoleArgs.push(consoleContext);
     }
-    if (baseEntry.error && !baseEntry.meta) {
-      consoleArgs.push(baseEntry.error);
+    if (consoleMeta) {
+      consoleArgs.push(consoleMeta);
+    }
+    if (consoleError) {
+      consoleArgs.push(consoleError);
     }
     if (formattedDiagnostics) {
       consoleArgs.push(formattedDiagnostics);
