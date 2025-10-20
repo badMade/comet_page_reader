@@ -79,7 +79,7 @@ function formatDiagnostics(error, meta) {
 }
 
 function serializeForConsole(value) {
-  if (value === null || typeof value === 'undefined') {
+  if (value == null) {
     return null;
   }
   if (typeof value === 'string') {
