@@ -13,13 +13,13 @@ const DEFAULT_PREFERRED_VOICE = 'alloy';
 
 function normaliseVoices(configuredVoices) {
   if (!Array.isArray(configuredVoices)) {
-    return DEFAULT_TTS_VOICES;
+    return [...DEFAULT_TTS_VOICES];
   }
   const voices = configuredVoices
     .map(voice => (typeof voice === 'string' ? voice.trim() : ''))
     .filter(Boolean);
   if (voices.length === 0) {
-    return DEFAULT_TTS_VOICES;
+    return [...DEFAULT_TTS_VOICES];
   }
   return Array.from(new Set(voices));
 }
