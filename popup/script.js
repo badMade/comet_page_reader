@@ -248,6 +248,7 @@ const state = {
   recorder: null,
   mediaStream: null,
   playbackController: null,
+  ttsProgress: null,
 };
 
 const elements = {};
@@ -687,6 +688,12 @@ function setPlaybackActive() {
   elements.stop.disabled = false;
 }
 
+function setPlaybackLoading() {
+  elements.play.disabled = true;
+  elements.pause.disabled = true;
+  elements.stop.disabled = false;
+}
+
 function createPlaybackController() {
   let cancelled = false;
   const listeners = new Set();
@@ -720,6 +727,73 @@ function createPlaybackController() {
       return cancelled;
     },
   };
+}
+
+const TTS_PROGRESS_MESSAGE_TYPES = new Set(['comet:tts_progress', 'comet:tts:progress']);
+
+if (runtime?.onMessage && typeof runtime.onMessage.addListener === 'function') {
+  runtime.onMessage.addListener(message => {
+    if (!message || typeof message !== 'object') {
+      return;
+    }
+    if (TTS_PROGRESS_MESSAGE_TYPES.has(message.type)) {
+      try {
+        handleTtsProgressMessage(message.payload);
+      } catch (error) {
+        logger.debug('Failed to process TTS progress message.', { error });
+      }
+    }
+  });
+}
+
+function clearTtsProgress() {
+  state.ttsProgress = null;
+}
+
+function beginTtsProgress(context, details = {}) {
+  state.ttsProgress = {
+    context,
+    segmentIndex: Number.isFinite(details.segmentIndex) ? details.segmentIndex : null,
+    segmentTotal:
+      Number.isFinite(details.segmentTotal) && details.segmentTotal > 0
+        ? details.segmentTotal
+        : null,
+  };
+  setStatus(formatTtsProgressStatusMessage());
+}
+
+function formatTtsProgressStatusMessage(chunkIndex = null, chunkCount = null) {
+  let message = 'Generating audio…';
+  if (Number.isFinite(chunkIndex) && Number.isFinite(chunkCount) && chunkCount > 0) {
+    const current = Math.min(chunkCount, Math.max(0, chunkIndex) + 1);
+    message = `Generating audio ${current}/${chunkCount}…`;
+  }
+
+  const progress = state.ttsProgress;
+  if (
+    progress?.context === 'full-page' &&
+    Number.isFinite(progress.segmentIndex) &&
+    Number.isFinite(progress.segmentTotal) &&
+    progress.segmentTotal > 0
+  ) {
+    const currentSegment = Math.min(progress.segmentTotal, Math.max(0, progress.segmentIndex) + 1);
+    message = `Segment ${currentSegment}/${progress.segmentTotal}: ${message}`;
+  }
+
+  return message;
+}
+
+function handleTtsProgressMessage(payload) {
+  if (!state.ttsProgress) {
+    return;
+  }
+  if (!payload || typeof payload !== 'object') {
+    setStatus(formatTtsProgressStatusMessage());
+    return;
+  }
+  const chunkIndex = Number.isFinite(payload.chunkIndex) ? payload.chunkIndex : null;
+  const chunkCount = Number.isFinite(payload.chunkCount) ? payload.chunkCount : null;
+  setStatus(formatTtsProgressStatusMessage(chunkIndex, chunkCount));
 }
 
 function revokeAudioSource() {
@@ -1547,19 +1621,39 @@ function ensureAudio() {
   return state.audio;
 }
 
-async function playAudioPayload(audioPayload, controller) {
-  logger.debug('Starting audio playback for payload.', {
-    hasAudio: Boolean(audioPayload?.base64),
-    mimeType: audioPayload?.mimeType,
+function normaliseAudioChunks(payload) {
+  if (!payload) {
+    return [];
+  }
+
+  if (Array.isArray(payload)) {
+    return payload.filter(chunk => chunk && typeof chunk === 'object');
+  }
+
+  if (Array.isArray(payload?.chunks)) {
+    return payload.chunks.filter(chunk => chunk && typeof chunk === 'object');
+  }
+
+  if (typeof payload === 'object') {
+    return [payload];
+  }
+
+  return [];
+}
+
+async function playAudioChunk(audioChunk, controller) {
+  logger.debug('Starting audio playback for chunk.', {
+    hasAudio: Boolean(audioChunk?.base64),
+    mimeType: audioChunk?.mimeType,
   });
-  if (!audioPayload || !audioPayload.base64) {
+  if (!audioChunk || !audioChunk.base64) {
     return 'skipped';
   }
 
   const audio = ensureAudio();
   revokeAudioSource();
-  const bytes = decodeBase64Audio(audioPayload.base64);
-  const blob = new Blob([bytes], { type: audioPayload.mimeType || 'audio/mpeg' });
+  const bytes = decodeBase64Audio(audioChunk.base64);
+  const blob = new Blob([bytes], { type: audioChunk.mimeType || 'audio/mpeg' });
   if (
     typeof URL === 'undefined' ||
     typeof URL.createObjectURL !== 'function' ||
@@ -1652,6 +1746,31 @@ async function playAudioPayload(audioPayload, controller) {
   });
 }
 
+async function playAudioPayload(audioPayload, controller) {
+  const chunks = normaliseAudioChunks(audioPayload);
+  logger.debug('Preparing audio playback.', { chunkCount: chunks.length });
+  if (chunks.length === 0) {
+    return 'skipped';
+  }
+
+  let overallResult = 'skipped';
+  for (let index = 0; index < chunks.length; index += 1) {
+    if (controller?.cancelled) {
+      logger.debug('Playback cancelled before chunk started.', { index, chunkCount: chunks.length });
+      return 'cancelled';
+    }
+    const result = await playAudioChunk(chunks[index], controller);
+    if (result === 'cancelled') {
+      return 'cancelled';
+    }
+    if (result === 'finished') {
+      overallResult = 'finished';
+    }
+  }
+
+  return overallResult;
+}
+
 /**
  * Generates speech for the first summary and begins playback.
  *
@@ -1672,28 +1791,38 @@ async function readAloud() {
     return;
   }
   const first = state.summaries[0];
-  const audioResult = await sendMessage('comet:synthesise', {
-    text: first.summary,
-    voice: state.voice,
-    language: state.language,
-    provider: resolveSpeechProviderForBackground(),
-  });
-  updateUsage(audioResult.usage);
-  if (audioResult.audio?.truncated) {
-    logger.warn('Summary speech truncated to satisfy provider limits.', {
-      originalTokens: audioResult.audio.originalTokenCount,
-      deliveredTokens: audioResult.audio.deliveredTokenCount,
-      omittedTokens: audioResult.audio.omittedTokenCount,
-    });
-  }
   const controller = createPlaybackController();
   if (state.playbackController) {
     state.playbackController.cancel();
   }
   state.playbackController = controller;
-  setStatus(audioResult.audio?.truncated ? 'Playing truncated summary.' : 'Playing summary.');
+  setPlaybackLoading();
+  beginTtsProgress('read-aloud');
+  let playbackResult = 'skipped';
   try {
-    const playbackResult = await playAudioPayload(audioResult.audio, controller);
+    const audioResult = await sendMessage('comet:synthesise', {
+      text: first.summary,
+      voice: state.voice,
+      language: state.language,
+      provider: resolveSpeechProviderForBackground(),
+    });
+    updateUsage(audioResult.usage);
+    clearTtsProgress();
+    if (controller.cancelled) {
+      logger.info('Read aloud request cancelled before playback could start.');
+      return;
+    }
+    if (audioResult.audio?.truncated) {
+      logger.warn('Summary speech truncated to satisfy provider limits.', {
+        originalTokens: audioResult.audio.originalTokenCount,
+        deliveredTokens: audioResult.audio.deliveredTokenCount,
+        omittedTokens: audioResult.audio.omittedTokenCount,
+      });
+    }
+    setStatus(
+      audioResult.audio?.truncated ? 'Playing truncated summary.' : 'Playing summary.',
+    );
+    playbackResult = await playAudioPayload(audioResult.audio, controller);
     if (playbackResult === 'skipped') {
       setStatus('Audio generated (mock).');
       setPlaybackReady();
@@ -1704,6 +1833,10 @@ async function readAloud() {
       setPlaybackReady();
     }
     logger.info('Read aloud completed.', { playbackResult });
+  } catch (error) {
+    clearTtsProgress();
+    setPlaybackReady();
+    throw error;
   } finally {
     if (state.playbackController === controller) {
       state.playbackController = null;
@@ -1754,12 +1887,19 @@ async function readFullPage() {
         total,
         length: segment.text.length,
       });
-      const response = await sendMessage('comet:synthesise', {
-        text: segment.text,
-        voice: state.voice,
-        language: state.language,
-        provider: resolveSpeechProviderForBackground(),
-      });
+      beginTtsProgress('full-page', { segmentIndex: index, segmentTotal: total });
+      setPlaybackLoading();
+      let response;
+      try {
+        response = await sendMessage('comet:synthesise', {
+          text: segment.text,
+          voice: state.voice,
+          language: state.language,
+          provider: resolveSpeechProviderForBackground(),
+        });
+      } finally {
+        clearTtsProgress();
+      }
       updateUsage(response.usage);
       if (controller.cancelled) {
         break;
@@ -1800,6 +1940,7 @@ async function readFullPage() {
     setStatus('Finished reading page.');
     logger.info('Full-page narration completed.');
   } catch (error) {
+    clearTtsProgress();
     setPlaybackReady();
     logger.error('Full-page narration failed.', { error });
     throw error;
@@ -1824,6 +1965,7 @@ function stopPlayback() {
     state.playbackController = null;
   }
   revokeAudioSource();
+  clearTtsProgress();
   setPlaybackReady();
   setStatus('Playback stopped.');
 }
@@ -2192,6 +2334,7 @@ const __TESTING__ = {
   resolveStatusMessage,
   assignElements,
   setPlaybackReady,
+  setPlaybackLoading,
   readFullPage,
   ensureAudio,
   getActiveTabId,
@@ -2202,6 +2345,11 @@ const __TESTING__ = {
   loadPreferences,
   applyVoiceCapabilities,
   refreshVoiceOptions,
+  playAudioPayload,
+  createPlaybackController,
+  beginTtsProgress,
+  clearTtsProgress,
+  handleTtsProgressMessage,
 };
 
 export { sendMessageToTab, sendMessage, __TESTING__ };

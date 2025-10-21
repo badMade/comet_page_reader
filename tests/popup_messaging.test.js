@@ -5,7 +5,7 @@ import { URL as NodeURL } from 'node:url';
 import { DEFAULT_TOKEN_LIMIT } from '../utils/cost.js';
 import { setupPopupTestEnvironment } from './fixtures/popup-environment.js';
 
-const { chrome: chromeStub } = setupPopupTestEnvironment();
+const { chrome: chromeStub, getElement } = setupPopupTestEnvironment();
 
 async function importPopupModule({ mockMode = false } = {}) {
   const hadMockFlag = Object.prototype.hasOwnProperty.call(globalThis, '__COMET_MOCK_MODE__');
@@ -173,6 +173,64 @@ test('popup messaging content script recovery', async t => {
 
     assert.equal(tabMessageCount, 1);
     assert.deepEqual(dispatchedTypes, ['comet:synthesise', 'comet:synthesise']);
+  });
+
+  await t.test('playAudioPayload handles multiple chunks sequentially', async () => {
+    module.__TESTING__.assignElements();
+    module.__TESTING__.setPlaybackReady();
+    module.__TESTING__.ensureAudio();
+
+    const originalURL = globalThis.URL;
+    const created = [];
+    const revoked = [];
+    globalThis.URL = {
+      createObjectURL(blob) {
+        created.push(blob.type);
+        return originalURL?.createObjectURL ? originalURL.createObjectURL(blob) : 'blob:test';
+      },
+      revokeObjectURL(url) {
+        revoked.push(url);
+        if (originalURL?.revokeObjectURL) {
+          originalURL.revokeObjectURL(url);
+        }
+      },
+    };
+
+    try {
+      const controller = module.__TESTING__.createPlaybackController();
+      const chunks = [
+        { base64: Buffer.from('first').toString('base64'), mimeType: 'audio/mpeg' },
+        { base64: Buffer.from('second').toString('base64'), mimeType: 'audio/mpeg' },
+      ];
+
+      const result = await module.__TESTING__.playAudioPayload({ chunks }, controller);
+      assert.equal(result, 'finished');
+      assert.equal(created.length, 2);
+      assert.equal(revoked.length, 2);
+    } finally {
+      globalThis.URL = originalURL;
+    }
+  });
+
+  await t.test('tts progress updates status text for active requests', async () => {
+    module.__TESTING__.assignElements();
+    const statusEl = getElement('recordingStatus');
+
+    module.__TESTING__.beginTtsProgress('read-aloud');
+    assert.equal(statusEl.textContent, 'Generating audio…');
+
+    module.__TESTING__.handleTtsProgressMessage({ chunkIndex: 1, chunkCount: 5 });
+    assert.equal(statusEl.textContent, 'Generating audio 2/5…');
+
+    module.__TESTING__.beginTtsProgress('full-page', { segmentIndex: 1, segmentTotal: 3 });
+    assert.equal(statusEl.textContent, 'Segment 2/3: Generating audio…');
+
+    module.__TESTING__.handleTtsProgressMessage({ chunkIndex: 0, chunkCount: 4 });
+    assert.equal(statusEl.textContent, 'Segment 2/3: Generating audio 1/4…');
+
+    module.__TESTING__.clearTtsProgress();
+    module.__TESTING__.handleTtsProgressMessage({ chunkIndex: 0, chunkCount: 2 });
+    assert.equal(statusEl.textContent, 'Segment 2/3: Generating audio 1/4…');
   });
 });
 
