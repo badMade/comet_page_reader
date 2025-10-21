@@ -1366,20 +1366,17 @@ function executeContentScript(tabId) {
  * Sends a message to the content script in a specific tab, retrying once with
  * explicit injection when the receiver is missing.
  *
- * Args:
- *   tabId (number): Identifier of the target tab.
- *   message (Object): Payload forwarded to the content script dispatcher.
+ * If the initial delivery fails with a "receiving end" error, the function
+ * injects `content/content.js` via {@link executeContentScript} and retries
+ * once. Access-denied injection failures are converted into a user-facing
+ * error, other injection issues are rethrown, and a second "receiving end"
+ * failure results in a generic communication error.
  *
- * Returns:
- *   Promise<*>: Resolves with the content script response from
+ * @param {number} tabId - Identifier of the target tab.
+ * @param {Object} message - Payload forwarded to the content script dispatcher.
+ * @returns {Promise<*>} Resolves with the content script response from
  *   {@link dispatchTabMessage}.
- *
- * Retry Logic:
- *   If the initial delivery fails with a "receiving end" error, the function
- *   injects `content/content.js` via {@link executeContentScript} and retries
- *   once. Access-denied injection failures are converted into a user-facing
- *   error, other injection issues are rethrown, and a second "receiving end"
- *   failure results in a generic communication error.
+ * @throws {Error} If the message cannot be sent, even after a retry attempt.
  */
 async function sendMessageToTab(tabId, message) {
   try {
