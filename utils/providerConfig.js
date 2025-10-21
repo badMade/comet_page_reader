@@ -13,6 +13,8 @@ const DEFAULT_PROVIDER_CONFIG = Object.freeze({
   headers: {},
 });
 
+const DEFAULT_MAX_TOKENS_PER_CALL = 1200;
+
 const DEFAULT_ROUTING_CONFIG = Object.freeze({
   providerOrder: [
     'ollama',
@@ -28,7 +30,11 @@ const DEFAULT_ROUTING_CONFIG = Object.freeze({
   disablePaid: false,
   timeoutMs: 20000,
   retryLimit: 2,
-  maxTokensPerCall: estimateTokensFromUsd(0.01),
+  // Allow a generous prompt + fallback completion (≈400 tokens) without
+  // requiring manual configuration while still protecting against runaway
+  // requests. The value is intentionally in the low thousands so that fresh
+  // installs can successfully summarise typical pages.
+  maxTokensPerCall: DEFAULT_MAX_TOKENS_PER_CALL,
   maxMonthlyTokens: DEFAULT_TOKEN_LIMIT,
   dryRun: false,
 });
