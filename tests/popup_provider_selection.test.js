@@ -68,14 +68,20 @@ test('popup retains stored provider preference when agent allows it', async () =
         callback({
           ok: true,
           result: {
-            totalTokens: 0,
-            totalPromptTokens: 0,
-            totalCompletionTokens: 0,
-            cumulativeTotalTokens: 0,
-            cumulativePromptTokens: 0,
-            cumulativeCompletionTokens: 0,
+            totalTokens: 420,
+            totalPromptTokens: 280,
+            totalCompletionTokens: 140,
+            cumulativeTotalTokens: 420,
+            cumulativePromptTokens: 280,
+            cumulativeCompletionTokens: 140,
             limitTokens: 15000,
-            lastReset: Date.now(),
+            lastReset: 1_700_000_000_000,
+            tokens: {
+              total: 420,
+              prompt: 280,
+              completion: 140,
+              lastReset: 1_700_000_000_000,
+            },
           },
         });
       });
@@ -142,14 +148,20 @@ test('popup updates background provider when agent restrictions apply', async ()
         callback({
           ok: true,
           result: {
-            totalTokens: 0,
-            totalPromptTokens: 0,
-            totalCompletionTokens: 0,
-            cumulativeTotalTokens: 0,
-            cumulativePromptTokens: 0,
-            cumulativeCompletionTokens: 0,
+            totalTokens: 320,
+            totalPromptTokens: 200,
+            totalCompletionTokens: 120,
+            cumulativeTotalTokens: 320,
+            cumulativePromptTokens: 200,
+            cumulativeCompletionTokens: 120,
             limitTokens: 15000,
-            lastReset: Date.now(),
+            lastReset: 1_700_000_500_000,
+            tokens: {
+              total: 320,
+              prompt: 200,
+              completion: 120,
+              lastReset: 1_700_000_500_000,
+            },
           },
         });
       });

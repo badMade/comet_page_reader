@@ -58,7 +58,7 @@ Set the variables in your shell before launching development tooling or rely on 
    - **Summarise page:** Generates summaries for each extracted segment and lists them in the popup.
    - **Read aloud:** Requests speech for the first summary and plays it inside the popup (requires a provider that exposes TTS, e.g. OpenAI).
    - **Push to talk:** Hold the button to dictate commands such as “summary this page” or “read the first result”. Speech-to-text responses automatically trigger matching actions (requires a provider with transcription support).
-5. Monitor the **Usage** panel to see cumulative token usage, the configured limit, and the last reset time. Use **Reset usage** whenever you want to clear historical statistics.
+5. Monitor the **Usage** panel to see cumulative token usage, the configured limit, and the last reset time. Use **Reset token usage** whenever you want to clear historical statistics.
 
 ### Programmatic access
 

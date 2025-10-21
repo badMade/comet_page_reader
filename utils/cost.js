@@ -414,9 +414,16 @@ export class CostTracker {
       requestCount: this.usage.requests.length,
       totalTokens: this.usage.totalTokens,
     });
+    const tokens = {
+      prompt: this.usage.totalPromptTokens,
+      completion: this.usage.totalCompletionTokens,
+      total: this.usage.totalTokens,
+      lastReset: this.usage.lastReset,
+    };
     return {
       ...this.usage,
       limitTokens: this.limitTokens,
+      tokens,
     };
   }
 

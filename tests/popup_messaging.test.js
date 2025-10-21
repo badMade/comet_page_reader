@@ -143,6 +143,7 @@ test('popup messaging content script recovery', async t => {
     chromeStub.runtime.sendMessage = (message, callback) => {
       dispatchedTypes.push(message.type);
       chromeStub.runtime.lastError = null;
+      const resetAt = 1_700_000_123_000;
       callback({
         success: true,
         result: {
@@ -155,7 +156,13 @@ test('popup messaging content script recovery', async t => {
             cumulativePromptTokens: 10,
             cumulativeCompletionTokens: 0,
             limitTokens: 15000,
-            lastReset: Date.now(),
+            lastReset: resetAt,
+            tokens: {
+              total: 10,
+              prompt: 10,
+              completion: 0,
+              lastReset: resetAt,
+            },
           },
         },
         error: null,
@@ -185,6 +192,10 @@ test('mock mode bypasses runtime messaging and preserves provider metadata', asy
   assert.equal(usage.cumulativeTotalTokens, 2500);
   assert.equal(usage.cumulativePromptTokens, 1500);
   assert.equal(usage.cumulativeCompletionTokens, 1000);
+  assert.equal(usage.tokens.total, usage.totalTokens);
+  assert.equal(usage.tokens.prompt, usage.totalPromptTokens);
+  assert.equal(usage.tokens.completion, usage.totalCompletionTokens);
+  assert.equal(typeof usage.tokens.lastReset, 'number');
   const summary = await module.sendMessage('comet:summarise');
   assert.ok(Array.isArray(summary.summaries));
 });

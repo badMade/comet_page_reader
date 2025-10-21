@@ -61,6 +61,12 @@ test('ensureInitialised hydrates stored limit for the cost tracker', async () =>
     assert.equal(usage.metadata.cumulativeTotalTokens, expectedTokenTotal);
     assert.equal(usage.metadata.cumulativePromptTokens, expectedPromptTotal);
     assert.equal(usage.metadata.cumulativeCompletionTokens, expectedCompletionTotal);
+    assert.deepEqual(usage.tokens, {
+      prompt: expectedPromptTotal,
+      completion: expectedCompletionTotal,
+      total: expectedTokenTotal,
+      lastReset: storedUsage.lastReset,
+    });
 
     // Ensure persisted store remains untouched after reads.
     assert.equal(persistentStore[USAGE_STORAGE_KEY].limitUsd, storedUsage.limitUsd);

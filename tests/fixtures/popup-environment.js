@@ -32,7 +32,12 @@ export function setupPopupTestEnvironment() {
       }
       return elementCache.get(id);
     },
-    querySelector: () => createElementStub(),
+    querySelector: selector => {
+      if (typeof selector === 'string' && selector.startsWith('#')) {
+        return documentStub.getElementById(selector.slice(1));
+      }
+      return createElementStub();
+    },
   };
 
   globalThis.document = documentStub;

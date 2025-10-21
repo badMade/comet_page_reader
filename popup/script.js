@@ -74,36 +74,8 @@ const mockHandlers = {
   'comet:setApiKey': () => Promise.resolve(null),
   'comet:setProvider': () => Promise.resolve({ provider: DEFAULT_PROVIDER_ID }),
   'comet:getUsage': () =>
-    Promise.resolve({
-      totalPromptTokens: 1200,
-      totalCompletionTokens: 800,
-      totalTokens: 2000,
-      cumulativePromptTokens: 1500,
-      cumulativeCompletionTokens: 1000,
-      cumulativeTotalTokens: 2500,
-      limitTokens: DEFAULT_TOKEN_LIMIT,
-      lastReset: Date.now() - 3600 * 1000,
-    }),
-  'comet:resetUsage': () =>
-    Promise.resolve({
-      totalPromptTokens: 0,
-      totalCompletionTokens: 0,
-      totalTokens: 0,
-      cumulativePromptTokens: 0,
-      cumulativeCompletionTokens: 0,
-      cumulativeTotalTokens: 0,
-      limitTokens: DEFAULT_TOKEN_LIMIT,
-      lastReset: Date.now(),
-    }),
-  'comet:summarise': () =>
-    Promise.resolve({
-      summaries: [
-        {
-          id: 'segment-1',
-          summary: 'This is a mock summary returned without contacting the provider.',
-        },
-      ],
-      usage: {
+    Promise.resolve(
+      withTokenSummary({
         totalPromptTokens: 1200,
         totalCompletionTokens: 800,
         totalTokens: 2000,
@@ -112,12 +84,44 @@ const mockHandlers = {
         cumulativeTotalTokens: 2500,
         limitTokens: DEFAULT_TOKEN_LIMIT,
         lastReset: Date.now() - 3600 * 1000,
-      },
+      })
+    ),
+  'comet:resetUsage': () =>
+    Promise.resolve(
+      withTokenSummary({
+        totalPromptTokens: 0,
+        totalCompletionTokens: 0,
+        totalTokens: 0,
+        cumulativePromptTokens: 0,
+        cumulativeCompletionTokens: 0,
+        cumulativeTotalTokens: 0,
+        limitTokens: DEFAULT_TOKEN_LIMIT,
+        lastReset: Date.now(),
+      })
+    ),
+  'comet:summarise': () =>
+    Promise.resolve({
+      summaries: [
+        {
+          id: 'segment-1',
+          summary: 'This is a mock summary returned without contacting the provider.',
+        },
+      ],
+      usage: withTokenSummary({
+        totalPromptTokens: 1200,
+        totalCompletionTokens: 800,
+        totalTokens: 2000,
+        cumulativePromptTokens: 1500,
+        cumulativeCompletionTokens: 1000,
+        cumulativeTotalTokens: 2500,
+        limitTokens: DEFAULT_TOKEN_LIMIT,
+        lastReset: Date.now() - 3600 * 1000,
+      }),
     }),
   'comet:synthesise': () =>
     Promise.resolve({
       audio: { base64: '', mimeType: 'audio/mpeg' },
-      usage: {
+      usage: withTokenSummary({
         totalPromptTokens: 1500,
         totalCompletionTokens: 800,
         totalTokens: 2300,
@@ -126,12 +130,12 @@ const mockHandlers = {
         cumulativeTotalTokens: 3000,
         limitTokens: DEFAULT_TOKEN_LIMIT,
         lastReset: Date.now() - 3600 * 1000,
-      },
+      }),
     }),
   'comet:transcribe': () =>
     Promise.resolve({
       text: 'mock summary please',
-      usage: {
+      usage: withTokenSummary({
         totalPromptTokens: 1200,
         totalCompletionTokens: 900,
         totalTokens: 2100,
@@ -140,7 +144,7 @@ const mockHandlers = {
         cumulativeTotalTokens: 2700,
         limitTokens: DEFAULT_TOKEN_LIMIT,
         lastReset: Date.now(),
-      },
+      }),
     }),
 };
 
@@ -1412,6 +1416,23 @@ function formatTokens(value, fallback = '0') {
   return value.toLocaleString?.() ?? String(value);
 }
 
+function withTokenSummary(usage) {
+  if (!usage || typeof usage !== 'object') {
+    return usage;
+  }
+  const snapshot = { ...usage };
+  const existing = typeof usage.tokens === 'object' && usage.tokens !== null
+    ? usage.tokens
+    : {};
+  snapshot.tokens = {
+    prompt: usage.totalPromptTokens ?? existing.prompt ?? 0,
+    completion: usage.totalCompletionTokens ?? existing.completion ?? 0,
+    total: usage.totalTokens ?? existing.total ?? 0,
+    lastReset: usage.lastReset ?? existing.lastReset ?? null,
+  };
+  return snapshot;
+}
+
 /**
  * Renders usage statistics in the popup.
  *
@@ -1420,39 +1441,53 @@ function formatTokens(value, fallback = '0') {
  *   returned by the background worker.
  */
 function updateUsage(usage) {
-  if (!usage) {
+  if (!usage || !elements.usage || !elements.usageRowTemplate?.content) {
     return;
   }
+  const { content } = elements.usageRowTemplate;
   elements.usage.innerHTML = '';
-  const limitRow = elements.usageRowTemplate.content.cloneNode(true);
-  limitRow.querySelector('dt').textContent = 'Limit';
-  const resolvedLimit = typeof usage.limitTokens === 'number'
-    ? usage.limitTokens
+
+  const snapshot = withTokenSummary(usage) || {};
+  const usageTokens = typeof snapshot.tokens === 'object' && snapshot.tokens !== null
+    ? snapshot.tokens
+    : { prompt: 0, completion: 0, total: 0, lastReset: null };
+  const resolvedLimit = Number.isFinite(snapshot.limitTokens)
+    ? snapshot.limitTokens
     : DEFAULT_TOKEN_LIMIT;
-  limitRow.querySelector('dd').textContent = `${formatTokens(resolvedLimit)} tokens`;
-  elements.usage.appendChild(limitRow);
+  const totalTokens = usageTokens.total ?? snapshot.totalTokens ?? 0;
+  const promptTokens = usageTokens.prompt
+    ?? snapshot.totalPromptTokens
+    ?? snapshot.promptTokens
+    ?? 0;
+  const completionTokens = usageTokens.completion
+    ?? snapshot.totalCompletionTokens
+    ?? snapshot.completionTokens
+    ?? 0;
+  const lastResetTimestamp = usageTokens.lastReset ?? snapshot.lastReset ?? null;
 
-  const totalRow = elements.usageRowTemplate.content.cloneNode(true);
-  totalRow.querySelector('dt').textContent = 'Total tokens';
-  totalRow.querySelector('dd').textContent = formatTokens(usage.totalTokens || 0);
-  elements.usage.appendChild(totalRow);
+  const appendRow = (label, value) => {
+    const row = content.cloneNode(true);
+    const term = row.querySelector?.('dt');
+    const definition = row.querySelector?.('dd');
+    if (term) {
+      term.textContent = label;
+    }
+    if (definition) {
+      definition.textContent = value;
+    }
+    elements.usage.appendChild(row);
+  };
 
-  const promptRow = elements.usageRowTemplate.content.cloneNode(true);
-  promptRow.querySelector('dt').textContent = 'Prompt tokens';
-  promptRow.querySelector('dd').textContent = formatTokens(usage.totalPromptTokens || 0);
-  elements.usage.appendChild(promptRow);
+  appendRow(t('usageLimitLabel'), formatTokens(resolvedLimit));
+  appendRow(t('usageTotalLabel'), formatTokens(totalTokens));
+  appendRow(t('usagePromptLabel'), formatTokens(promptTokens));
+  appendRow(t('usageCompletionLabel'), formatTokens(completionTokens));
 
-  const completionRow = elements.usageRowTemplate.content.cloneNode(true);
-  completionRow.querySelector('dt').textContent = 'Completion tokens';
-  completionRow.querySelector('dd').textContent = formatTokens(usage.totalCompletionTokens || 0);
-  elements.usage.appendChild(completionRow);
-
-  const lastReset = elements.usageRowTemplate.content.cloneNode(true);
-  lastReset.querySelector('dt').textContent = 'Last reset';
-  lastReset.querySelector('dd').textContent = usage.lastReset
-    ? new Date(usage.lastReset).toLocaleString()
-    : 'Unknown';
-  elements.usage.appendChild(lastReset);
+  let lastResetDisplay = t('usageLastResetUnknown');
+  if (typeof lastResetTimestamp === 'number' && Number.isFinite(lastResetTimestamp)) {
+    lastResetDisplay = new Date(lastResetTimestamp).toLocaleString();
+  }
+  appendRow(t('usageLastResetLabel'), lastResetDisplay);
 }
 
 /**
@@ -2034,7 +2069,7 @@ async function resetUsage() {
   logger.info('Reset usage requested.');
   const usage = await sendMessage('comet:resetUsage');
   updateUsage(usage);
-  setStatus('Usage has been reset.');
+  setStatus('Token usage has been reset.');
   logger.info('Usage reset completed.');
 }
 

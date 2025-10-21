@@ -62,6 +62,6 @@ Refer to in-file JSDoc comments for argument and return types.
 
 - Increment the version in `manifest.json`.
 - Verify API key handling end-to-end on a clean browser profile.
-- Reset usage from the popup to confirm storage writes.
+- Reset token usage from the popup to confirm storage writes.
 - Run through summarise, read aloud, and push-to-talk flows on at least one Chromium browser and Firefox.
 
