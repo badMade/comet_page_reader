@@ -588,10 +588,62 @@ function normaliseVoiceCapabilities(rawCapabilities) {
   };
 }
 
+async function createEphemeralAdapterForCapabilities(providerId) {
+  if (!providerId) {
+    return null;
+  }
+  await ensureAgentConfig();
+  let config;
+  try {
+    config = buildProviderConfig(agentConfigSnapshot, providerId);
+  } catch (error) {
+    logger.warn('Failed to resolve configuration for provider when resolving voice capabilities. Using fallback.', {
+      providerId,
+      error,
+    });
+    config = getFallbackProviderConfig({ provider: providerId });
+  }
+  const adapterKey = getAdapterKey(config.provider || providerId);
+  try {
+    return createAdapter(adapterKey, config);
+  } catch (error) {
+    logger.warn('Unable to create adapter for provider voice capabilities lookup.', {
+      providerId: config.provider || providerId,
+      error,
+    });
+    return null;
+  }
+}
+
 async function resolveVoiceCapabilities(providerId, adapterOverride) {
+  const baseProvider = activeProviderId || providerConfig?.provider || DEFAULT_PROVIDER;
+  const fallbackProvider = resolveAlias(
+    normaliseProviderId(baseProvider === 'auto' ? DEFAULT_PROVIDER : baseProvider, DEFAULT_PROVIDER)
+  );
+  const requestedProviderRaw = providerId
+    ? normaliseProviderId(providerId, fallbackProvider)
+    : fallbackProvider;
+  const targetProvider = requestedProviderRaw === 'auto'
+    ? fallbackProvider
+    : resolveAlias(requestedProviderRaw);
+  const providerResult = targetProvider || fallbackProvider;
+
   let adapter = adapterOverride;
+  if (!adapter && adapterLoadPromise && targetProvider === loadingProviderId) {
+    try {
+      adapter = await adapterLoadPromise;
+    } catch (error) {
+      logger.warn('Pending adapter load failed while resolving voice capabilities.', {
+        providerId: targetProvider,
+        error,
+      });
+    }
+  }
+  if (!adapter && targetProvider === activeProviderId && adapterInstance) {
+    adapter = adapterInstance;
+  }
   if (!adapter) {
-    adapter = await ensureAdapter(providerId);
+    adapter = await createEphemeralAdapterForCapabilities(targetProvider);
   }
   let rawCapabilities;
   if (adapter && typeof adapter.getVoiceCapabilities === 'function') {
@@ -599,7 +651,7 @@ async function resolveVoiceCapabilities(providerId, adapterOverride) {
       rawCapabilities = await adapter.getVoiceCapabilities();
     } catch (error) {
       logger.warn('Adapter getVoiceCapabilities failed; falling back to cost metadata.', {
-        providerId: activeProviderId,
+        providerId: providerResult,
         error,
       });
     }
@@ -610,7 +662,7 @@ async function resolveVoiceCapabilities(providerId, adapterOverride) {
   }
   const normalised = normaliseVoiceCapabilities(rawCapabilities);
   return {
-    provider: activeProviderId,
+    provider: providerResult,
     availableVoices: normalised.availableVoices,
     preferredVoice: normalised.preferredVoice,
   };
