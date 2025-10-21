@@ -161,7 +161,7 @@ function alignSpeechBoundary(text) {
   if (typeof text !== 'string' || text.length === 0) {
     return '';
   }
-  const trimmed = text.replace(/[\s\u00A0]+$/gu, '');
+  const trimmed = text.trimEnd();
   if (!trimmed) {
     return '';
   }
