@@ -4,6 +4,7 @@ import { estimateTokensFromText } from '../../utils/cost.js';
 const DEFAULT_TRANSCRIPTION_MODEL = 'gpt-4o-mini-transcribe';
 const DEFAULT_TTS_MODEL = 'gpt-4o-mini-tts';
 const DEFAULT_TTS_MAX_INPUT_TOKENS = 4096;
+const DEFAULT_TTS_TOKEN_BUFFER = 64;
 const DEFAULT_TTS_VOICES = Object.freeze([
   'alloy',
   'verse',
@@ -12,6 +13,22 @@ const DEFAULT_TTS_VOICES = Object.freeze([
   'sol',
 ]);
 const DEFAULT_PREFERRED_VOICE = 'alloy';
+const SPEECH_TOKEN_PATTERN = /(?:\p{Script=Han}|\p{Script=Hiragana}|\p{Script=Katakana}|\p{Script=Hangul}|[\p{L}\p{N}]+|[^\s])/gu;
+
+function countSpeechTokens(text) {
+  if (typeof text !== 'string' || text.length === 0) {
+    return 0;
+  }
+  const matches = text.match(SPEECH_TOKEN_PATTERN);
+  return matches ? matches.length : 0;
+}
+
+function normaliseTokenBuffer(value) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return DEFAULT_TTS_TOKEN_BUFFER;
+  }
+  return Math.max(0, Math.floor(value));
+}
 
 function normaliseVoices(configuredVoices) {
   if (!Array.isArray(configuredVoices)) {
@@ -313,6 +330,9 @@ export class OpenAIAdapter {
     const tokenCap = typeof maxInputTokens === 'number' && Number.isFinite(maxInputTokens)
       ? maxInputTokens
       : configuredMaxTokens ?? DEFAULT_TTS_MAX_INPUT_TOKENS;
+    const tokenBuffer = normaliseTokenBuffer(this.config?.tokenBuffer);
+    const speechTokens = countSpeechTokens(text);
+    const plannerLimit = tokenCap > 0 ? Math.max(0, Math.floor(tokenCap) - tokenBuffer) : 0;
     const operationContext = {
       model,
       voice,
@@ -321,10 +341,13 @@ export class OpenAIAdapter {
       chunkIndex,
       chunkCount,
       estimatedTokens,
+      speechTokens,
       maxInputTokens: tokenCap,
+      tokenBuffer,
+      plannerLimit,
     };
 
-    if (tokenCap > 0 && estimatedTokens > tokenCap) {
+    if (tokenCap > 0 && speechTokens > tokenCap) {
       this.logger.warn('Speech synthesis chunk exceeds model token limit.', operationContext);
       const error = new Error(`Speech synthesis chunk exceeds ${model} token limit.`);
       error.code = 'chunk-too-large';
