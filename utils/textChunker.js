@@ -268,6 +268,17 @@ export function chunkTextByTokens(text, maxTokens, options = {}) {
         chunks.push(chunk);
       }
 
+      if (overlapCount && wordChunks.length) {
+        const overlapSegments = wordChunks.slice(-overlapCount);
+        const { sentences: normalised, text } = normaliseOverlap(overlapSegments, maxTokens);
+        bufferSentences = [...normalised];
+        bufferText = text;
+      } else {
+        bufferSentences = [];
+        bufferText = '';
+      }
+      hasFreshContent = false;
+
       continue;
     }
 

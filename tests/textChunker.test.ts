@@ -41,6 +41,20 @@ describe('chunkTextByTokens', () => {
     }
   });
 
+  it('resets overlap state after splitting an oversized sentence', () => {
+    const text = [
+      'Intro.',
+      'This sentence is intentionally verbose and contains enough separate words to ensure the chunker must split it at the word level because it cannot fit within the tiny limit.',
+      'Outro.',
+    ].join(' ');
+
+    const chunks = chunkTextByTokens(text, 12, { sentenceOverlap: 1 });
+
+    expect(chunks[0]).toBe('Intro.');
+    expect(chunks[chunks.length - 1]).toContain('Outro.');
+    expect(chunks.filter((chunk) => chunk.includes('Intro.')).length).toBe(1);
+  });
+
   it('splits lengthy words into character-based chunks', () => {
     const longWord = `${'supercalifragilisticexpialidocious'.repeat(5)}.`;
     const maxTokens = 10;
