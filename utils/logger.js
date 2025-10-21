@@ -1,3 +1,11 @@
+/**
+ * Structured logging utilities shared by Node.js and browser runtimes.
+ *
+ * The module exposes sanitised, context-aware loggers that support console
+ * output everywhere and optional asynchronous file persistence when running
+ * under Node.js. Configuration can be provided programmatically or sourced
+ * from JSON/YAML manifests to keep behaviour consistent across environments.
+ */
 const LOG_LEVELS = Object.freeze({
   error: 0,
   warn: 1,
@@ -442,6 +450,16 @@ async function emitLog(level, loggerName, loggerContext, message, meta) {
   writeToFile(baseEntry);
 }
 
+/**
+ * Merge additional context into the shared global logging scope.
+ *
+ * Args:
+ *   context (Object): Key-value pairs to expose with every log entry. Values
+ *     are sanitised to remove sensitive keys and to serialise nested errors.
+ *
+ * Returns:
+ *   void
+ */
 export function setGlobalContext(context) {
   if (!context || typeof context !== 'object') {
     return;
@@ -452,10 +470,30 @@ export function setGlobalContext(context) {
   };
 }
 
+/**
+ * Remove all values from the shared global logging scope.
+ *
+ * This reset is useful in long-lived browser sessions where contextual data
+ * should not leak between users or permission changes.
+ *
+ * Returns:
+ *   void
+ */
 export function clearGlobalContext() {
   globalContext = {};
 }
 
+/**
+ * Update logger configuration in-place.
+ *
+ * Args:
+ *   config (Object): Partial configuration containing console/file toggles,
+ *     logging thresholds, or default context. Unknown values are merged and
+ *     the log level is normalised to a supported severity.
+ *
+ * Returns:
+ *   void
+ */
 export function setLoggerConfig(config) {
   if (!config || typeof config !== 'object') {
     return;
@@ -476,10 +514,30 @@ export function setLoggerConfig(config) {
   }
 }
 
+/**
+ * Obtain a copy of the active logger configuration.
+ *
+ * Returns:
+ *   Object: A shallow clone of the configuration so callers cannot mutate the
+ *     internal state directly.
+ */
 export function getLoggerConfig() {
   return { ...activeConfig };
 }
 
+/**
+ * Load logger configuration from disk or remote assets.
+ *
+ * Args:
+ *   configPath (string): Relative path or URL used to fetch JSON/YAML
+ *     settings. Defaults to `logging_config.yaml` in both Node.js and
+ *     browser-based environments.
+ *
+ * Returns:
+ *   Promise<void>: Resolves once configuration is parsed and applied. Errors
+ *     are logged to the console and suppressed when the default manifest is
+ *     missing.
+ */
 export async function loadLoggingConfig(configPath = 'logging_config.yaml') {
   try {
     let rawConfig = null;
@@ -523,6 +581,7 @@ export async function loadLoggingConfig(configPath = 'logging_config.yaml') {
   }
 }
 
+/** @internal */
 class StructuredLogger {
   constructor(name, context = {}) {
     this.name = name || 'root';
@@ -558,6 +617,19 @@ class StructuredLogger {
   }
 }
 
+/**
+ * Create a structured logger instance.
+ *
+ * Args:
+ *   options (Object): Optional settings.
+ *   options.name (string): Logical logger name used in emitted records.
+ *   options.context (Object): Default metadata merged into every entry. Values
+ *     are sanitised to redact sensitive fields prior to emission.
+ *
+ * Returns:
+ *   StructuredLogger: A logger whose methods asynchronously emit entries to
+ *     console streams and, when configured, file appenders.
+ */
 export function createLogger(options = {}) {
   const name = typeof options.name === 'string' && options.name.trim() ? options.name.trim() : 'root';
   const context = options.context && typeof options.context === 'object' ? options.context : {};
