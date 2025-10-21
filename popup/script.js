@@ -1362,6 +1362,25 @@ function executeContentScript(tabId) {
   return Promise.reject(new Error('Content script injection is not supported in this browser.'));
 }
 
+/**
+ * Sends a message to the content script in a specific tab, retrying once with
+ * explicit injection when the receiver is missing.
+ *
+ * Args:
+ *   tabId (number): Identifier of the target tab.
+ *   message (Object): Payload forwarded to the content script dispatcher.
+ *
+ * Returns:
+ *   Promise<*>: Resolves with the content script response from
+ *   {@link dispatchTabMessage}.
+ *
+ * Retry Logic:
+ *   If the initial delivery fails with a "receiving end" error, the function
+ *   injects `content/content.js` via {@link executeContentScript} and retries
+ *   once. Access-denied injection failures are converted into a user-facing
+ *   error, other injection issues are rethrown, and a second "receiving end"
+ *   failure results in a generic communication error.
+ */
 async function sendMessageToTab(tabId, message) {
   try {
     return await dispatchTabMessage(tabId, message);
