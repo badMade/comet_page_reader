@@ -34,8 +34,8 @@ function createAgentConfig(overrides = {}) {
       disablePaid: false,
       timeoutMs: 50,
       retryLimit: 0,
-      maxCostPerCallUsd: 0.05,
-      maxMonthlyCostUsd: 5,
+      maxTokensPerCall: 500,
+      maxMonthlyTokens: 5000,
       dryRun: false,
     },
     gemini: DEFAULT_GEMINI_CONFIG,
@@ -43,23 +43,43 @@ function createAgentConfig(overrides = {}) {
   };
 }
 
-function createCostTracker({ defaultEstimate = 0.001, estimates = {}, canSpend = true } = {}) {
+function normaliseEstimate(value, fallback) {
+  if (typeof value === 'number') {
+    return { totalTokens: value };
+  }
+  if (value && typeof value === 'object') {
+    return {
+      totalTokens: typeof value.totalTokens === 'number' ? value.totalTokens : fallback.totalTokens,
+      promptTokens: typeof value.promptTokens === 'number' ? value.promptTokens : fallback.promptTokens,
+      completionTokens: typeof value.completionTokens === 'number' ? value.completionTokens : fallback.completionTokens,
+    };
+  }
+  return fallback;
+}
+
+function createCostTracker({ defaultEstimate = { totalTokens: 100, promptTokens: 50, completionTokens: 50 }, estimates = {}, canSpend = true } = {}) {
   return {
     defaultEstimate,
     estimates,
     canSpendResult: canSpend,
     recorded: [],
-    estimateCostForText(model) {
-      return Object.prototype.hasOwnProperty.call(this.estimates, model)
-        ? this.estimates[model]
-        : this.defaultEstimate;
+    estimateTokenUsage(model) {
+      const fallback = normaliseEstimate(this.defaultEstimate, {
+        totalTokens: 100,
+        promptTokens: 50,
+        completionTokens: 50,
+      });
+      if (Object.prototype.hasOwnProperty.call(this.estimates, model)) {
+        return normaliseEstimate(this.estimates[model], fallback);
+      }
+      return fallback;
     },
     canSpend(amount) {
-      return this.canSpendResult && amount <= 1;
+      return this.canSpendResult && amount <= 1000;
     },
     record(model, promptTokens, completionTokens, metadata) {
       this.recorded.push({ model, promptTokens, completionTokens, metadata });
-      return 0.0001;
+      return promptTokens + completionTokens;
     },
     estimateTokensFromText() {
       return 10;
@@ -156,8 +176,8 @@ test('generate respects disablePaid flag', async () => {
       disablePaid: true,
       timeoutMs: 10,
       retryLimit: 0,
-      maxCostPerCallUsd: 0.05,
-      maxMonthlyCostUsd: 5,
+      maxTokensPerCall: 500,
+      maxMonthlyTokens: 5000,
       dryRun: false,
     },
   });
@@ -178,8 +198,8 @@ test('generate respects disablePaid flag', async () => {
 
 test('generate skips providers that exceed per-call cost', async () => {
   const costTracker = createCostTracker({
-    defaultEstimate: 0.2,
-    estimates: { 'gpt-4o-mini': 0.001 },
+    defaultEstimate: { totalTokens: 2000 },
+    estimates: { 'gpt-4o-mini': { totalTokens: 50 } },
     canSpend: true,
   });
   const agentConfig = createAgentConfig({
@@ -188,8 +208,8 @@ test('generate skips providers that exceed per-call cost', async () => {
       disablePaid: false,
       timeoutMs: 10,
       retryLimit: 0,
-      maxCostPerCallUsd: 0.01,
-      maxMonthlyCostUsd: 5,
+      maxTokensPerCall: 100,
+      maxMonthlyTokens: 5000,
       dryRun: false,
     },
   });

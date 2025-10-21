@@ -406,10 +406,10 @@ export class LLMRouter {
   }
 
   /**
-   * Returns internal state tracking provider health, retries, and spend.
+   * Returns internal state tracking provider health, retries, and usage.
    *
    * @param {string} providerId - Provider identifier.
-   * @returns {{failures: number, blockedUntil: number, invalidAuth: boolean, lastKeyHash: number|null, calls: number, tokensIn: number, tokensOut: number, totalCost: number}}
+   * @returns {{failures: number, blockedUntil: number, invalidAuth: boolean, lastKeyHash: number|null, calls: number, tokensIn: number, tokensOut: number, totalTokens: number}}
    *   Mutable state object.
    */
   getProviderState(providerId) {
@@ -423,7 +423,7 @@ export class LLMRouter {
         calls: 0,
         tokensIn: 0,
         tokensOut: 0,
-        totalCost: 0,
+        totalTokens: 0,
       });
     }
     return this.providerState.get(resolved);
@@ -451,17 +451,17 @@ export class LLMRouter {
    * Registers a successful provider invocation and updates aggregate metrics.
    *
    * @param {string} providerId - Provider identifier.
-   * @param {{tokensIn?: number, tokensOut?: number, cost?: number}} [details]
+   * @param {{tokensIn?: number, tokensOut?: number, totalTokens?: number}} [details]
    *   - Usage metrics supplied by the adapter.
    */
-  markProviderSuccess(providerId, { tokensIn = 0, tokensOut = 0, cost = 0 } = {}) {
+  markProviderSuccess(providerId, { tokensIn = 0, tokensOut = 0, totalTokens = 0 } = {}) {
     const state = this.getProviderState(providerId);
     state.failures = 0;
     state.blockedUntil = 0;
     state.calls += 1;
     state.tokensIn += tokensIn;
     state.tokensOut += tokensOut;
-    state.totalCost += cost;
+    state.totalTokens += totalTokens;
   }
 
   /**
@@ -549,26 +549,27 @@ export class LLMRouter {
    * @param {string} text - Source text being summarised.
    * @returns {Promise<boolean>} True when sufficient budget remains.
    */
-  async ensureCostBudget(model, text) {
+  async ensureTokenBudget(model, text) {
     if (!this.costTracker) {
       return true;
     }
     const routing = this.getRoutingConfig();
-    const estimate = this.costTracker.estimateCostForText(model, text);
-    if (routing.maxCostPerCallUsd > 0 && estimate > routing.maxCostPerCallUsd) {
+    const estimate = this.costTracker.estimateTokenUsage(model, text);
+    const totalTokens = estimate?.totalTokens || 0;
+    if (routing.maxTokensPerCall > 0 && totalTokens > routing.maxTokensPerCall) {
       return false;
     }
-    return this.costTracker.canSpend(estimate);
+    return this.costTracker.canSpend(totalTokens);
   }
 
   /**
-   * Records the cost of a provider invocation when a tracker is available.
+   * Records the token usage of a provider invocation when a tracker is available.
    *
-   * @param {string} model - Model identifier used for cost lookups.
+   * @param {string} model - Model identifier used for tracker lookups.
    * @param {number} promptTokens - Tokens submitted in the request.
    * @param {number} completionTokens - Tokens returned in the response.
    * @param {object} metadata - Additional metadata stored alongside the entry.
-   * @returns {Promise<number>} Recorded USD cost.
+   * @returns {Promise<number>} Recorded token total.
    */
   async recordCost(model, promptTokens, completionTokens, metadata) {
     if (!this.costTracker) {
@@ -688,12 +689,12 @@ export class LLMRouter {
 
   /**
    * Invokes the specified provider to generate a summary while handling retries
-   * and cost accounting.
+   * and usage accounting.
    *
    * @param {string} providerId - Provider identifier.
    * @param {{text: string, language: string, metadata?: object}} payload -
    *   Invocation parameters.
-   * @returns {Promise<{text: string, tokensIn: number, tokensOut: number, model: string, provider: string, cost: number}>}
+   * @returns {Promise<{text: string, tokensIn: number, tokensOut: number, model: string, provider: string, totalTokens: number}>}
    *   Provider response enriched with accounting metadata.
    */
   async invokeProvider(providerId, { text, language, metadata }) {
@@ -725,20 +726,24 @@ export class LLMRouter {
         ? response.completionTokens
         : this.costTracker?.estimateTokensFromText(summary) || 0;
       const modelUsed = normaliseModelName(response?.model, model);
-      const cost = await this.recordCost(modelUsed, promptTokens, completionTokens, {
+      const recordedTokens = await this.recordCost(modelUsed, promptTokens, completionTokens, {
         provider: resolved,
         type: metadata?.type || 'summary',
         url: metadata?.url,
         segmentId: metadata?.segmentId,
       });
-      this.markProviderSuccess(resolved, { tokensIn: promptTokens, tokensOut: completionTokens, cost });
+      this.markProviderSuccess(resolved, {
+        tokensIn: promptTokens,
+        tokensOut: completionTokens,
+        totalTokens: recordedTokens,
+      });
       return {
         text: summary,
         tokensIn: promptTokens,
         tokensOut: completionTokens,
         model: modelUsed,
         provider: resolved,
-        cost,
+        totalTokens: recordedTokens,
       };
     };
 
@@ -819,10 +824,10 @@ export class LLMRouter {
 
       const config = await this.getProviderConfig(resolved);
       const model = config.model || metadataEntry.adapterKey || 'unknown-model';
-      const canSpend = await this.ensureCostBudget(model, text);
+      const canSpend = await this.ensureTokenBudget(model, text);
       if (!canSpend) {
-        this.logger.warn('Provider skipped due to cost cap.', { provider: resolved, model });
-        failures.push({ provider: resolved, reason: 'cost_cap' });
+        this.logger.warn('Provider skipped due to token cap.', { provider: resolved, model });
+        failures.push({ provider: resolved, reason: 'token_cap' });
         continue;
       }
 
@@ -830,11 +835,11 @@ export class LLMRouter {
         this.logger.info('Dry run routing selected provider.', { provider: resolved });
         return {
           text: '[dry-run] no request sent',
-          tokensIn: 0,
-          tokensOut: 0,
+          tokens_in: 0,
+          tokens_out: 0,
           model,
           provider: resolved,
-          cost: 0,
+          total_tokens: 0,
           dryRun: true,
         };
       }
@@ -848,7 +853,7 @@ export class LLMRouter {
           tokens_out: result.tokensOut,
           model: result.model,
           provider: resolved,
-          cost_estimate: result.cost,
+          total_tokens: result.totalTokens,
         };
       } catch (error) {
         this.markProviderFailure(resolved, error);

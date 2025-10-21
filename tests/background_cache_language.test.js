@@ -33,8 +33,8 @@ test('summaries are cached per language for the same segment', async () => {
     'routing:',
     '  provider_order:',
     '    - test',
-    '  max_cost_per_call_usd: 0.05',
-    '  max_monthly_cost_usd: 5',
+    '  max_tokens_per_call: 2000',
+    '  max_monthly_tokens: 5000',
     'providers:',
     '  test:',
     '    provider: test',
@@ -136,7 +136,19 @@ test('getSummary requests summary with the correct language from the message', a
     },
   }));
 
-  __setAgentYamlOverrideForTests(() => 'provider: test\nmodel: stub-model\n');
+  __setAgentYamlOverrideForTests(() => [
+    'provider: test',
+    'model: stub-model',
+    'routing:',
+    '  provider_order:',
+    '    - test',
+    '  max_tokens_per_call: 50000',
+    '  max_monthly_tokens: 100000',
+    'providers:',
+    '  test:',
+    '    provider: test',
+    '    model: stub-model',
+  ].join('\n'));
 
   try {
     const module = await importServiceWorker();

@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { URL as NodeURL } from 'node:url';
 
+import { DEFAULT_TOKEN_LIMIT } from '../utils/cost.js';
 import { setupPopupTestEnvironment } from './fixtures/popup-environment.js';
 
 const { chrome: chromeStub } = setupPopupTestEnvironment();
@@ -146,7 +147,13 @@ test('popup messaging content script recovery', async t => {
         success: true,
         result: {
           audio: { base64: 'AA==', mimeType: 'audio/mpeg' },
-          usage: { totalCostUsd: 0.01, limitUsd: 5, lastReset: Date.now() },
+          usage: {
+            totalTokens: 10,
+            totalPromptTokens: 10,
+            totalCompletionTokens: 0,
+            limitTokens: 15000,
+            lastReset: Date.now(),
+          },
         },
         error: null,
       });
@@ -171,7 +178,7 @@ test('mock mode bypasses runtime messaging and preserves provider metadata', asy
   assert.equal(details.apiKey, 'sk-mock-1234');
 
   const usage = await module.sendMessage('comet:getUsage');
-  assert.equal(usage.limitUsd, 5);
+  assert.equal(usage.limitTokens, DEFAULT_TOKEN_LIMIT);
   const summary = await module.sendMessage('comet:summarise');
   assert.ok(Array.isArray(summary.summaries));
 });

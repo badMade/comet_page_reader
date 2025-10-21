@@ -19,15 +19,24 @@ test('free audio adapters bypass cost limits and retain zero spend', async () =>
         spendCalls.push(amount);
         return true;
       },
-      recordFlat(label, amount, metadata) {
-        recordCalls.push({ label, amount, metadata });
-        return amount;
+      recordFlat(label, descriptor, metadata) {
+        recordCalls.push({ label, descriptor, metadata });
+        return typeof descriptor === 'number'
+          ? descriptor
+          : descriptor?.totalTokens || 0;
       },
       toJSON() {
-        return { totalCostUsd: 0, requests: [] };
+        return {
+          totalTokens: 0,
+          totalPromptTokens: 0,
+          totalCompletionTokens: 0,
+          requests: [],
+          limitTokens: 0,
+          metadata: {},
+        };
       },
-      estimateCostForText() {
-        return 0;
+      estimateTokenUsage() {
+        return { totalTokens: 0, promptTokens: 0, completionTokens: 0 };
       },
       record() {
         return 0;
@@ -60,7 +69,15 @@ test('free audio adapters bypass cost limits and retain zero spend', async () =>
     assert.equal(result, 'transcribed audio');
     assert.deepEqual(spendCalls, [0]);
     assert.deepEqual(recordCalls, [
-      { label: 'free-stt', amount: 0, metadata: { type: 'free-stt' } },
+      {
+        label: 'free-stt',
+        descriptor: {
+          completionTokens: 0,
+          totalTokens: 0,
+          metadata: { type: 'free-stt', estimatedTokens: 0 },
+        },
+        metadata: undefined,
+      },
     ]);
   } finally {
     if (module) {

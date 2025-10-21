@@ -47,14 +47,14 @@ test('loadProviderConfig falls back to defaults when suppressErrors is enabled',
 
 test('loadAgentConfiguration merges routing overrides and honours env order', async () => {
   const originalOrder = process.env.PROVIDER_ORDER;
-  const yamlSource = `routing:\n  provider_order:\n    - gemini_free\n    - openai_paid\n  max_cost_per_call_usd: 0.02\n  max_monthly_cost_usd: 5\n`;
+  const yamlSource = `routing:\n  provider_order:\n    - gemini_free\n    - openai_paid\n  max_tokens_per_call: 200\n  max_monthly_tokens: 500\n`;
   process.env.PROVIDER_ORDER = 'ollama,huggingface_free';
 
   try {
     const agentConfig = await loadAgentConfiguration({ source: yamlSource });
     assert.deepEqual(agentConfig.routing.providerOrder, ['ollama', 'huggingface_free']);
-    assert.equal(agentConfig.routing.maxCostPerCallUsd, 0.02);
-    assert.equal(agentConfig.routing.maxMonthlyCostUsd, 5);
+    assert.equal(agentConfig.routing.maxTokensPerCall, 200);
+    assert.equal(agentConfig.routing.maxMonthlyTokens, 500);
 
     const providerConfig = buildProviderConfig(agentConfig, 'gemini_free');
     assert.equal(providerConfig.provider, 'gemini_free');

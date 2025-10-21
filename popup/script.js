@@ -1,4 +1,5 @@
 import createLogger, { loadLoggingConfig, setGlobalContext } from '../utils/logger.js';
+import { DEFAULT_TOKEN_LIMIT } from '../utils/cost.js';
 import { availableLocales, setLocale, t } from '../utils/i18n.js';
 import { createRecorder } from '../utils/audio.js';
 import {
@@ -73,9 +74,21 @@ const mockHandlers = {
   'comet:setApiKey': () => Promise.resolve(null),
   'comet:setProvider': () => Promise.resolve({ provider: DEFAULT_PROVIDER_ID }),
   'comet:getUsage': () =>
-    Promise.resolve({ totalCostUsd: 0.0123, limitUsd: 5, lastReset: Date.now() - 3600 * 1000 }),
+    Promise.resolve({
+      totalPromptTokens: 1200,
+      totalCompletionTokens: 800,
+      totalTokens: 2000,
+      limitTokens: DEFAULT_TOKEN_LIMIT,
+      lastReset: Date.now() - 3600 * 1000,
+    }),
   'comet:resetUsage': () =>
-    Promise.resolve({ totalCostUsd: 0, limitUsd: 5, lastReset: Date.now() }),
+    Promise.resolve({
+      totalPromptTokens: 0,
+      totalCompletionTokens: 0,
+      totalTokens: 0,
+      limitTokens: DEFAULT_TOKEN_LIMIT,
+      lastReset: Date.now(),
+    }),
   'comet:summarise': () =>
     Promise.resolve({
       summaries: [
@@ -84,15 +97,36 @@ const mockHandlers = {
           summary: 'This is a mock summary returned without contacting the provider.',
         },
       ],
-      usage: { totalCostUsd: 0.0123, limitUsd: 5, lastReset: Date.now() - 3600 * 1000 },
+      usage: {
+        totalPromptTokens: 1200,
+        totalCompletionTokens: 800,
+        totalTokens: 2000,
+        limitTokens: DEFAULT_TOKEN_LIMIT,
+        lastReset: Date.now() - 3600 * 1000,
+      },
     }),
   'comet:synthesise': () =>
     Promise.resolve({
       audio: { base64: '', mimeType: 'audio/mpeg' },
-      usage: { totalCostUsd: 0.015, limitUsd: 5, lastReset: Date.now() - 3600 * 1000 },
+      usage: {
+        totalPromptTokens: 1500,
+        totalCompletionTokens: 800,
+        totalTokens: 2300,
+        limitTokens: DEFAULT_TOKEN_LIMIT,
+        lastReset: Date.now() - 3600 * 1000,
+      },
     }),
   'comet:transcribe': () =>
-    Promise.resolve({ text: 'mock summary please', usage: { totalCostUsd: 0.02, limitUsd: 5, lastReset: Date.now() } }),
+    Promise.resolve({
+      text: 'mock summary please',
+      usage: {
+        totalPromptTokens: 1200,
+        totalCompletionTokens: 900,
+        totalTokens: 2100,
+        limitTokens: DEFAULT_TOKEN_LIMIT,
+        lastReset: Date.now(),
+      },
+    }),
 };
 
 const DEFAULT_VOICE = 'alloy';
@@ -1356,11 +1390,19 @@ async function fetchSegments(tabId) {
   return response.result;
 }
 
+function formatTokens(value, fallback = '0') {
+  if (typeof value !== 'number' || Number.isNaN(value)) {
+    return fallback;
+  }
+  return value.toLocaleString?.() ?? String(value);
+}
+
 /**
  * Renders usage statistics in the popup.
  *
- * @param {{limitUsd?: number, totalCostUsd?: number, lastReset?: number}} usage -
- *   Usage payload returned by the background worker.
+ * @param {{limitTokens?: number, totalTokens?: number, totalPromptTokens?: number,
+ *   totalCompletionTokens?: number, lastReset?: number}} usage - Usage payload
+ *   returned by the background worker.
  */
 function updateUsage(usage) {
   if (!usage) {
@@ -1369,13 +1411,26 @@ function updateUsage(usage) {
   elements.usage.innerHTML = '';
   const limitRow = elements.usageRowTemplate.content.cloneNode(true);
   limitRow.querySelector('dt').textContent = 'Limit';
-  limitRow.querySelector('dd').textContent = `$${usage.limitUsd?.toFixed?.(2) || '5.00'}`;
+  const resolvedLimit = typeof usage.limitTokens === 'number'
+    ? usage.limitTokens
+    : DEFAULT_TOKEN_LIMIT;
+  limitRow.querySelector('dd').textContent = `${formatTokens(resolvedLimit)} tokens`;
   elements.usage.appendChild(limitRow);
 
   const totalRow = elements.usageRowTemplate.content.cloneNode(true);
-  totalRow.querySelector('dt').textContent = 'Total';
-  totalRow.querySelector('dd').textContent = `$${usage.totalCostUsd?.toFixed?.(4) || '0.0000'}`;
+  totalRow.querySelector('dt').textContent = 'Total tokens';
+  totalRow.querySelector('dd').textContent = formatTokens(usage.totalTokens || 0);
   elements.usage.appendChild(totalRow);
+
+  const promptRow = elements.usageRowTemplate.content.cloneNode(true);
+  promptRow.querySelector('dt').textContent = 'Prompt tokens';
+  promptRow.querySelector('dd').textContent = formatTokens(usage.totalPromptTokens || 0);
+  elements.usage.appendChild(promptRow);
+
+  const completionRow = elements.usageRowTemplate.content.cloneNode(true);
+  completionRow.querySelector('dt').textContent = 'Completion tokens';
+  completionRow.querySelector('dd').textContent = formatTokens(usage.totalCompletionTokens || 0);
+  elements.usage.appendChild(completionRow);
 
   const lastReset = elements.usageRowTemplate.content.cloneNode(true);
   lastReset.querySelector('dt').textContent = 'Last reset';
