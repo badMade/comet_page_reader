@@ -453,12 +453,12 @@ async function emitLog(level, loggerName, loggerContext, message, meta) {
 /**
  * Merge additional context into the shared global logging scope.
  *
- * Args:
- *   context (Object): Key-value pairs to expose with every log entry. Values
- *     are sanitised to remove sensitive keys and to serialise nested errors.
+ * @param {Object} context Key-value pairs to expose with every log entry. Values
+ *   are sanitised to remove sensitive keys and to serialise nested errors.
  *
- * Returns:
- *   void
+ * @returns {void}
+ *
+ *
  */
 export function setGlobalContext(context) {
   if (!context || typeof context !== 'object') {
