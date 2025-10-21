@@ -164,8 +164,10 @@ function getAdapterKey(providerId) {
  * Build a cache identifier for summarisation results.
  *
  * Args:
- *   params: Object containing the canonical URL, segment identifier, target
- *     language, and provider ID associated with the generated summary.
+ *   url: The canonical URL of the page.
+ *   segmentId: The identifier for the text segment.
+ *   language: The target language for the summary. Defaults to 'en'.
+ *   providerId: The provider ID used for summarisation. Defaults to `DEFAULT_PROVIDER_ID`.
  *
  * Returns:
  *   A JSON string used as the key for both the in-memory and session caches.
