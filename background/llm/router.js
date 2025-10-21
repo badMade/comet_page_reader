@@ -102,12 +102,25 @@ function getFetch(fetchImpl) {
   throw new Error('Fetch API is not available in this environment.');
 }
 
-function createTimeoutPromise(ms, errorMessage) {
-  return new Promise((_, reject) => {
+function createTimeoutPromise(ms, errorMessage, timer = setTimeout, clearTimer = clearTimeout) {
+  let handle;
+  const promise = new Promise((_, reject) => {
     const error = new Error(errorMessage || `Operation timed out after ${ms}ms`);
     error.code = 'ETIMEOUT';
-    setTimeout(() => reject(error), ms);
+    handle = timer(() => reject(error), ms);
+    if (handle && typeof handle.unref === 'function') {
+      handle.unref();
+    }
   });
+  const cancel = () => {
+    if (handle !== undefined) {
+      if (typeof clearTimer === 'function') {
+        clearTimer(handle);
+      }
+      handle = undefined;
+    }
+  };
+  return { promise, cancel };
 }
 
 function normaliseNumber(value, fallback) {
@@ -662,10 +675,13 @@ export class LLMRouter {
    */
   async executeWithTimeout(providerId, operation, timeoutMs) {
     if (timeoutMs > 0) {
-      return Promise.race([
-        operation(),
-        createTimeoutPromise(timeoutMs, `Provider ${providerId} timed out`),
-      ]);
+      const { promise: timeoutPromise, cancel } = createTimeoutPromise(timeoutMs, `Provider ${providerId} timed out`);
+      const operationPromise = Promise.resolve().then(operation);
+      try {
+        return await Promise.race([operationPromise, timeoutPromise]);
+      } finally {
+        cancel();
+      }
     }
     return operation();
   }

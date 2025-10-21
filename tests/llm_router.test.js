@@ -223,3 +223,51 @@ test('generate normalises recorded model names for usage tracking', async () => 
   assert.equal(costTracker.recorded.length, 1);
   assert.equal(costTracker.recorded[0].model, 'gemini-1.5-flash-latest');
 });
+
+
+test('executeWithTimeout clears timer handles after successful provider response', async () => {
+  const router = createRouter({
+    readApiKeys: { gemini_free: 'free-key' },
+  });
+
+  const originalSetTimeout = globalThis.setTimeout;
+  const originalClearTimeout = globalThis.clearTimeout;
+
+  let scheduledDelay = null;
+  let handleUnrefCalled = false;
+  let handleCleared = false;
+
+  const fakeHandle = {
+    unref() {
+      handleUnrefCalled = true;
+      return this;
+    },
+  };
+
+  const fakeSetTimeout = (fn, delay) => {
+    scheduledDelay = delay;
+    fakeHandle.callback = fn;
+    return fakeHandle;
+  };
+
+  const fakeClearTimeout = handle => {
+    if (handle === fakeHandle) {
+      handleCleared = true;
+    }
+  };
+
+  globalThis.setTimeout = fakeSetTimeout;
+  globalThis.clearTimeout = fakeClearTimeout;
+
+  try {
+    const result = await router.generate({ text: 'Hello world', language: 'en' });
+    assert.equal(result.provider, 'gemini_free');
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+    globalThis.clearTimeout = originalClearTimeout;
+  }
+
+  assert.equal(scheduledDelay, router.getRoutingConfig().timeoutMs);
+  assert.equal(handleUnrefCalled, true);
+  assert.equal(handleCleared, true);
+});
