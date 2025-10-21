@@ -476,8 +476,8 @@ export function setGlobalContext(context) {
  * This reset is useful in long-lived browser sessions where contextual data
  * should not leak between users or permission changes.
  *
- * Returns:
- *   void
+ * @returns {void}
+ *
  */
 export function clearGlobalContext() {
   globalContext = {};
