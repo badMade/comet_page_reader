@@ -41,6 +41,25 @@ describe('chunkTextByTokens', () => {
     }
   });
 
+  it('resets overlap after word-level sentence splits', () => {
+    const text = [
+      'Alpha.',
+      'This sentence is intentionally far too lengthy to fit within the configured limits and therefore requires splitting into multiple smaller portions with a short tail.',
+      'Omega.',
+    ].join(' ');
+    const maxTokens = 12;
+    const chunks = chunkTextByTokens(text, maxTokens, { sentenceOverlap: 1 });
+
+    expect(chunks.length).toBeGreaterThan(2);
+
+    const lastChunk = chunks[chunks.length - 1];
+    const lastWordChunk = chunks[chunks.length - 2];
+
+    expect(lastChunk).toContain('Omega.');
+    expect(lastChunk.startsWith(lastWordChunk)).toBe(true);
+    expect(lastChunk.startsWith('Alpha.')).toBe(false);
+  });
+
   it('splits lengthy words into character-based chunks', () => {
     const longWord = `${'supercalifragilisticexpialidocious'.repeat(5)}.`;
     const maxTokens = 10;
