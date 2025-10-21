@@ -41,10 +41,11 @@ test('synthesiseSpeech leaves short text unchanged', async () => {
 
     assert.equal(captured.length, 1);
     assert.equal(captured[0], 'hello world');
-    assert.equal(response.truncated, false);
-    assert.equal(response.originalTokenCount, 2);
-    assert.equal(response.deliveredTokenCount, 2);
-    assert.equal(response.omittedTokenCount, 0);
+    assert.equal(response.adapter.type, 'cloud');
+    assert.equal(response.audio.truncated, false);
+    assert.equal(response.audio.originalTokenCount, 2);
+    assert.equal(response.audio.deliveredTokenCount, 2);
+    assert.equal(response.audio.omittedTokenCount, 0);
   } finally {
     if (module) {
       module.__clearTestOverrides();
@@ -88,10 +89,11 @@ test('synthesiseSpeech truncates payloads that exceed the provider limit', async
     const truncatedTokens = countWords(truncatedText);
 
     assert.ok(truncatedTokens <= 1950, `expected <= 1950 tokens, received ${truncatedTokens}`);
-    assert.equal(response.truncated, true);
-    assert.equal(response.originalTokenCount, 2400);
-    assert.equal(response.deliveredTokenCount, truncatedTokens);
-    assert.equal(response.omittedTokenCount, 2400 - truncatedTokens);
+    assert.equal(response.adapter.type, 'cloud');
+    assert.equal(response.audio.truncated, true);
+    assert.equal(response.audio.originalTokenCount, 2400);
+    assert.equal(response.audio.deliveredTokenCount, truncatedTokens);
+    assert.equal(response.audio.omittedTokenCount, 2400 - truncatedTokens);
   } finally {
     if (module) {
       module.__clearTestOverrides();
@@ -133,10 +135,11 @@ test('synthesiseSpeech truncates CJK text using character-aware tokenisation', a
     assert.equal(captured.length, 1);
     const truncatedText = captured[0];
     assert.ok(truncatedText.length < longCjk.length);
-    assert.equal(response.truncated, true);
-    assert.ok(response.deliveredTokenCount <= 1950);
-    assert.equal(response.originalTokenCount, longCjk.length);
-    assert.equal(response.omittedTokenCount, response.originalTokenCount - response.deliveredTokenCount);
+    assert.equal(response.adapter.type, 'cloud');
+    assert.equal(response.audio.truncated, true);
+    assert.ok(response.audio.deliveredTokenCount <= 1950);
+    assert.equal(response.audio.originalTokenCount, longCjk.length);
+    assert.equal(response.audio.omittedTokenCount, response.audio.originalTokenCount - response.audio.deliveredTokenCount);
   } finally {
     if (module) {
       module.__clearTestOverrides();

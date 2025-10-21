@@ -52,10 +52,12 @@ function createStorageArea(store) {
 
 export function installChromeStub(persistent = {}, session = {}) {
   const persistentStore = { ...persistent };
+  const localStore = {};
   const sessionStore = { ...session };
 
   const storage = {
     sync: createStorageArea(persistentStore),
+    local: createStorageArea(localStore),
     session: createStorageArea(sessionStore),
   };
 
@@ -74,6 +76,7 @@ export function installChromeStub(persistent = {}, session = {}) {
   return {
     chrome: chromeStub,
     persistentStore,
+    localStore,
     sessionStore,
     uninstall() {
       delete globalThis.chrome;
