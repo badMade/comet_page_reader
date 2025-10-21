@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
+import { DEFAULT_TOKEN_LIMIT } from '../utils/cost.js';
 import { t } from '../utils/i18n.js';
 
 const NativeURL = URL;
@@ -89,7 +90,7 @@ test('popup initialises immediately when DOMContentLoaded already fired', async 
           cumulativeTotalTokens: 5400,
           cumulativePromptTokens: 3600,
           cumulativeCompletionTokens: 1800,
-          limitTokens: 15000,
+          limitTokens: DEFAULT_TOKEN_LIMIT,
           lastReset,
           tokens: {
             total: 1800,

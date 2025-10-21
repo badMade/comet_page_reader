@@ -19,7 +19,7 @@ Comet Page Reader is a cross-browser WebExtensions add-on that summarises web pa
 Comet Page Reader focuses on three responsibilities:
 
 - **Summarise content:** A content script extracts readable text from the current tab, slices it into manageable segments, and forwards them to the service worker.
-- **Control usage:** The service worker maintains an internal cache and token tracker, enforcing a configurable monthly token ceiling (defaults to 15,000 tokens via `DEFAULT_TOKEN_LIMIT` in `utils/cost.js`).
+- **Control usage:** The service worker maintains an internal cache and token tracker, enforcing a configurable monthly token ceiling (defaults to 18,000 tokens via `DEFAULT_TOKEN_LIMIT` in `utils/cost.js`).
 - **Deliver an accessible UI:** The popup provides API key management, localisation controls, push-to-talk capture, and audio playback so users can hear the generated summaries immediately.
 
 ## Installation
@@ -128,8 +128,8 @@ routing:
   disable_paid: false
   timeout_ms: 20000
   retry_limit: 2
-  max_tokens_per_call: 30
-  max_monthly_tokens: 15000
+  max_tokens_per_call: 1200
+  max_monthly_tokens: 18000
 ```
 
 The router enforces both per-call and monthly token caps. Override them with `MAX_TOKENS_PER_CALL` / `MAX_MONTHLY_TOKENS` (or the legacy `MAX_COST_PER_CALL_USD` / `MAX_MONTHLY_COST_USD`, which are converted automatically) or by editing the YAML snippet above. Routing can be dry-run with `DRY_RUN=true`, which logs the selection without issuing network calls.
