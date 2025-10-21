@@ -24,7 +24,6 @@ import { MistralAdapter } from './adapters/mistral.js';
 import { HuggingFaceAdapter } from './adapters/huggingface.js';
 import { OllamaAdapter } from './adapters/ollama.js';
 import { GeminiAdapter } from './adapters/gemini.js';
-import { playAudioFromBase64 } from '../utils/audio.js';
 import { ttsAdapters } from './tts/registry.js';
 import { createLocalTtsAdapter } from './tts/local.js';
 import { LLMRouter } from './llm/router.js';
@@ -1028,14 +1027,11 @@ async function synthesiseSpeech(payload = {}, resolvedSettings = null) {
   });
 
   if (synthesisResult?.base64) {
-    try {
-      await playAudioFromBase64(synthesisResult.base64, synthesisResult.mimeType || 'audio/mpeg');
-      logger.debug('Background audio playback started from base64 payload.');
-    } catch (error) {
-      logger.warn('Background audio playback failed; continuing without interruption.', { error });
-    }
+    logger.debug('Audio payload returned; deferring playback to caller.', {
+      adapterType: adapter.type,
+    });
   } else {
-    logger.debug('No base64 payload returned; skipping background playback.', {
+    logger.debug('No base64 payload returned; skipping playback.', {
       adapterType: adapter.type,
     });
   }
