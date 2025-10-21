@@ -528,15 +528,13 @@ export function getLoggerConfig() {
 /**
  * Load logger configuration from disk or remote assets.
  *
- * Args:
- *   configPath (string): Relative path or URL used to fetch JSON/YAML
- *     settings. Defaults to `logging_config.yaml` in both Node.js and
- *     browser-based environments.
+ * @param {string} [configPath='logging_config.yaml'] Relative path or URL used to fetch JSON/YAML
+ *   settings. Defaults to `logging_config.yaml` in both Node.js and
+ *   browser-based environments.
  *
- * Returns:
- *   Promise<void>: Resolves once configuration is parsed and applied. Errors
- *     are logged to the console and suppressed when the default manifest is
- *     missing.
+ * @returns {Promise<void>} Resolves once configuration is parsed and applied. Errors
+ *   are logged to the console and suppressed when the default manifest is
+ *   missing.
  */
 export async function loadLoggingConfig(configPath = 'logging_config.yaml') {
   try {
@@ -620,15 +618,13 @@ class StructuredLogger {
 /**
  * Create a structured logger instance.
  *
- * Args:
- *   options (Object): Optional settings.
- *   options.name (string): Logical logger name used in emitted records.
- *   options.context (Object): Default metadata merged into every entry. Values
- *     are sanitised to redact sensitive fields prior to emission.
+ * @param {object} [options={}] Optional settings.
+ * @param {string} [options.name='root'] Logical logger name used in emitted records.
+ * @param {object} [options.context={}] Default metadata merged into every entry. Values
+ *   are sanitised to redact sensitive fields prior to emission.
  *
- * Returns:
- *   StructuredLogger: A logger whose methods asynchronously emit entries to
- *     console streams and, when configured, file appenders.
+ * @returns {StructuredLogger} A logger whose methods asynchronously emit entries to
+ *   console streams and, when configured, file appenders.
  */
 export function createLogger(options = {}) {
   const name = typeof options.name === 'string' && options.name.trim() ? options.name.trim() : 'root';
