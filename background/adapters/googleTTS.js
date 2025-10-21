@@ -4,6 +4,11 @@ const GOOGLE_TTS_ENDPOINT = 'https://texttospeech.googleapis.com/v1/text:synthes
 
 const logger = createLogger({ name: 'adapter-google-tts' });
 
+const DEFAULT_LANGUAGE_CODE = 'en-US';
+
+const match = voiceName.match(/^([a-z]{2,3}(?:-[A-Z][a-z]{3})?(?:-[A-Z]{2}|-[0-9]{3})?)(?:-|$)/i);
+}
+
 function ensureFetch() {
   if (typeof globalThis.fetch !== 'function') {
     throw new Error('Fetch API is not available in this environment.');
@@ -59,16 +64,13 @@ function buildRequestPayload(text, voice, languageCode) {
     input: { text },
     audioConfig: { audioEncoding: 'MP3' },
   };
-  const voiceConfig = {};
-  if (languageCode) {
-    voiceConfig.languageCode = languageCode;
-  }
+  const inferredLanguage =
+    languageCode || extractLanguageFromVoiceName(voice) || DEFAULT_LANGUAGE_CODE;
+  const voiceConfig = { languageCode: inferredLanguage };
   if (voice) {
     voiceConfig.name = voice;
   }
-  if (Object.keys(voiceConfig).length > 0) {
-    payload.voice = voiceConfig;
-  }
+  payload.voice = voiceConfig;
   return payload;
 }
 
