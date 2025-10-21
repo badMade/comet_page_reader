@@ -76,6 +76,23 @@ export function estimateTokensFromUsd(amountUsd) {
   return Math.max(0, Math.round(amountUsd * LEGACY_TOKENS_PER_USD));
 }
 
+/**
+ * Provides a conservative token estimate for the supplied text. Mirrors the
+ * logic used by the cost tracker so that other modules can reuse the same
+ * heuristic without needing an instantiated tracker.
+ *
+ * @param {string} text - Input text.
+ * @returns {number} Estimated token count.
+ */
+export function estimateTokensFromText(text) {
+  if (!text) {
+    logger.trace('Estimating tokens for empty text.');
+    return 0;
+  }
+  const words = String(text).trim().split(/\s+/).length;
+  return Math.max(1, Math.round(words * 1.3));
+}
+
 function normaliseRequest(entry = {}) {
   const promptTokens = toInteger(entry.promptTokens, 0);
   const completionTokens = toInteger(entry.completionTokens, 0);
@@ -370,12 +387,7 @@ export class CostTracker {
    * @returns {number} Estimated token count.
    */
   estimateTokensFromText(text) {
-    if (!text) {
-      logger.trace('Estimating tokens for empty text.');
-      return 0;
-    }
-    const words = text.trim().split(/\s+/).length;
-    return Math.max(1, Math.round(words * 1.3));
+    return estimateTokensFromText(text);
   }
 
   /**

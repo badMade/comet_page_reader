@@ -54,7 +54,7 @@ test('synthesiseSpeech leaves short text unchanged', async () => {
   }
 });
 
-test('synthesiseSpeech truncates payloads that exceed the provider limit', async () => {
+test('synthesiseSpeech chunks payloads that exceed the provider limit', async () => {
   const { uninstall, persistentStore } = installChromeStub();
   persistentStore['comet:apiKey:openai_paid'] = 'test-key';
 
@@ -76,7 +76,7 @@ test('synthesiseSpeech truncates payloads that exceed the provider limit', async
     module.__setTestAdapterOverride('openai_paid', stubAdapter);
     await module.ensureInitialised('openai_paid');
 
-    const longText = Array.from({ length: 2400 }, (_, index) => `word${index}`).join(' ');
+    const longText = Array.from({ length: 5000 }, (_, index) => `word${index}`).join(' ');
     const response = await module.__synthesiseForTests({
       text: longText,
       voice: 'alloy',
@@ -84,16 +84,17 @@ test('synthesiseSpeech truncates payloads that exceed the provider limit', async
       provider: 'openai_paid',
     });
 
-    assert.equal(captured.length, 1);
-    const truncatedText = captured[0];
-    const truncatedTokens = countWords(truncatedText);
+    assert.equal(captured.length, response.audio.chunkCount);
+    assert.ok(captured.length >= 2, 'expected long input to be chunked');
+    const totalTokens = countWords(longText);
+    const deliveredTokens = captured.reduce((sum, chunk) => sum + countWords(chunk), 0);
 
-    assert.ok(truncatedTokens <= 1950, `expected <= 1950 tokens, received ${truncatedTokens}`);
+    assert.equal(deliveredTokens, totalTokens);
     assert.equal(response.adapter.type, 'cloud');
-    assert.equal(response.audio.truncated, true);
-    assert.equal(response.audio.originalTokenCount, 2400);
-    assert.equal(response.audio.deliveredTokenCount, truncatedTokens);
-    assert.equal(response.audio.omittedTokenCount, 2400 - truncatedTokens);
+    assert.equal(response.audio.truncated, false);
+    assert.equal(response.audio.originalTokenCount, totalTokens);
+    assert.equal(response.audio.deliveredTokenCount, deliveredTokens);
+    assert.equal(response.audio.omittedTokenCount, 0);
   } finally {
     if (module) {
       module.__clearTestOverrides();
@@ -102,7 +103,7 @@ test('synthesiseSpeech truncates payloads that exceed the provider limit', async
   }
 });
 
-test('synthesiseSpeech truncates CJK text using character-aware tokenisation', async () => {
+test('synthesiseSpeech chunks CJK text using character-aware tokenisation', async () => {
   const { uninstall, persistentStore } = installChromeStub();
   persistentStore['comet:apiKey:openai_paid'] = 'test-key';
 
@@ -124,7 +125,7 @@ test('synthesiseSpeech truncates CJK text using character-aware tokenisation', a
     module.__setTestAdapterOverride('openai_paid', stubAdapter);
     await module.ensureInitialised('openai_paid');
 
-    const longCjk = '你好世界'.repeat(600);
+    const longCjk = '你好世界'.repeat(1200);
     const response = await module.__synthesiseForTests({
       text: longCjk,
       voice: 'alloy',
@@ -132,14 +133,18 @@ test('synthesiseSpeech truncates CJK text using character-aware tokenisation', a
       provider: 'openai_paid',
     });
 
-    assert.equal(captured.length, 1);
-    const truncatedText = captured[0];
-    assert.ok(truncatedText.length < longCjk.length);
+    assert.equal(captured.length, response.audio.chunkCount);
+    assert.ok(captured.length >= 2, 'expected CJK input to be chunked');
+    const deliveredCharacters = captured
+      .map(chunk => chunk.replace(/\s+/g, ''))
+      .join('');
+
+    assert.equal(deliveredCharacters, longCjk);
     assert.equal(response.adapter.type, 'cloud');
-    assert.equal(response.audio.truncated, true);
-    assert.ok(response.audio.deliveredTokenCount <= 1950);
+    assert.equal(response.audio.truncated, false);
     assert.equal(response.audio.originalTokenCount, longCjk.length);
-    assert.equal(response.audio.omittedTokenCount, response.audio.originalTokenCount - response.audio.deliveredTokenCount);
+    assert.equal(response.audio.deliveredTokenCount, longCjk.length);
+    assert.equal(response.audio.omittedTokenCount, 0);
   } finally {
     if (module) {
       module.__clearTestOverrides();
