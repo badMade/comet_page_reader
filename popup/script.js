@@ -776,7 +776,7 @@ function formatTtsProgressStatusMessage(chunkIndex = null, chunkCount = null) {
     Number.isFinite(progress.segmentTotal) &&
     progress.segmentTotal > 0
   ) {
-    const currentSegment = Math.min(progress.segmentTotal, Math.max(0, progress.segmentIndex)) + 1;
+    const currentSegment = Math.min(progress.segmentTotal, Math.max(0, progress.segmentIndex) + 1);
     message = `Segment ${currentSegment}/${progress.segmentTotal}: ${message}`;
   }
 
