@@ -134,6 +134,19 @@ const TTS_PROVIDER_ALIAS_MAP = Object.freeze({
   amazonpolly: Object.freeze({ type: 'cloud', providerId: 'auto' }),
 });
 
+const OPENAI_TTS_CAPABILITY = Object.freeze({
+  model: 'gpt-4o-mini-tts',
+  maxInputTokens: 4096,
+  tokenBuffer: 64,
+  sentenceOverlap: 0,
+});
+
+const TTS_PROVIDER_CAPABILITIES = Object.freeze({
+  openai: OPENAI_TTS_CAPABILITY,
+  openai_paid: OPENAI_TTS_CAPABILITY,
+  openai_trial: OPENAI_TTS_CAPABILITY,
+});
+
 function getAdapterKey(providerId) {
   const normalised = normaliseProviderId(providerId, providerId);
   return PROVIDER_ADAPTER_KEYS[normalised] || normalised;
@@ -229,65 +242,241 @@ function alignSpeechBoundary(text) {
   return trimmed;
 }
 
-function clampSpeechInput(rawText) {
+function resolveTtsProviderCapabilities(providerId) {
+  if (!providerId) {
+    return null;
+  }
+  const normalised = normaliseProviderId(providerId, providerId);
+  const resolved = resolveAlias(normalised);
+  return TTS_PROVIDER_CAPABILITIES[resolved] || null;
+}
+
+function normaliseSentenceOverlap(value) {
+  if (value === 1 || value === '1') {
+    return 1;
+  }
+  return 0;
+}
+
+function segmentSpeechIntoSentences(text) {
+  if (typeof text !== 'string') {
+    return [];
+  }
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return [];
+  }
+
+  if (typeof Intl !== 'undefined' && typeof Intl.Segmenter === 'function') {
+    try {
+      const segmenter = new Intl.Segmenter('en', { granularity: 'sentence' });
+      const segments = [];
+      for (const part of segmenter.segment(trimmed)) {
+        const candidate = part?.segment?.trim();
+        if (candidate) {
+          segments.push(candidate);
+        }
+      }
+      if (segments.length > 0) {
+        return segments;
+      }
+    } catch (error) {
+      logger.debug('Intl.Segmenter failed while splitting sentences; falling back to regex.', { error });
+    }
+  }
+
+  const fallbackPattern = /[^.!?\n]+(?:[.!?]+|\n+|$)/g;
+  const segments = [];
+  let match;
+  while ((match = fallbackPattern.exec(trimmed)) !== null) {
+    const candidate = match[0]?.trim();
+    if (candidate) {
+      segments.push(candidate);
+    }
+  }
+  if (!segments.length && trimmed) {
+    segments.push(trimmed);
+  }
+  return segments;
+}
+
+function createSpeechSegmentFactory() {
+  let nextId = 0;
+  const tokenLookup = new Map();
+  return {
+    create(text) {
+      if (typeof text !== 'string') {
+        return null;
+      }
+      const trimmed = text.trim();
+      if (!trimmed) {
+        return null;
+      }
+      const tokens = tokeniseSpeechText(trimmed).length;
+      const id = nextId;
+      nextId += 1;
+      tokenLookup.set(id, tokens);
+      return { id, text: trimmed, tokens };
+    },
+    getTokenCount(id) {
+      return tokenLookup.get(id) || 0;
+    },
+  };
+}
+
+function splitTextByTokenLimit(text, maxTokens, factory) {
+  const tokens = tokeniseSpeechText(text);
+  if (tokens.length === 0 || maxTokens <= 0) {
+    return [];
+  }
+  const safeLimit = Math.max(1, Math.floor(maxTokens));
+  const segments = [];
+  for (let start = 0; start < tokens.length; start += safeLimit) {
+    const endTokenIndex = Math.min(start + safeLimit, tokens.length) - 1;
+    const startIndex = tokens[start].index;
+    const endIndex = tokens[endTokenIndex].end;
+    const part = text.slice(startIndex, endIndex);
+    const segment = factory.create(part);
+    if (segment) {
+      segments.push(segment);
+    }
+  }
+  return segments;
+}
+
+function resolveSpeechChunkLimit(capability) {
+  const configuredMax = capability && typeof capability.maxInputTokens === 'number'
+    ? capability.maxInputTokens
+    : SPEECH_TOKEN_LIMIT;
+  const buffer = capability && typeof capability.tokenBuffer === 'number'
+    ? Math.max(0, Math.floor(capability.tokenBuffer))
+    : SPEECH_TOKEN_BUFFER;
+  return Math.max(1, Math.floor(configuredMax) - buffer);
+}
+
+function createSpeechChunkPlan(rawText, capability = null) {
   const trimmed = typeof rawText === 'string' ? rawText.trim() : '';
   if (!trimmed) {
     return {
-      text: '',
-      truncated: false,
-      originalTokenCount: 0,
-      deliveredTokenCount: 0,
-      omittedTokenCount: 0,
+      chunks: [
+        { text: '', tokenCount: 0 },
+      ],
+      metrics: {
+        truncated: false,
+        originalTokenCount: 0,
+        deliveredTokenCount: 0,
+        omittedTokenCount: 0,
+      },
     };
   }
 
-  const tokens = tokeniseSpeechText(trimmed);
-  const totalTokens = tokens.length;
-  const safeLimit = Math.max(1, SPEECH_TOKEN_LIMIT - SPEECH_TOKEN_BUFFER);
+  const originalTokens = tokeniseSpeechText(trimmed).length;
+  const limit = resolveSpeechChunkLimit(capability);
+  const overlap = normaliseSentenceOverlap(capability?.sentenceOverlap);
+  const factory = createSpeechSegmentFactory();
+  const sentences = segmentSpeechIntoSentences(trimmed)
+    .map(sentence => factory.create(sentence))
+    .filter(Boolean);
+  const segments = sentences.length > 0
+    ? sentences
+    : [factory.create(trimmed)].filter(Boolean);
 
-  if (totalTokens <= safeLimit) {
-    return {
-      text: trimmed,
-      truncated: false,
-      originalTokenCount: totalTokens,
-      deliveredTokenCount: totalTokens,
-      omittedTokenCount: 0,
-    };
+  const expandedSegments = [];
+  for (const segment of segments) {
+    if (segment.tokens <= limit) {
+      expandedSegments.push(segment);
+      continue;
+    }
+    const splitSegments = splitTextByTokenLimit(segment.text, limit, factory);
+    if (splitSegments.length === 0) {
+      expandedSegments.push(segment);
+      continue;
+    }
+    expandedSegments.push(...splitSegments);
   }
 
-  const allowedIndex = Math.min(tokens.length - 1, safeLimit - 1);
-  const baseEnd = tokens[allowedIndex].end;
-  const baseCandidate = trimmed.slice(0, baseEnd);
-  let candidate = alignSpeechBoundary(baseCandidate) || baseCandidate.trimEnd();
+  const chunks = [];
+  const seenSegmentIds = new Set();
+  let index = 0;
+  let truncated = false;
 
-  if (!candidate) {
-    const minimalEnd = tokens[0]?.end || Math.min(trimmed.length, SPEECH_MIN_CHARS);
-    candidate = trimmed.slice(0, minimalEnd).trimEnd();
+  while (index < expandedSegments.length) {
+    let tokenCount = 0;
+    let endIndex = index;
+    const parts = [];
+
+    while (endIndex < expandedSegments.length) {
+      const candidate = expandedSegments[endIndex];
+      if (!candidate) {
+        endIndex += 1;
+        continue;
+      }
+      const projected = tokenCount + candidate.tokens;
+      if (tokenCount > 0 && projected > limit) {
+        break;
+      }
+      if (candidate.tokens > limit && tokenCount === 0) {
+        truncated = true;
+        parts.push(candidate.text);
+        tokenCount += candidate.tokens;
+        endIndex += 1;
+        break;
+      }
+      parts.push(candidate.text);
+      tokenCount = projected;
+      endIndex += 1;
+      if (tokenCount >= limit) {
+        break;
+      }
+    }
+
+    if (!parts.length) {
+      truncated = true;
+      break;
+    }
+
+    const chunkText = parts.join(' ').trim();
+    const chunkTokenCount = tokeniseSpeechText(chunkText).length;
+    chunks.push({ text: chunkText, tokenCount: chunkTokenCount });
+
+    for (let pointer = index; pointer < endIndex; pointer += 1) {
+      const segment = expandedSegments[pointer];
+      if (segment) {
+        seenSegmentIds.add(segment.id);
+      }
+    }
+
+    if (endIndex <= index) {
+      index += 1;
+    } else if (overlap > 0) {
+      index = Math.max(endIndex - overlap, index + 1);
+    } else {
+      index = endIndex;
+    }
   }
 
-  let candidateTokens = tokeniseSpeechText(candidate);
-  if (candidateTokens.length > safeLimit) {
-    const fallbackIndex = Math.min(candidateTokens.length - 1, safeLimit - 1);
-    const fallbackEnd = candidateTokens[fallbackIndex].end;
-    candidate = candidate.slice(0, fallbackEnd).trimEnd();
-    candidateTokens = tokeniseSpeechText(candidate);
-  }
-
-  if (!candidate) {
-    const fallbackLength = Math.min(trimmed.length, Math.max(SPEECH_MIN_CHARS, baseEnd));
-    candidate = trimmed.slice(0, fallbackLength).trimEnd();
-    candidateTokens = tokeniseSpeechText(candidate);
-  }
-
-  const deliveredTokenCount = candidateTokens.length;
-  const omittedTokenCount = Math.max(0, totalTokens - deliveredTokenCount);
+  const deliveredTokenCount = chunks.reduce((sum, chunk) => sum + chunk.tokenCount, 0);
+  const uniqueTokenCount = Array.from(seenSegmentIds)
+    .reduce((sum, id) => sum + factory.getTokenCount(id), 0);
+  const omittedTokenCount = Math.max(0, originalTokens - uniqueTokenCount);
 
   return {
-    text: candidate,
-    truncated: true,
-    originalTokenCount: totalTokens,
-    deliveredTokenCount,
-    omittedTokenCount,
+    chunks: chunks.length > 0 ? chunks : [{ text: trimmed, tokenCount: originalTokens }],
+    metrics: {
+      truncated: truncated || uniqueTokenCount < originalTokens,
+      originalTokenCount: originalTokens,
+      deliveredTokenCount,
+      omittedTokenCount,
+    },
+  };
+}
+
+function createLocalSpeechPlan(rawText) {
+  const metrics = createSpeechMetrics(rawText);
+  const chunk = { text: metrics.text, tokenCount: metrics.deliveredTokenCount };
+  return {
+    chunks: [{ ...chunk }],
+    metrics,
   };
 }
 
@@ -409,19 +598,34 @@ function createCloudTtsAdapter(providerKey) {
   return {
     id: resolvedKey,
     type: 'cloud',
-    async synthesise({ text, voice, languageCode }) {
+    async synthesise({
+      text,
+      voice,
+      languageCode,
+      chunkIndex = 0,
+      chunkCount = 1,
+      maxInputTokens,
+      model: modelOverride,
+    }) {
       const targetProviderRaw = resolvedKey === 'auto' ? await getActiveProviderId() : resolvedKey;
       const normalisedProvider = normaliseProviderId(targetProviderRaw, targetProviderRaw);
       const resolvedProvider = resolveAlias(normalisedProvider);
+      const capabilities = resolveTtsProviderCapabilities(resolvedProvider);
       adapterLoggerContext.debug('Dispatching cloud TTS request.', {
         provider: resolvedProvider,
         hasVoice: Boolean(voice),
         hasLanguage: Boolean(languageCode),
         textLength: typeof text === 'string' ? text.length : 0,
+        chunkIndex,
+        chunkCount,
       });
       const adapter = await ensureAdapter(resolvedProvider);
       const costMetadata = getCostMetadata(adapter);
       const synthMeta = costMetadata.synthesise || {};
+      const requestedModel = modelOverride || synthMeta.model || capabilities?.model || null;
+      const tokenLimit = typeof maxInputTokens === 'number' && Number.isFinite(maxInputTokens)
+        ? maxInputTokens
+        : capabilities?.maxInputTokens;
 
       const { apiKey, providerId } = await resolveApiKey(resolvedProvider);
       ensureKeyAvailable(apiKey, providerId);
@@ -432,8 +636,11 @@ function createCloudTtsAdapter(providerKey) {
           text,
           voice: voice, // Let the underlying adapter handle defaults or pass a provider-aware default
           format: 'mp3',
-          model: synthMeta.model,
+          model: requestedModel || undefined,
           languageCode,
+          chunkIndex,
+          chunkCount,
+          maxInputTokens: tokenLimit,
         });
         const base64 = typeof response?.base64 === 'string'
           ? response.base64
@@ -444,12 +651,14 @@ function createCloudTtsAdapter(providerKey) {
         adapterLoggerContext.info('Cloud TTS request completed.', {
           provider: providerId,
           mimeType,
+          chunkIndex,
+          chunkCount,
         });
         return {
           base64,
           mimeType,
           providerId,
-          model: synthMeta.model || null,
+          model: requestedModel || synthMeta.model || null,
           usageLabel: synthMeta.label || null,
         };
       } catch (error) {
@@ -934,6 +1143,62 @@ function toBase64(arrayBuffer) {
   return btoa(binary);
 }
 
+function base64ToUint8Array(base64) {
+  if (typeof base64 !== 'string' || !base64) {
+    return new Uint8Array(0);
+  }
+  if (typeof atob === 'function') {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+    return bytes;
+  }
+  if (typeof Buffer !== 'undefined') {
+    return new Uint8Array(Buffer.from(base64, 'base64'));
+  }
+  throw new Error('Base64 conversion is not supported in this environment.');
+}
+
+function concatenateUint8Arrays(chunks) {
+  if (!Array.isArray(chunks) || chunks.length === 0) {
+    return null;
+  }
+  const filtered = chunks.filter(chunk => chunk instanceof Uint8Array && chunk.length > 0);
+  if (filtered.length === 0) {
+    return null;
+  }
+  const totalLength = filtered.reduce((sum, chunk) => sum + chunk.length, 0);
+  const merged = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const chunk of filtered) {
+    merged.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return merged;
+}
+
+function emitTtsProgressEvent(payload) {
+  if (!payload || typeof payload !== 'object') {
+    return;
+  }
+  try {
+    const runtimeNamespace = runtime?.runtime;
+    if (!runtimeNamespace || typeof runtimeNamespace.sendMessage !== 'function') {
+      return;
+    }
+    runtimeNamespace.sendMessage({ type: 'comet:tts:progress', payload }, () => {
+      const lastError = runtimeNamespace.lastError;
+      if (lastError && lastError.message) {
+        logger.trace('TTS progress message reported runtime warning.', { message: lastError.message });
+      }
+    });
+  } catch (error) {
+    logger.trace('Failed to emit TTS progress event.', { error });
+  }
+}
+
 function getCostMetadata(adapter) {
   if (!adapter || typeof adapter.getCostMetadata !== 'function') {
     return {};
@@ -1085,18 +1350,29 @@ async function synthesiseSpeech(payload = {}, resolvedSettings = null) {
   const adapter = ensureTtsAdapterRegistration(settings.providerId);
   const effectiveVoice = settings.voice || (settings.type === 'cloud' ? 'alloy' : null);
   const languageCode = settings.languageCode || null;
-  const metrics = settings.type === 'cloud' ? clampSpeechInput(text) : createSpeechMetrics(text);
   let synthesiseMetadata = null;
   let synthesiseProviderId = null;
-  let estimatedTokensForLimit = Number.isFinite(metrics.deliveredTokenCount)
-    ? Math.max(0, metrics.deliveredTokenCount)
-    : 0;
+  let providerCapabilities = null;
+  let plan = null;
+  let estimatedTokensForLimit = 0;
 
   if (adapter.type === 'cloud') {
     synthesiseProviderId = await getActiveProviderId(settings.providerId);
+    providerCapabilities = resolveTtsProviderCapabilities(synthesiseProviderId);
+    plan = createSpeechChunkPlan(text, providerCapabilities);
     const providerAdapter = await ensureAdapter(synthesiseProviderId);
     const costMetadata = getCostMetadata(providerAdapter) || {};
     synthesiseMetadata = costMetadata.synthesise || null;
+  } else {
+    plan = createLocalSpeechPlan(text);
+  }
+
+  const metrics = plan?.metrics || createSpeechMetrics(text);
+
+  if (adapter.type === 'cloud') {
+    estimatedTokensForLimit = Number.isFinite(metrics.deliveredTokenCount)
+      ? Math.max(0, metrics.deliveredTokenCount)
+      : 0;
     const fallbackEstimate = resolveFlatTokenEstimate(
       synthesiseMetadata,
       metrics.deliveredTokenCount,
@@ -1113,6 +1389,9 @@ async function synthesiseSpeech(payload = {}, resolvedSettings = null) {
     }
   }
 
+  const chunks = Array.isArray(plan?.chunks) ? plan.chunks : [];
+  const chunkCount = chunks.length;
+
   logger.info('Speech synthesis request received.', {
     provider: settings.providerId,
     adapterType: adapter.type,
@@ -1120,6 +1399,7 @@ async function synthesiseSpeech(payload = {}, resolvedSettings = null) {
     voice: effectiveVoice,
     language: languageCode,
     truncated: metrics.truncated,
+    chunkCount,
   });
 
   if (adapter.type === 'cloud' && metrics.truncated) {
@@ -1130,11 +1410,66 @@ async function synthesiseSpeech(payload = {}, resolvedSettings = null) {
     });
   }
 
-  const synthesisResult = await adapter.synthesise({
-    text: metrics.text,
-    voice: effectiveVoice || undefined,
-    languageCode,
-  });
+  const aggregatedChunks = [];
+  let aggregatedMimeType = null;
+  let responseProviderId = null;
+  let usageLabelFromResponse = null;
+  let lastResponse = null;
+
+  for (let index = 0; index < chunkCount; index += 1) {
+    const chunk = chunks[index] || {};
+    const chunkText = typeof chunk.text === 'string' ? chunk.text : '';
+    const response = await adapter.synthesise({
+      text: chunkText,
+      voice: effectiveVoice || undefined,
+      languageCode,
+      chunkIndex: index,
+      chunkCount,
+      maxInputTokens: providerCapabilities?.maxInputTokens,
+      model: synthesiseMetadata?.model || providerCapabilities?.model || undefined,
+    });
+    lastResponse = response;
+
+    const base64Payload = typeof response?.base64 === 'string' ? response.base64 : null;
+    if (base64Payload) {
+      aggregatedChunks.push(base64ToUint8Array(base64Payload));
+    } else if (response?.arrayBuffer instanceof ArrayBuffer) {
+      aggregatedChunks.push(new Uint8Array(response.arrayBuffer));
+    }
+
+    if (!aggregatedMimeType && response?.mimeType) {
+      aggregatedMimeType = response.mimeType;
+    }
+    if (!responseProviderId && response?.providerId) {
+      responseProviderId = response.providerId;
+    }
+    if (!usageLabelFromResponse && response?.usageLabel) {
+      usageLabelFromResponse = response.usageLabel;
+    }
+
+    const chunkTokens = Number.isFinite(chunk.tokenCount)
+      ? chunk.tokenCount
+      : tokeniseSpeechText(chunkText).length;
+    emitTtsProgressEvent({
+      provider: synthesiseProviderId || settings.providerId || 'auto',
+      chunkIndex: index,
+      chunkCount,
+      estimatedTokens: chunkTokens,
+    });
+  }
+
+  const mergedAudio = concatenateUint8Arrays(aggregatedChunks);
+  const aggregatedBase64 = mergedAudio
+    ? toBase64(mergedAudio.buffer)
+    : (lastResponse?.base64 || null);
+
+  const synthesisResult = {
+    base64: aggregatedBase64,
+    mimeType: aggregatedMimeType || lastResponse?.mimeType || 'audio/mpeg',
+    providerId: responseProviderId
+      || (adapter.type === 'local' ? 'local' : synthesiseProviderId || settings.providerId || 'auto'),
+    usageLabel: usageLabelFromResponse || synthesiseMetadata?.label || null,
+  };
 
   if (synthesisResult?.base64) {
     try {
@@ -1176,6 +1511,7 @@ async function synthesiseSpeech(payload = {}, resolvedSettings = null) {
           truncated: metrics.truncated,
           deliveredTokenCount: metrics.deliveredTokenCount,
           omittedTokenCount: metrics.omittedTokenCount,
+          chunkCount,
         },
       });
       await persistUsage();
@@ -1190,6 +1526,7 @@ async function synthesiseSpeech(payload = {}, resolvedSettings = null) {
       originalTokenCount: metrics.originalTokenCount,
       deliveredTokenCount: metrics.deliveredTokenCount,
       omittedTokenCount: metrics.omittedTokenCount,
+      chunkCount,
     },
     adapter: {
       id: resolvedProvider,

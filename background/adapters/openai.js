@@ -1,7 +1,9 @@
 import createLogger from '../../utils/logger.js';
+import { estimateTokensFromText } from '../../utils/cost.js';
 
 const DEFAULT_TRANSCRIPTION_MODEL = 'gpt-4o-mini-transcribe';
 const DEFAULT_TTS_MODEL = 'gpt-4o-mini-tts';
+const DEFAULT_TTS_MAX_INPUT_TOKENS = 4096;
 const DEFAULT_TTS_VOICES = Object.freeze([
   'alloy',
   'verse',
@@ -293,14 +295,41 @@ export class OpenAIAdapter {
    * }} params - Speech synthesis parameters.
    * @returns {Promise<{arrayBuffer: ArrayBuffer, mimeType: string}>} Synthesised audio payload.
    */
-  async synthesise({ apiKey, text, voice = 'alloy', format = 'mp3', model = DEFAULT_TTS_MODEL }) {
+  async synthesise({
+    apiKey,
+    text,
+    voice = 'alloy',
+    format = 'mp3',
+    model = DEFAULT_TTS_MODEL,
+    chunkIndex = 0,
+    chunkCount = 1,
+    maxInputTokens,
+  }) {
     this.ensureKey(apiKey);
+    const estimatedTokens = estimateTokensFromText(text);
+    const configuredMaxTokens = typeof this.config?.maxInputTokens === 'number' && Number.isFinite(this.config.maxInputTokens)
+      ? this.config.maxInputTokens
+      : null;
+    const tokenCap = typeof maxInputTokens === 'number' && Number.isFinite(maxInputTokens)
+      ? maxInputTokens
+      : configuredMaxTokens ?? DEFAULT_TTS_MAX_INPUT_TOKENS;
     const operationContext = {
       model,
       voice,
       textLength: typeof text === 'string' ? text.length : 0,
       format,
+      chunkIndex,
+      chunkCount,
+      estimatedTokens,
+      maxInputTokens: tokenCap,
     };
+
+    if (tokenCap > 0 && estimatedTokens > tokenCap) {
+      this.logger.warn('Speech synthesis chunk exceeds model token limit.', operationContext);
+      const error = new Error(`Speech synthesis chunk exceeds ${model} token limit.`);
+      error.code = 'chunk-too-large';
+      throw error;
+    }
     this.logger.debug('Speech synthesis request started.', operationContext);
 
     try {
@@ -324,7 +353,7 @@ export class OpenAIAdapter {
 
       const mimeType = response.headers.get('content-type') || `audio/${format}`;
       const arrayBuffer = await response.arrayBuffer();
-      this.logger.info('Speech synthesis request completed.', { model, mimeType });
+      this.logger.info('Speech synthesis request completed.', { model, mimeType, chunkIndex, chunkCount });
       return {
         arrayBuffer,
         mimeType,
