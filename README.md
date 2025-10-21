@@ -165,6 +165,7 @@ The ES module structure enables lightweight unit tests. For example, you can imp
 - **Firefox session storage:** Firefox currently lacks `chrome.storage.session`. The service worker falls back to an in-memory cache which resets per session.
 - **No response from content script:** Ensure the site allows content scripts (e.g. some browser pages forbid injections). Refresh the tab and retry.
 - **Provider limitations:** Some providers only implement a subset of features. For example, Gemini currently offers summarisation only; choose OpenAI or another audio-capable provider for speech synthesis or transcription.
+- **Speech truncated:** Providers such as OpenAI cap text-to-speech inputs (roughly 2,000 tokens). The popup will play a truncated narration when the source exceeds the limit; generate shorter summaries or switch to segment playback to hear the full article.
 
 ## Contributing
 

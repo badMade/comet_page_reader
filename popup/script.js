@@ -1403,12 +1403,19 @@ async function readAloud() {
     provider: state.provider,
   });
   updateUsage(audioResult.usage);
+  if (audioResult.audio?.truncated) {
+    logger.warn('Summary speech truncated to satisfy provider limits.', {
+      originalTokens: audioResult.audio.originalTokenCount,
+      deliveredTokens: audioResult.audio.deliveredTokenCount,
+      omittedTokens: audioResult.audio.omittedTokenCount,
+    });
+  }
   const controller = createPlaybackController();
   if (state.playbackController) {
     state.playbackController.cancel();
   }
   state.playbackController = controller;
-  setStatus('Playing summary.');
+  setStatus(audioResult.audio?.truncated ? 'Playing truncated summary.' : 'Playing summary.');
   try {
     const playbackResult = await playAudioPayload(audioResult.audio, controller);
     if (playbackResult === 'skipped') {
@@ -1480,7 +1487,19 @@ async function readFullPage() {
       if (controller.cancelled) {
         break;
       }
-      setStatus(`Playing segment ${index + 1} of ${total}.`);
+      if (response.audio?.truncated) {
+        logger.warn('Segment speech truncated to satisfy provider limits.', {
+          segmentIndex: index,
+          originalTokens: response.audio.originalTokenCount,
+          deliveredTokens: response.audio.deliveredTokenCount,
+          omittedTokens: response.audio.omittedTokenCount,
+        });
+      }
+      setStatus(
+        response.audio?.truncated
+          ? `Playing truncated segment ${index + 1} of ${total}.`
+          : `Playing segment ${index + 1} of ${total}.`,
+      );
       const outcome = await playAudioPayload(response.audio, controller);
       if (outcome === 'skipped') {
         setStatus(`Segment ${index + 1} is silent. Skipping.`);
