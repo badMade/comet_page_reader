@@ -6,15 +6,7 @@ const logger = createLogger({ name: 'adapter-google-tts' });
 
 const DEFAULT_LANGUAGE_CODE = 'en-US';
 
-function extractLanguageFromVoiceName(voiceName) {
-  if (typeof voiceName !== 'string') {
-    return null;
-  }
-  const match = voiceName.match(/^([a-z]{2,}-[A-Z]{2})(?:-|$)/i);
-  if (!match) {
-    return null;
-  }
-  return match[1];
+const match = voiceName.match(/^([a-z]{2,3}(?:-[A-Z][a-z]{3})?(?:-[A-Z]{2}|-[0-9]{3})?)(?:-|$)/i);
 }
 
 function ensureFetch() {
