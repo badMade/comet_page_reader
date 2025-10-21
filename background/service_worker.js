@@ -96,6 +96,13 @@ const PROVIDER_ADAPTER_KEYS = Object.freeze({
   anthropic_paid: 'anthropic',
 });
 
+const SPEECH_TOKEN_LIMIT = 2000;
+const SPEECH_TOKEN_BUFFER = 50;
+const SPEECH_MIN_CHARS = 64;
+const SPEECH_TOKEN_PATTERN = /(?:\p{Script=Han}|\p{Script=Hiragana}|\p{Script=Katakana}|\p{Script=Hangul}|[\p{L}\p{N}]+|[^\s])/gu;
+const SPEECH_TOKEN_PATTERN_SOURCE = SPEECH_TOKEN_PATTERN.source;
+const SPEECH_TOKEN_PATTERN_FLAGS = SPEECH_TOKEN_PATTERN.flags;
+
 function getAdapterKey(providerId) {
   const normalised = normaliseProviderId(providerId, providerId);
   return PROVIDER_ADAPTER_KEYS[normalised] || normalised;
@@ -131,6 +138,126 @@ function parseCacheKey(key) {
   }
 
   return null;
+}
+
+function createSpeechTokenMatcher() {
+  return new RegExp(SPEECH_TOKEN_PATTERN_SOURCE, SPEECH_TOKEN_PATTERN_FLAGS);
+}
+
+function tokeniseSpeechText(text) {
+  if (typeof text !== 'string' || text.length === 0) {
+    return [];
+  }
+  const matcher = createSpeechTokenMatcher();
+  const tokens = [];
+  let match;
+  while ((match = matcher.exec(text)) !== null) {
+    tokens.push({ index: match.index, end: match.index + match[0].length });
+  }
+  return tokens;
+}
+
+function alignSpeechBoundary(text) {
+  if (typeof text !== 'string' || text.length === 0) {
+    return '';
+  }
+  const trimmed = text.replace(/[\s\u00A0]+$/gu, '');
+  if (!trimmed) {
+    return '';
+  }
+
+  const windowStart = Math.max(0, trimmed.length - 200);
+  const windowText = trimmed.slice(windowStart);
+  const punctuationMarks = ['.', '!', '?'];
+  let boundaryIndex = -1;
+
+  for (const mark of punctuationMarks) {
+    const relative = windowText.lastIndexOf(mark);
+    if (relative !== -1) {
+      const absolute = windowStart + relative + 1;
+      if (absolute > boundaryIndex) {
+        boundaryIndex = absolute;
+      }
+    }
+  }
+
+  const newlineIndex = trimmed.lastIndexOf('\n');
+  if (newlineIndex !== -1 && newlineIndex >= trimmed.length - 200 && newlineIndex + 1 > boundaryIndex) {
+    boundaryIndex = newlineIndex + 1;
+  }
+
+  if (boundaryIndex !== -1 && boundaryIndex > SPEECH_MIN_CHARS) {
+    return trimmed.slice(0, boundaryIndex).trimEnd();
+  }
+
+  const spaceIndex = trimmed.lastIndexOf(' ');
+  if (spaceIndex !== -1 && spaceIndex >= trimmed.length - 100 && spaceIndex > SPEECH_MIN_CHARS) {
+    return trimmed.slice(0, spaceIndex).trimEnd();
+  }
+
+  return trimmed;
+}
+
+function clampSpeechInput(rawText) {
+  const trimmed = typeof rawText === 'string' ? rawText.trim() : '';
+  if (!trimmed) {
+    return {
+      text: '',
+      truncated: false,
+      originalTokenCount: 0,
+      deliveredTokenCount: 0,
+      omittedTokenCount: 0,
+    };
+  }
+
+  const tokens = tokeniseSpeechText(trimmed);
+  const totalTokens = tokens.length;
+  const safeLimit = Math.max(1, SPEECH_TOKEN_LIMIT - SPEECH_TOKEN_BUFFER);
+
+  if (totalTokens <= safeLimit) {
+    return {
+      text: trimmed,
+      truncated: false,
+      originalTokenCount: totalTokens,
+      deliveredTokenCount: totalTokens,
+      omittedTokenCount: 0,
+    };
+  }
+
+  const allowedIndex = Math.min(tokens.length - 1, safeLimit - 1);
+  const baseEnd = tokens[allowedIndex].end;
+  const baseCandidate = trimmed.slice(0, baseEnd);
+  let candidate = alignSpeechBoundary(baseCandidate) || baseCandidate.trimEnd();
+
+  if (!candidate) {
+    const minimalEnd = tokens[0]?.end || Math.min(trimmed.length, SPEECH_MIN_CHARS);
+    candidate = trimmed.slice(0, minimalEnd).trimEnd();
+  }
+
+  let candidateTokens = tokeniseSpeechText(candidate);
+  if (candidateTokens.length > safeLimit) {
+    const fallbackIndex = Math.min(candidateTokens.length - 1, safeLimit - 1);
+    const fallbackEnd = candidateTokens[fallbackIndex].end;
+    candidate = candidate.slice(0, fallbackEnd).trimEnd();
+    candidateTokens = tokeniseSpeechText(candidate);
+  }
+
+  if (!candidate) {
+    const fallbackLength = Math.min(trimmed.length, Math.max(SPEECH_MIN_CHARS, baseEnd));
+    candidate = trimmed.slice(0, fallbackLength).trimEnd();
+    candidateTokens = tokeniseSpeechText(candidate);
+  }
+
+  const deliveredTokenCount = candidateTokens.length;
+  const omittedTokenCount = Math.max(0, totalTokens - deliveredTokenCount);
+
+  return {
+    text: candidate,
+    truncated: true,
+    originalTokenCount: totalTokens,
+    deliveredTokenCount,
+    omittedTokenCount,
+  };
 }
 
 function createFallbackAgentConfig() {
@@ -689,11 +816,21 @@ async function synthesiseSpeech({ text, voice = 'alloy', format = 'mp3', provide
     logger.warn('Speech synthesis aborted due to cost limit.', { estimatedCost });
     throw new Error('Cost limit reached for speech synthesis.');
   }
+
+  const clamped = clampSpeechInput(text);
+  if (clamped.truncated) {
+    logger.warn('Speech input exceeded provider limits; truncating request.', {
+      originalTokens: clamped.originalTokenCount,
+      deliveredTokens: clamped.deliveredTokenCount,
+      omittedTokens: clamped.omittedTokenCount,
+    });
+  }
+
   const { apiKey, providerId } = await resolveApiKey(provider);
   ensureKeyAvailable(apiKey, providerId);
   const result = await adapter.synthesise({
     apiKey,
-    text,
+    text: clamped.text,
     voice,
     format,
     model: synthMeta.model,
@@ -708,6 +845,10 @@ async function synthesiseSpeech({ text, voice = 'alloy', format = 'mp3', provide
   return {
     base64: toBase64(result.arrayBuffer),
     mimeType: result.mimeType || `audio/${format}`,
+    truncated: clamped.truncated,
+    originalTokenCount: clamped.originalTokenCount,
+    deliveredTokenCount: clamped.deliveredTokenCount,
+    omittedTokenCount: clamped.omittedTokenCount,
   };
 }
 
@@ -983,6 +1124,10 @@ async function __transcribeForTests(payload) {
   return transcribeAudio(payload);
 }
 
+async function __synthesiseForTests(payload) {
+  return synthesiseSpeech(payload);
+}
+
 export {
   ensureInitialised,
   getApiKeyDetails,
@@ -995,6 +1140,7 @@ export {
   __setTestAdapterOverride,
   __setTestCostTrackerOverride,
   __transcribeForTests,
+  __synthesiseForTests,
 };
 
 ensureInitialised().catch(error => {
