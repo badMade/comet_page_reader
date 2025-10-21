@@ -36,11 +36,31 @@ test('ensureInitialised hydrates stored limit for the cost tracker', async () =>
       estimateTokensFromUsd(storedUsage.limitUsd),
       configuredLimit,
     );
+    const expectedPromptTotal = storedUsage.requests.reduce(
+      (total, request) => total + (request.promptTokens || 0),
+      0,
+    );
+    const expectedCompletionTotal = storedUsage.requests.reduce(
+      (total, request) => total + (request.completionTokens || 0),
+      0,
+    );
+    const expectedTokenTotal = storedUsage.requests.reduce(
+      (total, request) => total + (request.promptTokens || 0) + (request.completionTokens || 0),
+      0,
+    );
     assert.equal(usage.limitTokens, expectedLimit);
-    assert.equal(usage.totalTokens, storedUsage.requests.reduce((total, request) => total + request.promptTokens + request.completionTokens, 0));
+    assert.equal(usage.totalTokens, expectedTokenTotal);
+    assert.equal(usage.totalPromptTokens, expectedPromptTotal);
+    assert.equal(usage.totalCompletionTokens, expectedCompletionTotal);
+    assert.equal(usage.cumulativeTotalTokens, expectedTokenTotal);
+    assert.equal(usage.cumulativePromptTokens, expectedPromptTotal);
+    assert.equal(usage.cumulativeCompletionTokens, expectedCompletionTotal);
     assert.equal(usage.requests.length, storedUsage.requests.length);
     assert.equal(usage.lastReset, storedUsage.lastReset);
     assert.equal(usage.metadata.legacyTotalCostUsd, storedUsage.totalCostUsd);
+    assert.equal(usage.metadata.cumulativeTotalTokens, expectedTokenTotal);
+    assert.equal(usage.metadata.cumulativePromptTokens, expectedPromptTotal);
+    assert.equal(usage.metadata.cumulativeCompletionTokens, expectedCompletionTotal);
 
     // Ensure persisted store remains untouched after reads.
     assert.equal(persistentStore[USAGE_STORAGE_KEY].limitUsd, storedUsage.limitUsd);

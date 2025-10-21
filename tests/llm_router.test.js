@@ -63,6 +63,8 @@ function createCostTracker({ defaultEstimate = { totalTokens: 100, promptTokens:
     estimates,
     canSpendResult: canSpend,
     recorded: [],
+    usageTotals: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+    cumulativeTotals: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
     estimateTokenUsage(model) {
       const fallback = normaliseEstimate(this.defaultEstimate, {
         totalTokens: 100,
@@ -79,10 +81,22 @@ function createCostTracker({ defaultEstimate = { totalTokens: 100, promptTokens:
     },
     record(model, promptTokens, completionTokens, metadata) {
       this.recorded.push({ model, promptTokens, completionTokens, metadata });
+      this.usageTotals.promptTokens += promptTokens;
+      this.usageTotals.completionTokens += completionTokens;
+      this.usageTotals.totalTokens += promptTokens + completionTokens;
+      this.cumulativeTotals.promptTokens += promptTokens;
+      this.cumulativeTotals.completionTokens += completionTokens;
+      this.cumulativeTotals.totalTokens += promptTokens + completionTokens;
       return promptTokens + completionTokens;
     },
     estimateTokensFromText() {
       return 10;
+    },
+    getUsageTotals() {
+      return { ...this.usageTotals };
+    },
+    getCumulativeTotals() {
+      return { ...this.cumulativeTotals };
     },
   };
 }
@@ -155,6 +169,8 @@ test('generate prefers free providers before paid fallbacks', async () => {
 
   assert.equal(result.provider, 'gemini_free');
   assert.equal(result.text, 'Gemini summary');
+  assert.deepEqual(result.usageTotals, { promptTokens: 5, completionTokens: 5, totalTokens: 10 });
+  assert.deepEqual(result.cumulativeTotals, { promptTokens: 5, completionTokens: 5, totalTokens: 10 });
 });
 
 test('generate falls back to paid provider when free fails', async () => {
@@ -167,6 +183,8 @@ test('generate falls back to paid provider when free fails', async () => {
 
   assert.equal(result.provider, 'openai_paid');
   assert.equal(result.text, 'OpenAI summary');
+  assert.deepEqual(result.usageTotals, { promptTokens: 8, completionTokens: 6, totalTokens: 14 });
+  assert.deepEqual(result.cumulativeTotals, { promptTokens: 8, completionTokens: 6, totalTokens: 14 });
 });
 
 test('generate respects disablePaid flag', async () => {

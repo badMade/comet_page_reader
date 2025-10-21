@@ -67,6 +67,16 @@ let routingSettings = DEFAULT_ROUTING_CONFIG;
 let llmRouter = null;
 let loggingConfigured = false;
 
+function normaliseTokenCount(value, ...fallbacks) {
+  const candidates = [value, ...fallbacks];
+  for (const candidate of candidates) {
+    if (typeof candidate === 'number' && Number.isFinite(candidate) && candidate >= 0) {
+      return candidate;
+    }
+  }
+  return 0;
+}
+
 async function ensureLoggingConfiguredOnce() {
   if (loggingConfigured) {
     return;
@@ -707,7 +717,48 @@ async function ensureInitialised(providerId) {
         limitTokens = Math.min(configuredLimit, converted);
       }
     }
-    usage = Object.keys(snapshot).length > 0 ? snapshot : undefined;
+    if (Object.keys(snapshot).length > 0) {
+      const requestTotals = Array.isArray(snapshot.requests)
+        ? snapshot.requests.reduce((totals, request) => {
+          const prompt = normaliseTokenCount(request?.promptTokens);
+          const completion = normaliseTokenCount(request?.completionTokens);
+          totals.prompt += prompt;
+          totals.completion += completion;
+          totals.total += prompt + completion;
+          return totals;
+        }, { prompt: 0, completion: 0, total: 0 })
+        : { prompt: 0, completion: 0, total: 0 };
+      const cumulativePromptTokens = normaliseTokenCount(
+        snapshot.cumulativePromptTokens,
+        snapshot.totalPromptTokens,
+        requestTotals.prompt,
+      );
+      const cumulativeCompletionTokens = normaliseTokenCount(
+        snapshot.cumulativeCompletionTokens,
+        snapshot.totalCompletionTokens,
+        requestTotals.completion,
+      );
+      const cumulativeTotalTokens = normaliseTokenCount(
+        snapshot.cumulativeTotalTokens,
+        snapshot.totalTokens,
+        requestTotals.total,
+      );
+      const metadata = snapshot.metadata && typeof snapshot.metadata === 'object'
+        ? { ...snapshot.metadata }
+        : {};
+      usage = {
+        ...snapshot,
+        cumulativePromptTokens,
+        cumulativeCompletionTokens,
+        cumulativeTotalTokens,
+        metadata: {
+          ...metadata,
+          cumulativePromptTokens,
+          cumulativeCompletionTokens,
+          cumulativeTotalTokens,
+        },
+      };
+    }
   }
 
   costTracker = createCostTracker(limitTokens, usage);

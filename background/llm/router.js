@@ -573,9 +573,16 @@ export class LLMRouter {
    */
   async recordCost(model, promptTokens, completionTokens, metadata) {
     if (!this.costTracker) {
-      return 0;
+      return { totalTokens: 0, usageTotals: null, cumulativeTotals: null };
     }
-    return this.costTracker.record(model, promptTokens, completionTokens, metadata);
+    const totalTokens = this.costTracker.record(model, promptTokens, completionTokens, metadata);
+    const usageTotals = typeof this.costTracker.getUsageTotals === 'function'
+      ? this.costTracker.getUsageTotals()
+      : null;
+    const cumulativeTotals = typeof this.costTracker.getCumulativeTotals === 'function'
+      ? this.costTracker.getCumulativeTotals()
+      : null;
+    return { totalTokens, usageTotals, cumulativeTotals };
   }
 
   /**
@@ -726,16 +733,38 @@ export class LLMRouter {
         ? response.completionTokens
         : this.costTracker?.estimateTokensFromText(summary) || 0;
       const modelUsed = normaliseModelName(response?.model, model);
-      const recordedTokens = await this.recordCost(modelUsed, promptTokens, completionTokens, {
+      const usageRecord = await this.recordCost(modelUsed, promptTokens, completionTokens, {
         provider: resolved,
         type: metadata?.type || 'summary',
         url: metadata?.url,
         segmentId: metadata?.segmentId,
       });
+      const recordedTokens = typeof usageRecord === 'number'
+        ? usageRecord
+        : usageRecord?.totalTokens ?? 0;
+      const usageTotals = typeof this.costTracker?.getUsageTotals === 'function'
+        ? this.costTracker.getUsageTotals()
+        : usageRecord && typeof usageRecord === 'object'
+          ? usageRecord.usageTotals ?? null
+          : null;
+      const cumulativeTotals = typeof this.costTracker?.getCumulativeTotals === 'function'
+        ? this.costTracker.getCumulativeTotals()
+        : usageRecord && typeof usageRecord === 'object'
+          ? usageRecord.cumulativeTotals ?? null
+          : null;
       this.markProviderSuccess(resolved, {
         tokensIn: promptTokens,
         tokensOut: completionTokens,
         totalTokens: recordedTokens,
+      });
+      this.logger.info('Recorded provider usage.', {
+        provider: resolved,
+        model: modelUsed,
+        promptTokens,
+        completionTokens,
+        recordedTokens,
+        totals: usageTotals,
+        cumulativeTotals,
       });
       return {
         text: summary,
@@ -744,6 +773,8 @@ export class LLMRouter {
         model: modelUsed,
         provider: resolved,
         totalTokens: recordedTokens,
+        usageTotals,
+        cumulativeTotals,
       };
     };
 
@@ -840,6 +871,10 @@ export class LLMRouter {
           model,
           provider: resolved,
           total_tokens: 0,
+          usage_totals: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+          cumulative_totals: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+          usageTotals: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+          cumulativeTotals: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
           dryRun: true,
         };
       }
@@ -854,6 +889,10 @@ export class LLMRouter {
           model: result.model,
           provider: resolved,
           total_tokens: result.totalTokens,
+          usage_totals: result.usageTotals || null,
+          cumulative_totals: result.cumulativeTotals || null,
+          usageTotals: result.usageTotals || null,
+          cumulativeTotals: result.cumulativeTotals || null,
         };
       } catch (error) {
         this.markProviderFailure(resolved, error);

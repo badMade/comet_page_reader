@@ -151,6 +151,9 @@ test('popup messaging content script recovery', async t => {
             totalTokens: 10,
             totalPromptTokens: 10,
             totalCompletionTokens: 0,
+            cumulativeTotalTokens: 10,
+            cumulativePromptTokens: 10,
+            cumulativeCompletionTokens: 0,
             limitTokens: 15000,
             lastReset: Date.now(),
           },
@@ -179,6 +182,9 @@ test('mock mode bypasses runtime messaging and preserves provider metadata', asy
 
   const usage = await module.sendMessage('comet:getUsage');
   assert.equal(usage.limitTokens, DEFAULT_TOKEN_LIMIT);
+  assert.equal(usage.cumulativeTotalTokens, 2500);
+  assert.equal(usage.cumulativePromptTokens, 1500);
+  assert.equal(usage.cumulativeCompletionTokens, 1000);
   const summary = await module.sendMessage('comet:summarise');
   assert.ok(Array.isArray(summary.summaries));
 });
