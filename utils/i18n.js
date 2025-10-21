@@ -13,7 +13,7 @@ const MESSAGES = {
     apiKeyLabel: 'LLM API key',
     providerLabel: 'LLM provider',
     save: 'Save',
-    summarise: 'Show examples',
+    summarise: 'Summarize page',
     readAloud: 'Read aloud',
     readPage: 'Read full page',
     pushToTalk: 'Push to talk',
