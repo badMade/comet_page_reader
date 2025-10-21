@@ -120,8 +120,8 @@ const SPEECH_TOKEN_PATTERN_FLAGS = SPEECH_TOKEN_PATTERN.flags;
 const TTS_STORAGE_KEYS = Object.freeze(['ttsProvider', 'ttsVoice', 'ttsLanguage']);
 const TTS_PROVIDER_ALIAS_MAP = Object.freeze({
   localtts: Object.freeze({ type: 'local', providerId: 'local' }),
-  googletts: Object.freeze({ type: 'cloud', providerId: 'auto' }),
-  amazonpolly: Object.freeze({ type: 'cloud', providerId: 'auto' }),
+  googletts: Object.freeze({ type: 'cloud', providerId: 'googletts' }),
+  amazonpolly: Object.freeze({ type: 'cloud', providerId: 'amazonpolly' }),
 });
 
 function getAdapterKey(providerId) {
