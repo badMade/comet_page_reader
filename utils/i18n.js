@@ -29,7 +29,7 @@ const MESSAGES = {
     apiKeyLabel: 'Clave de API de LLM',
     providerLabel: 'Proveedor de LLM',
     save: 'Guardar',
-    summarise: 'Mostrar ejemplos',
+    summarise: 'Resumir página',
     readAloud: 'Leer en voz alta',
     readPage: 'Leer página completa',
     pushToTalk: 'Pulsa para hablar',
