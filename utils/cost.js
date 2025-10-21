@@ -118,15 +118,36 @@ function deriveUsageTotals(requests) {
   };
 }
 
+function deriveCumulativeTotals(requests) {
+  return {
+    prompt: sumTokens(requests, request => request.promptTokens || 0),
+    completion: sumTokens(requests, request => request.completionTokens || 0),
+    total: sumTokens(requests, request => request.totalTokens || 0),
+  };
+}
+
 function normaliseUsageSnapshot(usage) {
   if (!usage || typeof usage !== 'object') {
     return null;
   }
   const requests = Array.isArray(usage.requests) ? usage.requests.map(normaliseRequest) : [];
   const totals = deriveUsageTotals(requests);
+  const cumulativeTotals = deriveCumulativeTotals(requests);
   let totalPromptTokens = toInteger(usage.totalPromptTokens, totals.prompt);
   let totalCompletionTokens = toInteger(usage.totalCompletionTokens, totals.completion);
   let totalTokens = toInteger(usage.totalTokens, totals.total);
+  const cumulativePromptTokens = toInteger(
+    usage.cumulativePromptTokens,
+    cumulativeTotals.prompt,
+  );
+  const cumulativeCompletionTokens = toInteger(
+    usage.cumulativeCompletionTokens,
+    cumulativeTotals.completion,
+  );
+  const cumulativeTotalTokens = toInteger(
+    usage.cumulativeTotalTokens,
+    cumulativeTotals.total,
+  );
   const metadata = { ...usage.metadata };
 
   if (typeof usage.totalCostUsd === 'number' && Number.isFinite(usage.totalCostUsd)) {
@@ -142,6 +163,9 @@ function normaliseUsageSnapshot(usage) {
     totalPromptTokens,
     totalCompletionTokens,
     totalTokens,
+    cumulativePromptTokens,
+    cumulativeCompletionTokens,
+    cumulativeTotalTokens,
     requests,
     lastReset: normaliseTimestamp(usage.lastReset),
     metadata,
@@ -168,15 +192,28 @@ export class CostTracker {
       totalPromptTokens: 0,
       totalCompletionTokens: 0,
       totalTokens: 0,
+      cumulativePromptTokens: 0,
+      cumulativeCompletionTokens: 0,
+      cumulativeTotalTokens: 0,
       requests: [],
       lastReset: Date.now(),
       metadata: {},
     };
+    this.syncCumulativeMetadata();
     logger.info('Cost tracker initialised.', {
       limitTokens: this.limitTokens,
       preloadedRequests: this.usage.requests.length,
       totalTokens: this.usage.totalTokens,
     });
+  }
+
+  syncCumulativeMetadata() {
+    if (!this.usage.metadata || typeof this.usage.metadata !== 'object') {
+      this.usage.metadata = {};
+    }
+    this.usage.metadata.cumulativePromptTokens = this.usage.cumulativePromptTokens;
+    this.usage.metadata.cumulativeCompletionTokens = this.usage.cumulativeCompletionTokens;
+    this.usage.metadata.cumulativeTotalTokens = this.usage.cumulativeTotalTokens;
   }
 
   /**
@@ -232,11 +269,15 @@ export class CostTracker {
       ...cleanedMetadata,
     };
     this.usage.requests.push(entry);
+    this.usage.cumulativePromptTokens += safePrompt;
+    this.usage.cumulativeCompletionTokens += safeCompletion;
+    this.usage.cumulativeTotalTokens += totalTokens;
     if (!excluded) {
       this.usage.totalPromptTokens += safePrompt;
       this.usage.totalCompletionTokens += safeCompletion;
       this.usage.totalTokens += totalTokens;
     }
+    this.syncCumulativeMetadata();
     logger.info('Recorded token usage event.', {
       model,
       promptTokens: safePrompt,
@@ -311,9 +352,13 @@ export class CostTracker {
     this.usage.totalPromptTokens = 0;
     this.usage.totalCompletionTokens = 0;
     this.usage.totalTokens = 0;
+    this.usage.cumulativePromptTokens = 0;
+    this.usage.cumulativeCompletionTokens = 0;
+    this.usage.cumulativeTotalTokens = 0;
     this.usage.requests = [];
     this.usage.lastReset = Date.now();
     this.usage.metadata = {};
+    this.syncCumulativeMetadata();
     logger.warn('Cost tracker reset invoked.', { timestamp: this.usage.lastReset });
   }
 
@@ -374,6 +419,22 @@ export class CostTracker {
       limitTokens: this.limitTokens,
     };
   }
+
+  getUsageTotals() {
+    return {
+      promptTokens: this.usage.totalPromptTokens,
+      completionTokens: this.usage.totalCompletionTokens,
+      totalTokens: this.usage.totalTokens,
+    };
+  }
+
+  getCumulativeTotals() {
+    return {
+      promptTokens: this.usage.cumulativePromptTokens,
+      completionTokens: this.usage.cumulativeCompletionTokens,
+      totalTokens: this.usage.cumulativeTotalTokens,
+    };
+  }
 }
 
 /**
@@ -388,7 +449,10 @@ export function createCostTracker(limitTokens, usage) {
     limitTokens,
     hasUsage: Boolean(usage),
   });
-  return new CostTracker(limitTokens, usage);
+  const usageSnapshot = usage && typeof usage === 'object'
+    ? { ...usage }
+    : usage;
+  return new CostTracker(limitTokens, usageSnapshot);
 }
 
 export { DEFAULT_TOKEN_LIMIT };
