@@ -1045,8 +1045,8 @@ function resolveSupportedTabUrl(tab) {
 }
 
 function ensureSupportedTab(tab) {
-  const url = resolveTabUrl(tab);
-  if (!tab || typeof tab.id !== 'number' || !isTabUrlSupported(url)) {
+  const supportedUrl = resolveSupportedTabUrl(tab);
+  if (!tab || typeof tab.id !== 'number' || !supportedUrl || !isTabUrlSupported(supportedUrl)) {
     throw new Error(UNSUPPORTED_TAB_MESSAGE);
   }
 

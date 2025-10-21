@@ -53,3 +53,19 @@ test('accepts pending urls for tabs that are still loading', async () => {
   });
 });
 
+test('normalises supported pending URLs when the active URL is unsupported', async () => {
+  const { __TESTING__ } = await modulePromise;
+  const tab = {
+    id: 99,
+    url: 'chrome://new-tab-page/',
+    pendingUrl: 'https://example.com/article',
+  };
+
+  const result = __TESTING__.ensureSupportedTab(tab);
+
+  assert.deepEqual(result, {
+    ...tab,
+    url: 'https://example.com/article',
+  });
+});
+
