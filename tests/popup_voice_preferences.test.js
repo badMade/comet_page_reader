@@ -3,10 +3,6 @@ import assert from 'node:assert/strict';
 
 import { setupPopupTestEnvironment } from './fixtures/popup-environment.js';
 
-function createVoiceOptions(values) {
-  return values.map(value => ({ value }));
-}
-
 test('loadPreferences falls back to a supported voice and persists it', async () => {
   const previousGlobals = {
     chrome: globalThis.chrome,
@@ -24,8 +20,6 @@ test('loadPreferences falls back to a supported voice and persists it', async ()
 
     globalThis.document.getElementById('voiceSelect');
     const voiceSelect = getElement('voiceSelect');
-    voiceSelect.options = createVoiceOptions(['alloy', 'verse', 'nova']);
-    voiceSelect.value = 'verse';
 
     const recordedWrites = [];
     chrome.storage.sync.get = (_keys, callback) => {
@@ -46,6 +40,10 @@ test('loadPreferences falls back to a supported voice and persists it', async ()
 
     module.__TESTING__.assignElements();
     await module.__TESTING__.loadPreferences();
+    await module.__TESTING__.applyVoiceCapabilities({
+      availableVoices: ['alloy', 'verse', 'nova'],
+      preferredVoice: 'alloy',
+    });
 
     assert.equal(voiceSelect.value, 'alloy', 'voice select should fall back to default voice');
     assert.ok(

@@ -92,8 +92,26 @@ export class GeminiAdapter {
     return {
       summarise: { model },
       transcribe: { label: 'stt', flatCost: 0, model: null },
-      synthesise: { label: 'tts', flatCost: 0, model: null },
+      synthesise: {
+        label: 'tts',
+        flatCost: 0,
+        model: null,
+        voices: {
+          available: [],
+          preferred: null,
+        },
+      },
     };
+  }
+
+  /**
+   * Gemini currently does not expose first-party TTS voices via this adapter.
+   *
+   * @returns {{availableVoices: string[], preferredVoice: null}}
+   *   Empty voice capability descriptor.
+   */
+  getVoiceCapabilities() {
+    return { availableVoices: [], preferredVoice: null };
   }
 
   /**

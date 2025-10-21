@@ -2,6 +2,37 @@ import createLogger from '../../utils/logger.js';
 
 const DEFAULT_TRANSCRIPTION_MODEL = 'gpt-4o-mini-transcribe';
 const DEFAULT_TTS_MODEL = 'gpt-4o-mini-tts';
+const DEFAULT_TTS_VOICES = Object.freeze([
+  'alloy',
+  'verse',
+  'nova',
+  'aria',
+  'sol',
+]);
+const DEFAULT_PREFERRED_VOICE = 'alloy';
+
+function normaliseVoices(configuredVoices) {
+  if (!Array.isArray(configuredVoices)) {
+    return DEFAULT_TTS_VOICES;
+  }
+  const voices = configuredVoices
+    .map(voice => (typeof voice === 'string' ? voice.trim() : ''))
+    .filter(Boolean);
+  if (voices.length === 0) {
+    return DEFAULT_TTS_VOICES;
+  }
+  return Array.from(new Set(voices));
+}
+
+function resolvePreferredVoice(voices, configuredPreferred) {
+  if (configuredPreferred && voices.includes(configuredPreferred)) {
+    return configuredPreferred;
+  }
+  if (voices.includes(DEFAULT_PREFERRED_VOICE)) {
+    return DEFAULT_PREFERRED_VOICE;
+  }
+  return voices[0] || null;
+}
 
 function base64ToUint8Array(base64) {
   if (typeof Uint8Array.from === 'function' && typeof atob === 'function') {
@@ -52,6 +83,8 @@ export class OpenAIAdapter {
    * @returns {object} Cost metadata grouped by capability.
    */
   getCostMetadata() {
+    const voices = normaliseVoices(this.config?.voices);
+    const preferredVoice = resolvePreferredVoice(voices, this.config?.preferredVoice);
     return {
       summarise: {
         model: this.config.model || 'gpt-4o-mini',
@@ -65,7 +98,33 @@ export class OpenAIAdapter {
         label: 'tts',
         flatCost: 0.01,
         model: DEFAULT_TTS_MODEL,
+        voices: {
+          available: voices,
+          preferred: preferredVoice,
+        },
       },
+    };
+  }
+
+  /**
+   * Declares the voice capabilities recommended for speech synthesis.
+   *
+   * @returns {{availableVoices: string[], preferredVoice: string|null}}
+   *   Voice capability descriptor.
+   */
+  getVoiceCapabilities() {
+    const metadata = this.getCostMetadata();
+    const synthMeta = metadata?.synthesise || {};
+    const voiceInfo = synthMeta.voices || {};
+    const availableVoices = Array.isArray(voiceInfo.available)
+      ? voiceInfo.available
+      : normaliseVoices();
+    const preferredVoice = voiceInfo.preferred && availableVoices.includes(voiceInfo.preferred)
+      ? voiceInfo.preferred
+      : resolvePreferredVoice(availableVoices);
+    return {
+      availableVoices,
+      preferredVoice,
     };
   }
 

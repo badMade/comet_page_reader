@@ -103,6 +103,9 @@ const state = {
   audioSourceUrl: null,
   language: 'en',
   voice: DEFAULT_VOICE,
+  voiceOptions: [],
+  voicePreferred: null,
+  pendingVoicePreference: null,
   playbackRate: 1,
   provider: DEFAULT_PROVIDER_ID,
   providerLastSynced: null,
@@ -163,16 +166,7 @@ function assignElements() {
 }
 
 function getVoiceOptions() {
-  if (!elements.voice) {
-    return [];
-  }
-  const options = elements.voice.options;
-  if (!options || typeof options.length === 'undefined') {
-    return [];
-  }
-  return Array.from(options)
-    .map(option => option?.value)
-    .filter(value => typeof value === 'string' && value.length > 0);
+  return state.voiceOptions.slice();
 }
 
 async function persistVoicePreference(voice) {
@@ -188,6 +182,109 @@ async function persistVoicePreference(voice) {
       resolve();
     });
   });
+}
+
+function normaliseVoiceValues(values) {
+  if (!Array.isArray(values)) {
+    return [];
+  }
+  return Array.from(new Set(values
+    .map(value => (typeof value === 'string' ? value.trim() : ''))
+    .filter(Boolean)));
+}
+
+function formatVoiceLabel(voice) {
+  const spaced = voice.replace(/[_-]+/g, ' ');
+  return spaced.replace(/\b([a-z])/g, (_, char) => char.toUpperCase());
+}
+
+function renderVoiceSelectOptions(voices) {
+  if (!elements.voice) {
+    return;
+  }
+  const voiceSelect = elements.voice;
+  if (!Array.isArray(voices) || voices.length === 0) {
+    voiceSelect.innerHTML = '';
+    voiceSelect.value = '';
+    voiceSelect.disabled = true;
+    return;
+  }
+  voiceSelect.disabled = false;
+  const markup = voices
+    .map(voice => `<option value="${escapeHtml(voice)}">${escapeHtml(formatVoiceLabel(voice))}</option>`)
+    .join('');
+  voiceSelect.innerHTML = markup;
+}
+
+async function applyVoiceCapabilities(metadata = null, options = {}) {
+  const persistFallback = options.persistFallback !== false;
+  const voiceData = metadata || {
+    availableVoices: state.voiceOptions,
+    preferredVoice: state.voicePreferred,
+  };
+  const availableVoices = normaliseVoiceValues(voiceData?.availableVoices);
+  const preferredVoice = typeof voiceData?.preferredVoice === 'string'
+    && availableVoices.includes(voiceData.preferredVoice)
+    ? voiceData.preferredVoice
+    : null;
+  state.voiceOptions = availableVoices;
+  state.voicePreferred = preferredVoice;
+  renderVoiceSelectOptions(availableVoices);
+
+  if (availableVoices.length === 0) {
+    if (elements.voice) {
+      elements.voice.value = '';
+    }
+    state.pendingVoicePreference = null;
+    return '';
+  }
+
+  const pending = typeof state.pendingVoicePreference === 'string'
+    ? state.pendingVoicePreference
+    : null;
+  let resolvedVoice = null;
+  if (pending && availableVoices.includes(pending)) {
+    resolvedVoice = pending;
+  } else if (state.voice && availableVoices.includes(state.voice)) {
+    resolvedVoice = state.voice;
+  } else if (preferredVoice) {
+    resolvedVoice = preferredVoice;
+  } else {
+    resolvedVoice = availableVoices[0];
+  }
+
+  state.voice = resolvedVoice;
+  if (elements.voice) {
+    elements.voice.value = resolvedVoice;
+  }
+
+  if (pending && persistFallback && pending !== resolvedVoice) {
+    await persistVoicePreference(resolvedVoice);
+  }
+  if (pending !== null) {
+    state.pendingVoicePreference = null;
+  }
+  return resolvedVoice;
+}
+
+async function refreshVoiceOptions(providerId = state.provider, options = {}) {
+  const normalised = normaliseProviderId(providerId, state.provider);
+  logger.debug('Refreshing voice capabilities.', { provider: normalised });
+  try {
+    const response = await sendMessage('comet:getVoiceCapabilities', { provider: normalised });
+    if (!response) {
+      await applyVoiceCapabilities({ availableVoices: [], preferredVoice: null }, options);
+      return;
+    }
+    const availableVoices = normaliseVoiceValues(response.availableVoices);
+    const preferredVoice = typeof response.preferredVoice === 'string'
+      ? response.preferredVoice
+      : null;
+    await applyVoiceCapabilities({ availableVoices, preferredVoice }, options);
+  } catch (error) {
+    logger.warn('Failed to refresh voice capabilities.', { error });
+    await applyVoiceCapabilities({ availableVoices: [], preferredVoice: null }, options);
+  }
 }
 
 /**
@@ -319,7 +416,15 @@ async function setAndSyncProvider(providerId) {
     nextProvider: normalised,
     previousProvider: state.providerLastSynced,
   });
-  await sendMessage('comet:setProvider', { provider: normalised });
+  if (state.pendingVoicePreference === null && typeof state.voice === 'string' && state.voice.length > 0) {
+    state.pendingVoicePreference = state.voice;
+  }
+  const response = await sendMessage('comet:setProvider', { provider: normalised });
+  if (response?.voice) {
+    await applyVoiceCapabilities(response.voice, { persistFallback: true });
+  } else {
+    await refreshVoiceOptions(normalised, { persistFallback: true });
+  }
   state.providerLastSynced = normalised;
 }
 
@@ -743,6 +848,7 @@ async function handleProviderChange(event) {
   }
   state.provider = providerId;
   applyApiKeyRequirement();
+  state.pendingVoicePreference = state.voice;
   await setAndSyncProvider(providerId);
   await loadApiKey({ provider: providerId });
   const providerName = getProviderDisplayName(providerId);
@@ -1521,36 +1627,10 @@ async function loadPreferences() {
     elements.language.value = stored.language;
     setLocale(state.language);
   }
-  if (stored.voice) {
-    const voiceOptions = getVoiceOptions();
-    if (voiceOptions.includes(stored.voice)) {
-      state.voice = stored.voice;
-      if (elements.voice) {
-        elements.voice.value = stored.voice;
-      }
-    } else {
-      const fallback =
-        voiceOptions.find(option => option === DEFAULT_VOICE) ??
-        voiceOptions[0] ??
-        state.voice;
-      state.voice = fallback;
-      if (elements.voice) {
-        elements.voice.value = state.voice;
-      }
-      if (stored.voice !== state.voice) {
-        await persistVoicePreference(state.voice);
-      }
-    }
-  } else if (elements.voice) {
-    const voiceOptions = getVoiceOptions();
-    if (voiceOptions.length > 0 && !voiceOptions.includes(state.voice)) {
-      const fallback =
-        voiceOptions.find(option => option === DEFAULT_VOICE) ??
-        voiceOptions[0] ??
-        state.voice;
-      state.voice = fallback;
-    }
-    elements.voice.value = state.voice;
+  if (typeof stored.voice === 'string' && stored.voice.trim().length > 0) {
+    state.pendingVoicePreference = stored.voice.trim();
+  } else {
+    state.pendingVoicePreference = null;
   }
   const storedRate = stored.playbackRate;
   if (storedRate !== undefined) {
@@ -1774,7 +1854,8 @@ async function init() {
   bindEvents();
   const loggingConfigPromise = loadLoggingConfig().catch(() => {});
   logger.info('Popup initialising.');
-  const preferencesPromise = loadPreferences();
+  await loadPreferences();
+  await refreshVoiceOptions(state.provider, { persistFallback: true });
   const usagePromise = refreshUsage();
   let loadApiKeyError;
   try {
@@ -1783,7 +1864,7 @@ async function init() {
     loadApiKeyError = error;
   }
   await hydrateProviderSelector();
-  await Promise.all([loggingConfigPromise, preferencesPromise, usagePromise]);
+  await Promise.all([loggingConfigPromise, usagePromise]);
   if (loadApiKeyError) {
     throw loadApiKeyError;
   }
@@ -1818,6 +1899,8 @@ const __TESTING__ = {
   ensureSupportedTab,
   UNSUPPORTED_TAB_MESSAGE,
   loadPreferences,
+  applyVoiceCapabilities,
+  refreshVoiceOptions,
 };
 
 export { sendMessageToTab, sendMessage, __TESTING__ };

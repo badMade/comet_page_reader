@@ -413,7 +413,7 @@ async function setActiveProvider(providerId) {
     normalised,
     desiredProvider,
   });
-  await ensureAdapter(desiredProvider);
+  const adapter = await ensureAdapter(desiredProvider);
   if (previousProvider && previousProvider !== activeProviderId) {
     logger.info('Active provider changed; resetting cache.', {
       previousProvider,
@@ -422,9 +422,11 @@ async function setActiveProvider(providerId) {
     memoryCache.clear();
     await persistCache();
   }
+  const voice = await resolveVoiceCapabilities(activeProviderId, adapter);
   return {
     provider: activeProviderId,
     requiresApiKey: providerRequiresApiKey(activeProviderId),
+    voice,
   };
 }
 
@@ -543,6 +545,75 @@ function getCostMetadata(adapter) {
     return {};
   }
   return adapter.getCostMetadata() || {};
+}
+
+function normaliseVoiceList(voices) {
+  if (!Array.isArray(voices)) {
+    return [];
+  }
+  const cleaned = voices
+    .map(voice => (typeof voice === 'string' ? voice.trim() : ''))
+    .filter(Boolean);
+  return Array.from(new Set(cleaned));
+}
+
+function normaliseVoiceCapabilities(rawCapabilities) {
+  if (!rawCapabilities || typeof rawCapabilities !== 'object') {
+    return { availableVoices: [], preferredVoice: null };
+  }
+  const availableVoices = normaliseVoiceList(
+    rawCapabilities.availableVoices
+      || rawCapabilities.available
+      || (rawCapabilities.voices && rawCapabilities.voices.available)
+      || [],
+  );
+  let preferredVoice = rawCapabilities.preferredVoice
+    || rawCapabilities.preferred
+    || (rawCapabilities.voices && rawCapabilities.voices.preferred)
+    || null;
+  if (typeof preferredVoice === 'string') {
+    preferredVoice = preferredVoice.trim();
+  } else {
+    preferredVoice = null;
+  }
+  if (preferredVoice && !availableVoices.includes(preferredVoice)) {
+    preferredVoice = availableVoices[0] || null;
+  }
+  if (!preferredVoice && availableVoices.length > 0) {
+    preferredVoice = availableVoices[0];
+  }
+  return {
+    availableVoices,
+    preferredVoice: preferredVoice || null,
+  };
+}
+
+async function resolveVoiceCapabilities(providerId, adapterOverride) {
+  let adapter = adapterOverride;
+  if (!adapter) {
+    adapter = await ensureAdapter(providerId);
+  }
+  let rawCapabilities;
+  if (adapter && typeof adapter.getVoiceCapabilities === 'function') {
+    try {
+      rawCapabilities = await adapter.getVoiceCapabilities();
+    } catch (error) {
+      logger.warn('Adapter getVoiceCapabilities failed; falling back to cost metadata.', {
+        providerId: activeProviderId,
+        error,
+      });
+    }
+  }
+  if (!rawCapabilities) {
+    const metadata = getCostMetadata(adapter);
+    rawCapabilities = metadata?.synthesise?.voices || metadata?.voices || {};
+  }
+  const normalised = normaliseVoiceCapabilities(rawCapabilities);
+  return {
+    provider: activeProviderId,
+    availableVoices: normalised.availableVoices,
+    preferredVoice: normalised.preferredVoice,
+  };
 }
 
 async function requestSummary({ url, segment, language, provider }) {
@@ -812,6 +883,7 @@ const handlers = {
   'comet:getUsage': handleUsageRequest,
   'comet:resetUsage': handleResetUsage,
   'comet:segmentsUpdated': handleSegmentsUpdated,
+  'comet:getVoiceCapabilities': ({ payload }) => resolveVoiceCapabilities(payload?.provider),
 };
 
 runtime.runtime.onMessage.addListener((message, sender, sendResponse) => {
