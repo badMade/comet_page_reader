@@ -25,7 +25,8 @@ routing:
   disable_paid: false
   timeout_ms: 20000
   retry_limit: 2
-  max_tokens_per_call: 30
+  # Raised from 30 so that default installs can summarise typical pages without manual tuning.
+  max_tokens_per_call: 2400
   max_monthly_tokens: 6000
 
 gemini:
