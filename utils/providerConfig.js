@@ -13,6 +13,11 @@ const DEFAULT_PROVIDER_CONFIG = Object.freeze({
   headers: {},
 });
 
+// Generous per-call token budget that comfortably covers the prompt and
+// completion estimates used by the summariser. The value maps roughly to a
+// couple of thousand prompt tokens plus the 400-token completion fallback.
+const DEFAULT_MAX_TOKENS_PER_CALL = 2400;
+
 const DEFAULT_ROUTING_CONFIG = Object.freeze({
   providerOrder: [
     'ollama',
@@ -28,7 +33,7 @@ const DEFAULT_ROUTING_CONFIG = Object.freeze({
   disablePaid: false,
   timeoutMs: 20000,
   retryLimit: 2,
-  maxTokensPerCall: estimateTokensFromUsd(0.01),
+  maxTokensPerCall: DEFAULT_MAX_TOKENS_PER_CALL,
   maxMonthlyTokens: DEFAULT_TOKEN_LIMIT,
   dryRun: false,
 });
