@@ -79,8 +79,21 @@ test('popup initialises immediately when DOMContentLoaded already fired', async 
           lastUpdated: null,
         },
         'comet:getUsage': { totalCostUsd: 0, limitUsd: 5, lastReset: Date.now() },
-        'comet:setProvider': { provider: 'openai', requiresApiKey: true },
+        'comet:setProvider': {
+          provider: 'openai',
+          requiresApiKey: true,
+          voice: {
+            provider: 'openai',
+            availableVoices: ['alloy', 'verse'],
+            preferredVoice: 'alloy',
+          },
+        },
         'comet:setApiKey': null,
+        'comet:getVoiceCapabilities': {
+          provider: 'openai',
+          availableVoices: ['alloy', 'verse'],
+          preferredVoice: 'alloy',
+        },
       };
       if (callback) {
         callback({ success: true, result: responses[message.type] ?? null, error: null });

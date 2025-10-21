@@ -88,7 +88,16 @@ export function setupPopupTestEnvironment() {
   const chromeStub = {
     runtime: {
       lastError: null,
-      sendMessage: () => {
+      sendMessage: (message, callback) => {
+        if (message?.type === 'comet:getVoiceCapabilities') {
+          const payload = {
+            provider: 'openai',
+            availableVoices: ['alloy'],
+            preferredVoice: 'alloy',
+          };
+          callback?.({ success: true, result: payload, error: null });
+          return;
+        }
         throw new Error('sendMessage stub not configured');
       },
     },

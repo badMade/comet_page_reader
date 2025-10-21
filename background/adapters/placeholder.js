@@ -4,6 +4,29 @@ function normaliseModel(config, fallback) {
   return config?.model || fallback;
 }
 
+function normaliseVoiceList(config, providerKey) {
+  const configured = Array.isArray(config?.voices)
+    ? config.voices
+    : config?.voiceOptions;
+  const voices = Array.isArray(configured)
+    ? configured
+    : [`${providerKey}-voice`];
+  const normalised = Array.from(new Set(voices
+    .map(voice => (typeof voice === 'string' ? voice.trim() : ''))
+    .filter(Boolean)));
+  if (normalised.length === 0) {
+    return [`${providerKey}-voice`];
+  }
+  return normalised;
+}
+
+function resolvePreferredVoice(voices, configPreferred) {
+  if (configPreferred && voices.includes(configPreferred)) {
+    return configPreferred;
+  }
+  return voices[0] || null;
+}
+
 /**
  * Minimal adapter that throws descriptive errors for unimplemented providers.
  */
@@ -48,6 +71,8 @@ export class PlaceholderAdapter {
    * @returns {object} Cost metadata grouped by capability.
    */
   getCostMetadata() {
+    const voices = normaliseVoiceList(this.config, this.providerKey);
+    const preferredVoice = resolvePreferredVoice(voices, this.config?.preferredVoice);
     const metadata = {
       summarise: {
         model: normaliseModel(this.config, `${this.providerKey}-model`),
@@ -61,6 +86,10 @@ export class PlaceholderAdapter {
         label: 'tts',
         flatCost: 0,
         model: `${this.providerKey}-tts`,
+        voices: {
+          available: voices,
+          preferred: preferredVoice,
+        },
       },
     };
     this.logger.debug('Cost metadata requested from placeholder adapter.', {
@@ -68,6 +97,21 @@ export class PlaceholderAdapter {
       models: metadata,
     });
     return metadata;
+  }
+
+  /**
+   * Provides the placeholder voice capabilities so the UI can display options.
+   *
+   * @returns {{availableVoices: string[], preferredVoice: string|null}}
+   *   Voice capability descriptor.
+   */
+  getVoiceCapabilities() {
+    const voices = normaliseVoiceList(this.config, this.providerKey);
+    const preferredVoice = resolvePreferredVoice(voices, this.config?.preferredVoice);
+    return {
+      availableVoices: voices,
+      preferredVoice,
+    };
   }
 
   /**
