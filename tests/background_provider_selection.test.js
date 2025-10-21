@@ -18,8 +18,8 @@ async function createConfigYaml(provider) {
     temperature: 0.5,
     routing: {
       provider_order: [provider],
-      max_cost_per_call_usd: 0.01,
-      max_monthly_cost_usd: 1,
+      max_tokens_per_call: 50,
+      max_monthly_tokens: 1000,
       disable_paid: false,
     },
     providers: {

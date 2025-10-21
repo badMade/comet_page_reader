@@ -1,4 +1,5 @@
 import createLogger from './logger.js';
+import { DEFAULT_TOKEN_LIMIT, estimateTokensFromUsd } from './cost.js';
 import { loadYamlModule } from './yamlLoader.js';
 
 const logger = createLogger({ name: 'provider-config' });
@@ -27,8 +28,8 @@ const DEFAULT_ROUTING_CONFIG = Object.freeze({
   disablePaid: false,
   timeoutMs: 20000,
   retryLimit: 2,
-  maxCostPerCallUsd: 0.01,
-  maxMonthlyCostUsd: 2,
+  maxTokensPerCall: estimateTokensFromUsd(0.01),
+  maxMonthlyTokens: DEFAULT_TOKEN_LIMIT,
   dryRun: false,
 });
 
@@ -166,14 +167,45 @@ function parseRoutingConfig(rawConfig, env = readEnvironment()) {
       ),
     ),
   );
-  const maxCostPerCallUsd = normaliseNumber(
+  const rawMaxTokensPerCall = normaliseNumber(
+    env.MAX_TOKENS_PER_CALL ?? env.MAX_TOKENS_PER_INVOCATION ?? routingSource?.max_tokens_per_call ?? routingSource?.maxTokensPerCall,
+    Number.NaN,
+  );
+  const legacyMaxCostPerCall = normaliseNumber(
     env.MAX_COST_PER_CALL_USD ?? env.MAX_COST_PER_CALL ?? routingSource?.max_cost_per_call_usd ?? routingSource?.maxCostPerCallUsd,
-    DEFAULT_ROUTING_CONFIG.maxCostPerCallUsd,
+    Number.NaN,
   );
-  const maxMonthlyCostUsd = normaliseNumber(
+  let maxTokensPerCall;
+  if (!Number.isNaN(rawMaxTokensPerCall)) {
+    maxTokensPerCall = rawMaxTokensPerCall;
+  } else if (!Number.isNaN(legacyMaxCostPerCall)) {
+    maxTokensPerCall = estimateTokensFromUsd(legacyMaxCostPerCall);
+  } else {
+    maxTokensPerCall = DEFAULT_ROUTING_CONFIG.maxTokensPerCall;
+  }
+  if (!Number.isFinite(maxTokensPerCall) || maxTokensPerCall < 0) {
+    maxTokensPerCall = DEFAULT_ROUTING_CONFIG.maxTokensPerCall;
+  }
+
+  const rawMaxMonthlyTokens = normaliseNumber(
+    env.MAX_MONTHLY_TOKENS ?? routingSource?.max_monthly_tokens ?? routingSource?.maxMonthlyTokens,
+    Number.NaN,
+  );
+  const legacyMaxMonthlyCost = normaliseNumber(
     env.MAX_MONTHLY_COST_USD ?? env.MAX_MONTHLY_COST ?? routingSource?.max_monthly_cost_usd ?? routingSource?.maxMonthlyCostUsd,
-    DEFAULT_ROUTING_CONFIG.maxMonthlyCostUsd,
+    Number.NaN,
   );
+  let maxMonthlyTokens;
+  if (!Number.isNaN(rawMaxMonthlyTokens)) {
+    maxMonthlyTokens = rawMaxMonthlyTokens;
+  } else if (!Number.isNaN(legacyMaxMonthlyCost)) {
+    maxMonthlyTokens = estimateTokensFromUsd(legacyMaxMonthlyCost);
+  } else {
+    maxMonthlyTokens = DEFAULT_ROUTING_CONFIG.maxMonthlyTokens;
+  }
+  if (!Number.isFinite(maxMonthlyTokens) || maxMonthlyTokens < 0) {
+    maxMonthlyTokens = DEFAULT_ROUTING_CONFIG.maxMonthlyTokens;
+  }
   const dryRun = normaliseBoolean(
     env.DRY_RUN ?? routingSource?.dry_run ?? routingSource?.dryRun,
     DEFAULT_ROUTING_CONFIG.dryRun,
@@ -184,8 +216,8 @@ function parseRoutingConfig(rawConfig, env = readEnvironment()) {
     disablePaid,
     timeoutMs,
     retryLimit,
-    maxCostPerCallUsd,
-    maxMonthlyCostUsd,
+    maxTokensPerCall,
+    maxMonthlyTokens,
     dryRun,
   };
 
@@ -194,8 +226,8 @@ function parseRoutingConfig(rawConfig, env = readEnvironment()) {
     disablePaid,
     timeoutMs,
     retryLimit,
-    maxCostPerCallUsd,
-    maxMonthlyCostUsd,
+    maxTokensPerCall,
+    maxMonthlyTokens,
     dryRun,
   });
 

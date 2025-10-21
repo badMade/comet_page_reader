@@ -1,5 +1,5 @@
 import createLogger, { loadLoggingConfig, setGlobalContext } from '../utils/logger.js';
-import { createCostTracker, DEFAULT_LIMIT_USD } from '../utils/cost.js';
+import { createCostTracker, DEFAULT_TOKEN_LIMIT, estimateTokensFromUsd } from '../utils/cost.js';
 import { ensureNotesFile } from '../utils/notes.js';
 import { DEFAULT_PROVIDER, fetchApiKeyDetails, readApiKey, saveApiKey } from '../utils/apiKeyStore.js';
 import { getValue, setValue, withLock, getSessionValue, setSessionValue, runtime } from '../utils/storage.js';
@@ -412,11 +412,6 @@ function createCloudTtsAdapter(providerKey) {
       const adapter = await ensureAdapter(resolvedProvider);
       const costMetadata = getCostMetadata(adapter);
       const synthMeta = costMetadata.synthesise || {};
-      const estimatedCost = resolveFlatCost(synthMeta, 0.01);
-      if (!costTracker.canSpend(estimatedCost)) {
-        adapterLoggerContext.warn('Speech synthesis aborted due to cost limit.', { estimatedCost, provider: resolvedProvider });
-        throw new Error('Cost limit reached for speech synthesis.');
-      }
 
       const { apiKey, providerId } = await resolveApiKey(resolvedProvider);
       ensureKeyAvailable(apiKey, providerId);
@@ -430,8 +425,6 @@ function createCloudTtsAdapter(providerKey) {
           model: synthMeta.model,
           languageCode,
         });
-        costTracker.recordFlat(synthMeta.label || 'tts', estimatedCost, { type: synthMeta.label || 'tts' });
-        await persistUsage();
         const base64 = typeof response?.base64 === 'string'
           ? response.base64
           : response?.arrayBuffer
@@ -447,6 +440,7 @@ function createCloudTtsAdapter(providerKey) {
           mimeType,
           providerId,
           model: synthMeta.model || null,
+          usageLabel: synthMeta.label || null,
         };
       } catch (error) {
         const displayName = getProviderDisplayName(providerId) || providerId || 'Provider';
@@ -697,21 +691,26 @@ async function ensureInitialised(providerId) {
   }
 
   const storedUsage = await getValue(USAGE_STORAGE_KEY);
-  const configuredLimit = typeof routingSettings?.maxMonthlyCostUsd === 'number'
-    ? routingSettings.maxMonthlyCostUsd
-    : DEFAULT_LIMIT_USD;
-  let limitUsd = configuredLimit;
+  const configuredLimit = typeof routingSettings?.maxMonthlyTokens === 'number'
+    ? routingSettings.maxMonthlyTokens
+    : DEFAULT_TOKEN_LIMIT;
+  let limitTokens = configuredLimit;
   let usage;
 
   if (storedUsage && typeof storedUsage === 'object') {
-    const { limitUsd: savedLimit, ...snapshot } = storedUsage;
-    if (typeof savedLimit === 'number' && Number.isFinite(savedLimit)) {
-      limitUsd = Math.min(configuredLimit, savedLimit);
+    const { limitTokens: savedLimitTokens, limitUsd: legacyLimitUsd, ...snapshot } = storedUsage;
+    if (typeof savedLimitTokens === 'number' && Number.isFinite(savedLimitTokens)) {
+      limitTokens = Math.min(configuredLimit, savedLimitTokens);
+    } else if (typeof legacyLimitUsd === 'number' && Number.isFinite(legacyLimitUsd)) {
+      const converted = estimateTokensFromUsd(legacyLimitUsd);
+      if (converted > 0) {
+        limitTokens = Math.min(configuredLimit, converted);
+      }
     }
     usage = Object.keys(snapshot).length > 0 ? snapshot : undefined;
   }
 
-  costTracker = createCostTracker(limitUsd, usage);
+  costTracker = createCostTracker(limitTokens, usage);
   if (testCostTrackerOverride) {
     costTracker = testCostTrackerOverride;
   }
@@ -721,7 +720,7 @@ async function ensureInitialised(providerId) {
   const cachedEntries = (await getSessionValue(CACHE_STORAGE_KEY)) || {};
   memoryCache = new Map(Object.entries(cachedEntries));
   logger.info('Initialising background state.', {
-    limitUsd,
+    limitTokens,
     cachedEntries: memoryCache.size,
   });
   await ensureRouter();
@@ -850,14 +849,29 @@ function ensureKeyAvailable(apiKey, providerId) {
   }
 }
 
-function resolveFlatCost(metadata, fallback) {
+function resolveFlatTokenEstimate(metadata, fallback) {
+  const flatTokens = metadata && typeof metadata.flatTokens === 'number'
+    ? metadata.flatTokens
+    : Number.NaN;
+  if (Number.isFinite(flatTokens) && flatTokens >= 0) {
+    return Math.round(flatTokens);
+  }
+  const estimatedTokens = metadata && typeof metadata.estimatedTokens === 'number'
+    ? metadata.estimatedTokens
+    : Number.NaN;
+  if (Number.isFinite(estimatedTokens) && estimatedTokens >= 0) {
+    return Math.round(estimatedTokens);
+  }
   const flatCost = metadata && typeof metadata.flatCost === 'number'
     ? metadata.flatCost
     : Number.NaN;
   if (Number.isFinite(flatCost) && flatCost >= 0) {
-    return flatCost;
+    return estimateTokensFromUsd(flatCost);
   }
-  return fallback;
+  if (typeof fallback === 'number' && Number.isFinite(fallback) && fallback >= 0) {
+    return Math.round(fallback);
+  }
+  return 0;
 }
 
 function toBase64(arrayBuffer) {
@@ -983,10 +997,10 @@ async function transcribeAudio({ base64, filename = 'speech.webm', mimeType = 'a
   const adapter = await ensureAdapter(provider);
   const costMetadata = getCostMetadata(adapter);
   const transcribeMeta = costMetadata.transcribe || {};
-  const estimatedCost = resolveFlatCost(transcribeMeta, 0.005);
-  if (!costTracker.canSpend(estimatedCost)) {
-    logger.warn('Transcription aborted due to cost limit.', { estimatedCost });
-    throw new Error('Cost limit reached for transcription.');
+  const estimatedTokens = resolveFlatTokenEstimate(transcribeMeta, 1200);
+  if (costTracker && !costTracker.canSpend(estimatedTokens)) {
+    logger.warn('Transcription aborted due to token limit.', { estimatedTokens });
+    throw new Error('Token limit reached for transcription.');
   }
   const { apiKey, providerId } = await resolveApiKey(provider);
   ensureKeyAvailable(apiKey, providerId);
@@ -998,8 +1012,18 @@ async function transcribeAudio({ base64, filename = 'speech.webm', mimeType = 'a
     model: transcribeMeta.model,
   });
 
-  costTracker.recordFlat(transcribeMeta.label || 'stt', estimatedCost, { type: transcribeMeta.label || 'stt' });
-  await persistUsage();
+  if (costTracker) {
+    const transcriptTokens = costTracker.estimateTokensFromText(result.text);
+    costTracker.recordFlat(transcribeMeta.label || 'stt', {
+      completionTokens: transcriptTokens,
+      totalTokens: transcriptTokens,
+      metadata: {
+        type: transcribeMeta.label || 'stt',
+        estimatedTokens,
+      },
+    });
+    await persistUsage();
+  }
   logger.info('Transcription completed.', { provider: providerId, model: transcribeMeta.model });
   return result.text;
 }
@@ -1011,6 +1035,32 @@ async function synthesiseSpeech(payload = {}, resolvedSettings = null) {
   const effectiveVoice = settings.voice || (settings.type === 'cloud' ? 'alloy' : null);
   const languageCode = settings.languageCode || null;
   const metrics = settings.type === 'cloud' ? clampSpeechInput(text) : createSpeechMetrics(text);
+  let synthesiseMetadata = null;
+  let synthesiseProviderId = null;
+  let estimatedTokensForLimit = Number.isFinite(metrics.deliveredTokenCount)
+    ? Math.max(0, metrics.deliveredTokenCount)
+    : 0;
+
+  if (adapter.type === 'cloud') {
+    synthesiseProviderId = await getActiveProviderId(settings.providerId);
+    const providerAdapter = await ensureAdapter(synthesiseProviderId);
+    const costMetadata = getCostMetadata(providerAdapter) || {};
+    synthesiseMetadata = costMetadata.synthesise || null;
+    const fallbackEstimate = resolveFlatTokenEstimate(
+      synthesiseMetadata,
+      metrics.deliveredTokenCount,
+    );
+    if (!Number.isFinite(estimatedTokensForLimit) || estimatedTokensForLimit <= 0) {
+      estimatedTokensForLimit = Math.max(0, fallbackEstimate);
+    }
+    if (costTracker && estimatedTokensForLimit > 0 && !costTracker.canSpend(estimatedTokensForLimit)) {
+      logger.warn('Speech synthesis aborted due to token limit.', {
+        estimatedTokens: estimatedTokensForLimit,
+        provider: synthesiseProviderId,
+      });
+      throw new Error('Token limit reached for speech synthesis.');
+    }
+  }
 
   logger.info('Speech synthesis request received.', {
     provider: settings.providerId,
@@ -1050,6 +1100,36 @@ async function synthesiseSpeech(payload = {}, resolvedSettings = null) {
 
   const resolvedProvider = synthesisResult?.providerId
     || (adapter.type === 'local' ? 'local' : settings.providerId || 'auto');
+
+  if (adapter.type === 'cloud') {
+    if (!synthesiseMetadata || (synthesiseProviderId && resolvedProvider !== synthesiseProviderId)) {
+      const providerAdapter = await ensureAdapter(resolvedProvider);
+      const costMetadata = getCostMetadata(providerAdapter) || {};
+      synthesiseMetadata = costMetadata.synthesise || null;
+    }
+    const usageLabel = synthesisResult?.usageLabel
+      || synthesiseMetadata?.label
+      || 'tts';
+    const recordedTokensBase = Number.isFinite(metrics.deliveredTokenCount)
+      ? Math.max(0, metrics.deliveredTokenCount)
+      : 0;
+    const recordedTokens = recordedTokensBase > 0
+      ? recordedTokensBase
+      : Math.max(0, resolveFlatTokenEstimate(synthesiseMetadata, estimatedTokensForLimit));
+    if (costTracker && recordedTokens >= 0) {
+      costTracker.recordFlat(usageLabel, {
+        promptTokens: recordedTokens,
+        totalTokens: recordedTokens,
+        metadata: {
+          type: usageLabel,
+          truncated: metrics.truncated,
+          deliveredTokenCount: metrics.deliveredTokenCount,
+          omittedTokenCount: metrics.omittedTokenCount,
+        },
+      });
+      await persistUsage();
+    }
+  }
 
   return {
     audio: {
@@ -1120,7 +1200,7 @@ async function getSummary({ url, segment, language, provider }) {
     summary,
     provider: providerUsed,
     model: result?.model,
-    cost: result?.cost_estimate,
+    tokens: result?.total_tokens,
   });
   await persistCache();
   return {

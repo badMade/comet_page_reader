@@ -19,7 +19,7 @@ Comet Page Reader is a cross-browser WebExtensions add-on that summarises web pa
 Comet Page Reader focuses on three responsibilities:
 
 - **Summarise content:** A content script extracts readable text from the current tab, slices it into manageable segments, and forwards them to the service worker.
-- **Control spend:** The service worker maintains an internal cache and cost tracker, enforcing a configurable spend ceiling (defaults to USD 5.00 via `DEFAULT_LIMIT_USD` in `utils/cost.js`).
+- **Control usage:** The service worker maintains an internal cache and token tracker, enforcing a configurable monthly token ceiling (defaults to 15,000 tokens via `DEFAULT_TOKEN_LIMIT` in `utils/cost.js`).
 - **Deliver an accessible UI:** The popup provides API key management, localisation controls, push-to-talk capture, and audio playback so users can hear the generated summaries immediately.
 
 ## Installation
@@ -58,16 +58,16 @@ Set the variables in your shell before launching development tooling or rely on 
    - **Summarise page:** Generates summaries for each extracted segment and lists them in the popup.
    - **Read aloud:** Requests speech for the first summary and plays it inside the popup (requires a provider that exposes TTS, e.g. OpenAI).
    - **Push to talk:** Hold the button to dictate commands such as “summary this page” or “read the first result”. Speech-to-text responses automatically trigger matching actions (requires a provider with transcription support).
-5. Monitor the **Usage** panel to see cumulative spend, limit, and the last reset time. Use **Reset usage** whenever you want to clear historical costs.
+5. Monitor the **Usage** panel to see cumulative token usage, the configured limit, and the last reset time. Use **Reset usage** whenever you want to clear historical statistics.
 
 ### Programmatic access
 
 While the extension is primarily UI-driven, its utility modules can be imported into tests or tooling thanks to ES module exports. For example:
 
 ```javascript
-import { createCostTracker } from './utils/cost.js';
+import { createCostTracker, DEFAULT_TOKEN_LIMIT } from './utils/cost.js';
 
-const tracker = createCostTracker(10);
+const tracker = createCostTracker(DEFAULT_TOKEN_LIMIT);
 tracker.record('gpt-4o-mini', 2000, 500);
 console.log(tracker.toJSON());
 ```
@@ -104,7 +104,7 @@ The [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) guide explains the message flow, 
 
 Key settings are embedded in source files so they remain easy to audit:
 
-- **Cost limit:** Adjust `DEFAULT_LIMIT_USD` in `utils/cost.js`.
+- **Token limit:** Adjust `DEFAULT_TOKEN_LIMIT` in `utils/cost.js`.
 - **Model selection:** Tweak the defaults in `background/service_worker.js` (chat, transcription, speech synthesis models) if your account prefers alternates.
 - **Locales & strings:** Update the `MESSAGES` map inside `utils/i18n.js`.
 - **Permissions:** Modify `manifest.json` for additional scopes.
@@ -128,11 +128,11 @@ routing:
   disable_paid: false
   timeout_ms: 20000
   retry_limit: 2
-  max_cost_per_call_usd: 0.01
-  max_monthly_cost_usd: 2.0
+  max_tokens_per_call: 30
+  max_monthly_tokens: 15000
 ```
 
-The router enforces both per-call and monthly spending caps. Override them with `MAX_COST_PER_CALL_USD` / `MAX_MONTHLY_COST_USD` or by editing the YAML snippet above. Routing can be dry-run with `DRY_RUN=true`, which logs the selection without issuing network calls.
+The router enforces both per-call and monthly token caps. Override them with `MAX_TOKENS_PER_CALL` / `MAX_MONTHLY_TOKENS` (or the legacy `MAX_COST_PER_CALL_USD` / `MAX_MONTHLY_COST_USD`, which are converted automatically) or by editing the YAML snippet above. Routing can be dry-run with `DRY_RUN=true`, which logs the selection without issuing network calls.
 
 #### Gemini configuration
 
@@ -161,7 +161,7 @@ The ES module structure enables lightweight unit tests. For example, you can imp
 ## Troubleshooting
 
 - **Microphone access denied:** The popup’s status area reports permission errors. Grant microphone access in browser settings and retry.
-- **Cost limit exceeded:** The service worker blocks expensive calls once the configured ceiling is reached. Lower the requested workload, reset usage from the popup, or increase `DEFAULT_LIMIT_USD`.
+- **Token limit exceeded:** The service worker blocks calls once the configured ceiling is reached. Lower the requested workload, reset usage from the popup, or increase `DEFAULT_TOKEN_LIMIT`.
 - **Firefox session storage:** Firefox currently lacks `chrome.storage.session`. The service worker falls back to an in-memory cache which resets per session.
 - **No response from content script:** Ensure the site allows content scripts (e.g. some browser pages forbid injections). Refresh the tab and retry.
 - **Provider limitations:** Some providers only implement a subset of features. For example, Gemini currently offers summarisation only; choose OpenAI or another audio-capable provider for speech synthesis or transcription.

@@ -3,78 +3,200 @@ import createLogger from './logger.js';
 const logger = createLogger({ name: 'cost-tracker' });
 
 /**
- * Cost tracking helpers shared by the background worker and popup UI.
+ * Default monthly token limit enforced by the extension when tracking API
+ * usage. The figure is intentionally conservative and roughly mirrors the
+ * previous USD-based ceiling when converted using the legacy exchange rate
+ * defined in {@link LEGACY_TOKENS_PER_USD}.
+ */
+const DEFAULT_TOKEN_LIMIT = 15000;
+
+/** Default number of completion tokens assumed when estimating usage. */
+const DEFAULT_COMPLETION_TOKEN_ESTIMATE = 400;
+
+/**
+ * Conversion rate used for translating legacy USD totals into token estimates.
+ * The ratio favours caution so that existing budgets remain protective after
+ * migrating to the token model.
+ */
+const LEGACY_TOKENS_PER_USD = 3000;
+
+const MODEL_COMPLETION_OVERRIDES = Object.freeze({
+  'gemini-1.5-flash': 350,
+  'gemini-1.5-flash-latest': 350,
+  'gemini-1.5-pro': 600,
+  'gemini-1.5-pro-latest': 600,
+  'gpt-4o-mini': 450,
+});
+
+function normaliseTimestamp(value, fallback = Date.now()) {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  return fallback;
+}
+
+function toInteger(value, fallback = 0) {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.max(0, Math.round(value));
+  }
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    if (!Number.isNaN(parsed) && Number.isFinite(parsed)) {
+      return Math.max(0, Math.round(parsed));
+    }
+  }
+  return fallback;
+}
+
+function cloneRequestMetadata(entry = {}) {
+  return Object.entries(entry).reduce((acc, [key, value]) => {
+    if (['model', 'promptTokens', 'completionTokens', 'totalTokens', 'timestamp', 'excludedFromLimit'].includes(key)) {
+      return acc;
+    }
+    if (key === 'costUsd' && typeof value === 'number' && Number.isFinite(value)) {
+      acc.legacyCostUsd = value;
+      return acc;
+    }
+    acc[key] = value;
+    return acc;
+  }, {});
+}
+
+/**
+ * Converts a USD figure into an approximate token count using the legacy
+ * exchange rate. The result is deliberately rounded to an integer.
  *
- * @module utils/cost
+ * @param {number} amountUsd - Legacy USD value.
+ * @returns {number} Estimated token count.
  */
+export function estimateTokensFromUsd(amountUsd) {
+  if (typeof amountUsd !== 'number' || !Number.isFinite(amountUsd) || amountUsd <= 0) {
+    return 0;
+  }
+  return Math.max(0, Math.round(amountUsd * LEGACY_TOKENS_PER_USD));
+}
+
+function normaliseRequest(entry = {}) {
+  const promptTokens = toInteger(entry.promptTokens, 0);
+  const completionTokens = toInteger(entry.completionTokens, 0);
+  let totalTokens = toInteger(entry.totalTokens, promptTokens + completionTokens);
+  const excludedFromLimit = entry.excludedFromLimit === true;
+  if (excludedFromLimit && totalTokens === 0) {
+    totalTokens = promptTokens + completionTokens;
+  }
+  const metadata = cloneRequestMetadata(entry);
+  const timestamp = normaliseTimestamp(entry.timestamp);
+  const model = typeof entry.model === 'string' && entry.model ? entry.model : null;
+  return {
+    model,
+    promptTokens,
+    completionTokens,
+    totalTokens,
+    timestamp,
+    excludedFromLimit,
+    ...metadata,
+  };
+}
+
+function sumTokens(requests, selector) {
+  return requests.reduce((acc, request) => acc + selector(request), 0);
+}
+
+function deriveCompletionEstimate(model) {
+  if (typeof model === 'string' && MODEL_COMPLETION_OVERRIDES[model]) {
+    return MODEL_COMPLETION_OVERRIDES[model];
+  }
+  return DEFAULT_COMPLETION_TOKEN_ESTIMATE;
+}
+
+function deriveUsageTotals(requests) {
+  const included = requests.filter(request => !request.excludedFromLimit);
+  return {
+    prompt: sumTokens(included, request => request.promptTokens || 0),
+    completion: sumTokens(included, request => request.completionTokens || 0),
+    total: sumTokens(included, request => request.totalTokens || 0),
+  };
+}
+
+function normaliseUsageSnapshot(usage) {
+  if (!usage || typeof usage !== 'object') {
+    return null;
+  }
+  const requests = Array.isArray(usage.requests) ? usage.requests.map(normaliseRequest) : [];
+  const totals = deriveUsageTotals(requests);
+  let totalPromptTokens = toInteger(usage.totalPromptTokens, totals.prompt);
+  let totalCompletionTokens = toInteger(usage.totalCompletionTokens, totals.completion);
+  let totalTokens = toInteger(usage.totalTokens, totals.total);
+  const metadata = { ...usage.metadata };
+
+  if (typeof usage.totalCostUsd === 'number' && Number.isFinite(usage.totalCostUsd)) {
+    const legacyTokenEstimate = estimateTokensFromUsd(usage.totalCostUsd);
+    if (totalTokens === 0 && legacyTokenEstimate > 0) {
+      totalTokens = legacyTokenEstimate;
+    }
+    metadata.legacyTotalCostUsd = usage.totalCostUsd;
+    metadata.legacyTokenEstimate = legacyTokenEstimate;
+  }
+
+  return {
+    totalPromptTokens,
+    totalCompletionTokens,
+    totalTokens,
+    requests,
+    lastReset: normaliseTimestamp(usage.lastReset),
+    metadata,
+  };
+}
 
 /**
- * Default monthly spending limit enforced by the extension when tracking API
- * usage. The value is intentionally conservative to provide safe defaults for
- * new users.
- */
-const DEFAULT_LIMIT_USD = 5;
-
-/**
- * Pricing table expressed in USD per 1K tokens for prompt and completion usage
- * alongside flat rates used by speech subsystems.
- */
-const MODEL_PRICING = {
-  'gpt-4o-mini': { prompt: 0.00015, completion: 0.0006 },
-  'gpt-4o-realtime-preview': { prompt: 0.0005, completion: 0.0015 },
-  'gpt-4o-audio-preview': { prompt: 0.00025, completion: 0.001 },
-  'gemini-pro': { prompt: 0.0005, completion: 0.0015 },
-  'gemini-1.0-pro': { prompt: 0.0005, completion: 0.0015 },
-  'gemini-1.5-pro': { prompt: 0.0035, completion: 0.0105 },
-  'gemini-1.5-pro-latest': { prompt: 0.0035, completion: 0.0105 },
-  'gemini-1.5-flash': { prompt: 0.00035, completion: 0.00105 },
-  'gemini-1.5-flash-latest': { prompt: 0.00035, completion: 0.00105 },
-  stt: { prompt: 0.0002, completion: 0 },
-  tts: { prompt: 0.0004, completion: 0 },
-};
-
-/**
- * Tracks AI provider usage across multiple API calls to enforce a configurable cost
- * ceiling. The tracker records every request for display in the popup UI.
+ * Tracks AI provider usage across multiple API calls to enforce a configurable
+ * token ceiling. The tracker records every request for display in the popup UI.
  */
 export class CostTracker {
   /**
    * Constructs a cost tracker instance with an optional pre-populated usage
    * snapshot.
    *
-   * @param {number} [limitUsd=DEFAULT_LIMIT_USD] - Spending ceiling in USD.
+   * @param {number} [limitTokens=DEFAULT_TOKEN_LIMIT] - Token ceiling.
    * @param {object} [usage] - Previously persisted usage state.
-   * @param {number} [usage.totalCostUsd] - The total accumulated cost in USD.
-   * @param {Array<object>} [usage.requests] - A list of recorded API requests.
-   * @param {number} [usage.lastReset] - Timestamp of the last usage reset.
    */
-  constructor(limitUsd = DEFAULT_LIMIT_USD, usage = undefined) {
-    this.limitUsd = limitUsd;
-    this.usage = usage || {
-      totalCostUsd: 0,
+  constructor(limitTokens = DEFAULT_TOKEN_LIMIT, usage = undefined) {
+    this.limitTokens = Number.isFinite(limitTokens) && limitTokens >= 0
+      ? Math.round(limitTokens)
+      : DEFAULT_TOKEN_LIMIT;
+    this.usage = normaliseUsageSnapshot(usage) || {
+      totalPromptTokens: 0,
+      totalCompletionTokens: 0,
+      totalTokens: 0,
       requests: [],
       lastReset: Date.now(),
+      metadata: {},
     };
     logger.info('Cost tracker initialised.', {
-      limitUsd: this.limitUsd,
+      limitTokens: this.limitTokens,
       preloadedRequests: this.usage.requests.length,
-      totalCostUsd: this.usage.totalCostUsd,
+      totalTokens: this.usage.totalTokens,
     });
   }
 
   /**
    * Determines whether the requested amount can be spent without breaching the
-   * configured cost ceiling.
+   * configured token ceiling.
    *
-   * @param {number} amountUsd - Additional cost in USD.
+   * @param {number} tokens - Additional token usage.
    * @returns {boolean} True when the spend is permitted.
    */
-  canSpend(amountUsd) {
-    const allowed = this.usage.totalCostUsd + amountUsd <= this.limitUsd;
+  canSpend(tokens) {
+    const additional = toInteger(tokens, 0);
+    const allowed = this.limitTokens === 0
+      ? additional === 0
+      : this.limitTokens < 0
+        ? true
+        : this.usage.totalTokens + additional <= this.limitTokens;
     logger.debug('Cost tracker spend check.', {
-      amountUsd,
-      currentTotal: this.usage.totalCostUsd,
-      limitUsd: this.limitUsd,
+      tokens: additional,
+      currentTotal: this.usage.totalTokens,
+      limitTokens: this.limitTokens,
       allowed,
     });
     return allowed;
@@ -82,63 +204,103 @@ export class CostTracker {
 
   /**
    * Records a usage event for a token-based model and accumulates the
-   * calculated cost.
+   * calculated token totals.
    *
-   * @param {string} model - Model identifier used for lookup in MODEL_PRICING.
+   * @param {string} model - Model identifier.
    * @param {number} promptTokens - Tokens submitted in the request.
    * @param {number} completionTokens - Tokens returned by the response.
    * @param {Object} [metadata={}] - Additional contextual information.
-   * @returns {number} USD amount recorded for the event.
+   * @returns {number} Total tokens recorded for the event.
    */
   record(model, promptTokens, completionTokens, metadata = {}) {
-    const pricing = MODEL_PRICING[model] || MODEL_PRICING['gpt-4o-mini'];
-    const promptCost = (promptTokens / 1000) * (pricing.prompt || 0);
-    const completionCost = (completionTokens / 1000) * (pricing.completion || 0);
-    const amount = promptCost + completionCost;
-    this.usage.totalCostUsd += amount;
-    this.usage.requests.push({
-      model,
-      promptTokens,
-      completionTokens,
-      costUsd: amount,
+    const safePrompt = toInteger(promptTokens, 0);
+    const safeCompletion = toInteger(completionTokens, 0);
+    const totalTokens = safePrompt + safeCompletion;
+    const cleanedMetadata = { ...metadata };
+    const excluded = cleanedMetadata.excludedFromLimit === true;
+    delete cleanedMetadata.promptTokens;
+    delete cleanedMetadata.completionTokens;
+    delete cleanedMetadata.totalTokens;
+    delete cleanedMetadata.excludedFromLimit;
+    const entry = {
+      model: typeof model === 'string' ? model : null,
+      promptTokens: safePrompt,
+      completionTokens: safeCompletion,
+      totalTokens,
       timestamp: Date.now(),
-      ...metadata,
-    });
+      excludedFromLimit: excluded,
+      ...cleanedMetadata,
+    };
+    this.usage.requests.push(entry);
+    if (!excluded) {
+      this.usage.totalPromptTokens += safePrompt;
+      this.usage.totalCompletionTokens += safeCompletion;
+      this.usage.totalTokens += totalTokens;
+    }
     logger.info('Recorded token usage event.', {
       model,
-      promptTokens,
-      completionTokens,
-      amount,
-      totalCostUsd: this.usage.totalCostUsd,
+      promptTokens: safePrompt,
+      completionTokens: safeCompletion,
+      totalTokens,
+      excludedFromLimit: excluded,
+      totalUsageTokens: this.usage.totalTokens,
     });
-    return amount;
+    return totalTokens;
   }
 
   /**
    * Records a usage event for models that bill on a flat-fee basis such as
    * speech synthesis and transcription.
    *
-   * @param {string} model - Logical model group to attribute the cost to.
-   * @param {number} amountUsd - Flat USD amount spent.
+   * @param {string} model - Logical model group to attribute the tokens to.
+   * @param {number|object} descriptor - Token count or descriptor object.
    * @param {Object} [metadata={}] - Additional contextual metadata.
-   * @returns {number} Recorded USD amount.
+   * @returns {number} Recorded token total.
    */
-  recordFlat(model, amountUsd, metadata = {}) {
-    this.usage.totalCostUsd += amountUsd;
-    this.usage.requests.push({
-      model,
-      promptTokens: 0,
-      completionTokens: 0,
-      costUsd: amountUsd,
-      timestamp: Date.now(),
+  recordFlat(model, descriptor, metadata = {}) {
+    let promptTokens = 0;
+    let completionTokens = 0;
+    let totalTokens = 0;
+    let excludedFromLimit = false;
+    let extraMetadata = {};
+
+    if (typeof descriptor === 'number' && Number.isFinite(descriptor)) {
+      totalTokens = toInteger(descriptor, 0);
+    } else if (descriptor && typeof descriptor === 'object') {
+      promptTokens = toInteger(descriptor.promptTokens, 0);
+      completionTokens = toInteger(descriptor.completionTokens, 0);
+      totalTokens = toInteger(descriptor.totalTokens, promptTokens + completionTokens);
+      excludedFromLimit = descriptor.excludedFromLimit === true;
+      extraMetadata = descriptor.metadata && typeof descriptor.metadata === 'object'
+        ? descriptor.metadata
+        : {};
+    }
+
+    if (totalTokens > 0 && promptTokens + completionTokens === 0) {
+      completionTokens = totalTokens;
+    }
+
+    if (totalTokens === 0 && !excludedFromLimit) {
+      excludedFromLimit = true;
+    }
+
+    const entryMetadata = {
+      ...extraMetadata,
       ...metadata,
+    };
+
+    if (excludedFromLimit) {
+      entryMetadata.excludedFromLimit = true;
+      if (!entryMetadata.exclusionReason) {
+        entryMetadata.exclusionReason = 'no-token-estimate';
+      }
+    }
+
+    return this.record(model, promptTokens, completionTokens, {
+      totalTokens,
+      excludedFromLimit,
+      ...entryMetadata,
     });
-    logger.info('Recorded flat usage event.', {
-      model,
-      amountUsd,
-      totalCostUsd: this.usage.totalCostUsd,
-    });
-    return amountUsd;
   }
 
   /**
@@ -146,15 +308,18 @@ export class CostTracker {
    * purposes.
    */
   reset() {
-    this.usage.totalCostUsd = 0;
+    this.usage.totalPromptTokens = 0;
+    this.usage.totalCompletionTokens = 0;
+    this.usage.totalTokens = 0;
     this.usage.requests = [];
     this.usage.lastReset = Date.now();
+    this.usage.metadata = {};
     logger.warn('Cost tracker reset invoked.', { timestamp: this.usage.lastReset });
   }
 
   /**
    * Provides a rough token estimate based on the word count. Used for
-   * projecting costs when a provider does not return token usage data.
+   * projecting tokens when a provider does not return usage data.
    *
    * @param {string} text - Input text.
    * @returns {number} Estimated token count.
@@ -169,29 +334,29 @@ export class CostTracker {
   }
 
   /**
-   * Estimates the cost for generating a summary when only the source text is
-   * known.
+   * Estimates the token usage for generating a summary when only the source
+   * text is known.
    *
-   * @param {string} model - Model identifier used for pricing lookup.
+   * @param {string} model - Model identifier used for overrides.
    * @param {string} text - Source text that will be summarised.
-   * @param {number} [responseLength=400] - Expected completion length in tokens.
-   * @returns {number} Estimated USD amount.
+   * @param {number} [responseLength] - Expected completion length in tokens.
+   * @returns {{promptTokens: number, completionTokens: number, totalTokens: number}}
+   *   Estimated token breakdown.
    */
-  estimateCostForText(model, text, responseLength = 400) {
+  estimateTokenUsage(model, text, responseLength = undefined) {
     const promptTokens = this.estimateTokensFromText(text);
-    const completionTokens = responseLength;
-    const pricing = MODEL_PRICING[model] || MODEL_PRICING['gpt-4o-mini'];
-    const estimatedCost = (
-      (promptTokens / 1000) * (pricing.prompt || 0) +
-      (completionTokens / 1000) * (pricing.completion || 0)
+    const completionTokens = toInteger(
+      responseLength,
+      deriveCompletionEstimate(model),
     );
-    logger.debug('Estimated cost for text.', {
+    const totalTokens = promptTokens + completionTokens;
+    logger.debug('Estimated tokens for text.', {
       model,
       promptTokens,
       completionTokens,
-      estimatedCost,
+      totalTokens,
     });
-    return estimatedCost;
+    return { promptTokens, completionTokens, totalTokens };
   }
 
   /**
@@ -202,25 +367,28 @@ export class CostTracker {
   toJSON() {
     logger.trace('Serialising cost tracker snapshot.', {
       requestCount: this.usage.requests.length,
-      totalCostUsd: this.usage.totalCostUsd,
+      totalTokens: this.usage.totalTokens,
     });
-    return { ...this.usage, limitUsd: this.limitUsd };
+    return {
+      ...this.usage,
+      limitTokens: this.limitTokens,
+    };
   }
 }
 
 /**
  * Factory helper used by the service worker to create a tracker instance.
  *
- * @param {number} limitUsd - Spending limit.
+ * @param {number} limitTokens - Token limit.
  * @param {Object} [usage] - Pre-populated usage state.
  * @returns {CostTracker} Configured tracker instance.
  */
-export function createCostTracker(limitUsd, usage) {
+export function createCostTracker(limitTokens, usage) {
   logger.debug('Creating cost tracker via factory.', {
-    limitUsd,
+    limitTokens,
     hasUsage: Boolean(usage),
   });
-  return new CostTracker(limitUsd, usage);
+  return new CostTracker(limitTokens, usage);
 }
 
-export { DEFAULT_LIMIT_USD, MODEL_PRICING };
+export { DEFAULT_TOKEN_LIMIT };

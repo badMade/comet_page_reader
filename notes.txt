@@ -21,19 +21,19 @@
    - Summarise page: Generates summaries for each detected segment.
    - Read aloud: Requests speech synthesis for the leading summary (requires a provider with TTS support, e.g. OpenAI).
    - Push to talk: Holds the microphone button for voice commands that map to extension actions (requires transcription support).
-4. Review the usage panel for running cost totals and reset the meter when needed.
+4. Review the usage panel for running token totals and reset the meter when needed.
 5. Use the highlighted segments on the page to cross-reference generated summaries.
 
 ## How It Works Internally
 - Content script (content/content.js): Extracts visible text, tracks DOM mutations, and synchronises segment metadata with the background worker.
-- Background service worker (background/service_worker.js): Manages provider selection, caches summaries, enforces spend limits, and fulfils popup requests.
+- Background service worker (background/service_worker.js): Manages provider selection, caches summaries, enforces token limits, and fulfils popup requests.
 - Adapters (background/adapters/*.js): Wrap individual AI providers so the service worker can switch implementations without changing the call sites.
-- Utilities (utils/*.js): Provide cost tracking, localisation, audio helpers, DOM traversal, and secure storage abstractions for both runtime and tests.
+- Utilities (utils/*.js): Provide usage tracking, localisation, audio helpers, DOM traversal, and secure storage abstractions for both runtime and tests.
 - Popup UI (popup/): Presents controls for API keys, language/voice preferences, and summary playback while displaying usage statistics.
 
 ## Troubleshooting Tips
 - Missing API key: The popup shows an error banner; open the settings panel and re-save the key. Stored keys live only inside extension storage.
-- Exceeded spend limit: The popup usage panel indicates limit breaches. Adjust DEFAULT_LIMIT_USD in utils/cost.js or reset the usage counter.
+- Exceeded token limit: The popup usage panel indicates limit breaches. Adjust DEFAULT_TOKEN_LIMIT in utils/cost.js or reset the usage counter.
 - Content script not responding: Reload the target tab; some browser pages block extension scripts.
 - Audio playback fails: Confirm the selected voice is available, that the provider supports speech synthesis, and that the browser has permission to use the speaker and microphone.
 - Provider limitations: Gemini only handles summarisation and will return descriptive errors when asked to transcribe or synthesise speech; switch to OpenAI or another audio-capable provider for those features.

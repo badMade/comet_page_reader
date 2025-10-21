@@ -79,7 +79,13 @@ test('popup initialises immediately when DOMContentLoaded already fired', async 
           apiKey: null,
           lastUpdated: null,
         },
-        'comet:getUsage': { totalCostUsd: 0, limitUsd: 5, lastReset: Date.now() },
+        'comet:getUsage': {
+          totalTokens: 0,
+          totalPromptTokens: 0,
+          totalCompletionTokens: 0,
+          limitTokens: 15000,
+          lastReset: Date.now(),
+        },
         'comet:setProvider': {
           provider: 'openai',
           requiresApiKey: true,
