@@ -765,7 +765,7 @@ function beginTtsProgress(context, details = {}) {
 function formatTtsProgressStatusMessage(chunkIndex = null, chunkCount = null) {
   let message = 'Generating audio…';
   if (Number.isFinite(chunkIndex) && Number.isFinite(chunkCount) && chunkCount > 0) {
-    const current = Math.min(chunkCount, Math.max(0, chunkIndex)) + 1;
+    const current = Math.min(chunkCount, Math.max(0, chunkIndex) + 1);
     message = `Generating audio ${current}/${chunkCount}…`;
   }
 
