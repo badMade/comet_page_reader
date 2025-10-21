@@ -260,13 +260,33 @@ export function chunkTextByTokens(text, maxTokens, options = {}) {
       pushBuffer();
       setOverlap();
       const wordChunks = splitSentenceByWords(sentence, maxTokens);
+      const validWordChunks = [];
 
       for (const chunk of wordChunks) {
         if (!chunk) {
           continue;
         }
         chunks.push(chunk);
+        validWordChunks.push(chunk);
       }
+
+      if (overlapCount) {
+        const overlapCandidates = validWordChunks.slice(-overlapCount);
+
+        if (overlapCandidates.length) {
+          const { sentences: normalised, text } = normaliseOverlap(overlapCandidates, maxTokens);
+          bufferSentences = [...normalised];
+          bufferText = text;
+        } else {
+          bufferSentences = [];
+          bufferText = '';
+        }
+      } else {
+        bufferSentences = [];
+        bufferText = '';
+      }
+
+      hasFreshContent = false;
 
       continue;
     }

@@ -41,6 +41,16 @@ describe('chunkTextByTokens', () => {
     }
   });
 
+  it('does not duplicate prior sentences when splitting oversized sentences with overlap', () => {
+    const longSentence = 'This sentence is intentionally constructed to be quite long so that it exceeds the maximum token threshold when evaluated by the heuristic splitter and therefore needs to be divided into several smaller pieces that still read coherently.';
+    const text = `A. ${longSentence} B.`;
+    const chunks = chunkTextByTokens(text, 40, { sentenceOverlap: 1 });
+
+    expect(chunks[0]).toBe('A.');
+    expect(chunks).not.toContain('A. B.');
+    expect(chunks[chunks.length - 1]).toContain('B.');
+  });
+
   it('splits lengthy words into character-based chunks', () => {
     const longWord = `${'supercalifragilisticexpialidocious'.repeat(5)}.`;
     const maxTokens = 10;
