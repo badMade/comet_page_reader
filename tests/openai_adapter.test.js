@@ -247,6 +247,34 @@ test('synthesise posts JSON payload and returns audio metadata', async () => {
   assert.ok(result.arrayBuffer instanceof ArrayBuffer);
 });
 
+test('synthesise accepts planner-sized chunks below provider cap', async () => {
+  let callCount = 0;
+  const fetchStub = async () => {
+    callCount += 1;
+    return {
+      ok: true,
+      status: 200,
+      headers: new Map([['content-type', 'audio/mp3']]),
+      arrayBuffer: async () => new ArrayBuffer(8),
+    };
+  };
+  const adapter = createAdapter({}, { fetchImpl: fetchStub });
+  const tokenCount = 4032;
+  const textInput = Array.from({ length: tokenCount }, (_, index) => `token${index}`).join(' ');
+
+  const result = await adapter.synthesise({
+    apiKey: 'key',
+    text: textInput,
+    voice: 'alloy',
+    format: 'mp3',
+    maxInputTokens: 4096,
+  });
+
+  assert.equal(callCount, 1, 'fetch should be invoked once for planner-sized chunk');
+  assert.equal(result.mimeType, 'audio/mp3');
+  assert.ok(result.arrayBuffer instanceof ArrayBuffer);
+});
+
 test('synthesise surfaces API errors', async () => {
   const fetchStub = async () => ({
     ok: false,
