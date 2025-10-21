@@ -16,8 +16,8 @@ const DEFAULT_PROVIDER_CONFIG = Object.freeze({
 // Generous per-call token budget that comfortably covers the prompt and
 // completion estimates used by the summariser. The value maps roughly to a
 // couple of thousand prompt tokens plus the 400-token completion fallback.
-// Keeping it constant (rather than estimateTokensFromUsd(0.01)) gives
-// predictable ceilings for summarisation prompts.
+// Keeping it constant (rather than estimateTokensFromUsd(0.01))
+// ensures predictable ceilings for summarisation prompts.
 const DEFAULT_MAX_TOKENS_PER_CALL = 2400;
 
 const DEFAULT_ROUTING_CONFIG = Object.freeze({
