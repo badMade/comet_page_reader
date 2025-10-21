@@ -128,11 +128,11 @@ routing:
   disable_paid: false
   timeout_ms: 20000
   retry_limit: 2
-  max_tokens_per_call: 30
-  max_monthly_tokens: 15000
+  max_tokens_per_call: 1200
+  max_monthly_tokens: 6000
 ```
 
-The router enforces both per-call and monthly token caps. Override them with `MAX_TOKENS_PER_CALL` / `MAX_MONTHLY_TOKENS` (or the legacy `MAX_COST_PER_CALL_USD` / `MAX_MONTHLY_COST_USD`, which are converted automatically) or by editing the YAML snippet above. Routing can be dry-run with `DRY_RUN=true`, which logs the selection without issuing network calls.
+The router enforces both per-call and monthly token caps. Fresh installs now default to 1,200 tokens per call—enough headroom for a generous prompt and completion without exceeding typical provider limits. Override the limits with `MAX_TOKENS_PER_CALL` / `MAX_MONTHLY_TOKENS` (or the legacy `MAX_COST_PER_CALL_USD` / `MAX_MONTHLY_COST_USD`, which are converted automatically) or by editing the YAML snippet above. Routing can be dry-run with `DRY_RUN=true`, which logs the selection without issuing network calls.
 
 #### Gemini configuration
 
