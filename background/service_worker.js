@@ -417,7 +417,7 @@ function createCloudTtsAdapter(providerKey) {
         const response = await adapter.synthesise({
           apiKey,
           text,
-          voice: voice || 'alloy',
+          voice: voice, // Let the underlying adapter handle defaults or pass a provider-aware default
           format: 'mp3',
           model: synthMeta.model,
           languageCode,
