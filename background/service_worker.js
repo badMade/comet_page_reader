@@ -118,6 +118,11 @@ const SPEECH_TOKEN_PATTERN = /(?:\p{Script=Han}|\p{Script=Hiragana}|\p{Script=Ka
 const SPEECH_TOKEN_PATTERN_SOURCE = SPEECH_TOKEN_PATTERN.source;
 const SPEECH_TOKEN_PATTERN_FLAGS = SPEECH_TOKEN_PATTERN.flags;
 const TTS_STORAGE_KEYS = Object.freeze(['ttsProvider', 'ttsVoice', 'ttsLanguage']);
+const TTS_PROVIDER_ALIAS_MAP = Object.freeze({
+  localtts: Object.freeze({ type: 'local', providerId: 'local' }),
+  googletts: Object.freeze({ type: 'cloud', providerId: 'auto' }),
+  amazonpolly: Object.freeze({ type: 'cloud', providerId: 'auto' }),
+});
 
 function getAdapterKey(providerId) {
   const normalised = normaliseProviderId(providerId, providerId);
@@ -324,6 +329,9 @@ function classifyTtsProvider(preference) {
     return { type: 'cloud', providerId: 'auto' };
   }
   const lower = normalised.toLowerCase();
+  if (Object.prototype.hasOwnProperty.call(TTS_PROVIDER_ALIAS_MAP, lower)) {
+    return TTS_PROVIDER_ALIAS_MAP[lower];
+  }
   if (lower === 'local' || lower === 'browser' || lower === 'system' || lower === 'chrome') {
     return { type: 'local', providerId: 'local' };
   }

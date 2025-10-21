@@ -11,6 +11,7 @@ test('loadPreferences falls back to a supported voice and persists it', async ()
     navigator: globalThis.navigator,
     Audio: globalThis.Audio,
     URL: globalThis.URL,
+    speechSynthesis: globalThis.speechSynthesis,
   };
 
   try {
@@ -18,14 +19,14 @@ test('loadPreferences falls back to a supported voice and persists it', async ()
     const { chrome, getElement } = setupPopupTestEnvironment();
     globalThis.document.readyState = 'loading';
 
-    globalThis.document.getElementById('voiceSelect');
-    const voiceSelect = getElement('voiceSelect');
+    globalThis.document.getElementById('ttsVoiceSelect');
+    const voiceSelect = getElement('ttsVoiceSelect');
 
     const recordedWrites = [];
-    chrome.storage.sync.get = (_keys, callback) => {
-      callback({ voice: 'lydia' });
+    chrome.storage.local.get = (_keys, callback) => {
+      callback({ ttsVoice: 'lydia' });
     };
-    chrome.storage.sync.set = (values, callback) => {
+    chrome.storage.local.set = (values, callback) => {
       recordedWrites.push(values);
       callback?.();
     };
@@ -47,7 +48,7 @@ test('loadPreferences falls back to a supported voice and persists it', async ()
 
     assert.equal(voiceSelect.value, 'alloy', 'voice select should fall back to default voice');
     assert.ok(
-      recordedWrites.some(entry => entry.voice === 'alloy'),
+      recordedWrites.some(entry => entry.ttsVoice === 'alloy'),
       'invalid stored voice should be overwritten with default voice'
     );
   } finally {
@@ -80,6 +81,11 @@ test('loadPreferences falls back to a supported voice and persists it', async ()
       delete globalThis.URL;
     } else {
       globalThis.URL = previousGlobals.URL;
+    }
+    if (previousGlobals.speechSynthesis === undefined) {
+      delete globalThis.speechSynthesis;
+    } else {
+      globalThis.speechSynthesis = previousGlobals.speechSynthesis;
     }
   }
 });
