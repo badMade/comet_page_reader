@@ -4,8 +4,9 @@ import assert from 'node:assert/strict';
 import { installChromeStub, importServiceWorker } from './fixtures/chrome-stub.js';
 
 test('free audio adapters bypass cost limits and retain zero spend', async () => {
-  const { uninstall, persistentStore } = installChromeStub();
-  persistentStore['comet:apiKey:openai_paid'] = 'test-key';
+  const { uninstall, localStore } = installChromeStub();
+  localStore['comet:apiKey:openai_paid'] = 'test-key';
+  localStore['comet:apiKeyMeta:openai_paid'] = { lastUpdated: Date.now() };
 
   let module;
   try {

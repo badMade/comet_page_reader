@@ -54,6 +54,7 @@ test('popup initialises immediately when DOMContentLoaded already fired', async 
     Audio: globalThis.Audio,
     URL: globalThis.URL,
     fetch: globalThis.fetch,
+    speechSynthesis: globalThis.speechSynthesis,
   };
 
   const elementCache = new Map();
@@ -66,7 +67,7 @@ test('popup initialises immediately when DOMContentLoaded already fired', async 
 
   const recordedMessages = [];
   const recordedStorageWrites = [];
-  let requestedSyncKeys;
+  let requestedLocalKeys;
   const runtimeStub = {
     lastError: null,
     sendMessage(message, callback) {
@@ -108,9 +109,9 @@ test('popup initialises immediately when DOMContentLoaded already fired', async 
     globalThis.chrome = {
       runtime: runtimeStub,
       storage: {
-        sync: {
+        local: {
           get: (keys, cb) => {
-            requestedSyncKeys = keys;
+            requestedLocalKeys = keys;
             cb({ playbackRate: 1.75 });
           },
           set: (items, cb) => {
@@ -122,7 +123,13 @@ test('popup initialises immediately when DOMContentLoaded already fired', async 
       tabs: { query: (_opts, cb) => cb?.([]) },
       scripting: { executeScript: (_opts, cb) => cb?.([{ result: true }]) },
     };
-    globalThis.window = { addEventListener: () => {} };
+    const speechSynthesisStub = {
+      getVoices: () => [],
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    };
+    globalThis.window = { addEventListener: () => {}, speechSynthesis: speechSynthesisStub };
+    globalThis.speechSynthesis = speechSynthesisStub;
     globalThis.navigator = {
       mediaDevices: { getUserMedia: async () => ({ getTracks: () => [] }) },
     };
@@ -174,7 +181,10 @@ test('popup initialises immediately when DOMContentLoaded already fired', async 
     assert.ok(setApiKeyMessage, 'API key submission should call runtime messaging');
     assert.equal(setApiKeyMessage.payload.apiKey, 'test-key');
 
-    assert.deepEqual(requestedSyncKeys, ['language', 'voice', 'playbackRate']);
+    assert.deepEqual(
+      requestedLocalKeys,
+      ['language', 'ttsLanguage', 'ttsProvider', 'ttsVoice', 'playbackRate']
+    );
 
     const playbackSelect = getElement('playbackRateSelect');
     assert.equal(playbackSelect.value, '1.75');
@@ -230,6 +240,11 @@ test('popup initialises immediately when DOMContentLoaded already fired', async 
       delete globalThis.URL;
     } else {
       globalThis.URL = previousGlobals.URL;
+    }
+    if (previousGlobals.speechSynthesis === undefined) {
+      delete globalThis.speechSynthesis;
+    } else {
+      globalThis.speechSynthesis = previousGlobals.speechSynthesis;
     }
   }
 });

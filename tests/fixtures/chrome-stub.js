@@ -52,7 +52,7 @@ function createStorageArea(store) {
 
 export function installChromeStub(persistent = {}, session = {}) {
   const persistentStore = { ...persistent };
-  const localStore = {};
+  const localStore = persistentStore;
   const sessionStore = { ...session };
 
   const storage = {

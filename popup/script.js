@@ -96,6 +96,87 @@ const mockHandlers = {
 };
 
 const DEFAULT_VOICE = 'alloy';
+const DEFAULT_TTS_PROVIDER = 'localTTS';
+
+const TTS_PROVIDER_OPTIONS = Object.freeze([
+  Object.freeze({ id: 'googleTTS', label: 'Google Cloud Text-to-Speech' }),
+  Object.freeze({ id: 'amazonPolly', label: 'Amazon Polly' }),
+  Object.freeze({ id: 'localTTS', label: 'Browser (Local)' }),
+]);
+
+const CLOUD_TTS_VOICE_OPTIONS = Object.freeze({
+  googleTTS: Object.freeze(['en-US-Neural2-A', 'en-GB-Neural2-C', 'es-ES-Neural2-B']),
+  amazonPolly: Object.freeze(['Joanna', 'Matthew', 'Lupe', 'Amy']),
+});
+
+const ttsProviderLookup = Object.freeze(
+  TTS_PROVIDER_OPTIONS.reduce((acc, option) => {
+    acc[option.id.toLowerCase()] = option.id;
+    return acc;
+  }, {})
+);
+
+let localVoiceListenerAttached = false;
+
+function normaliseTtsProviderId(value, fallback = DEFAULT_TTS_PROVIDER) {
+  if (typeof value !== 'string') {
+    return fallback;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return fallback;
+  }
+  const lookupKey = trimmed.toLowerCase();
+  return ttsProviderLookup[lookupKey] || fallback;
+}
+
+function getTtsProviderLabel(providerId) {
+  const normalised = normaliseTtsProviderId(providerId, providerId);
+  const option = TTS_PROVIDER_OPTIONS.find(candidate => candidate.id === normalised);
+  return option ? option.label : formatVoiceLabel(normalised);
+}
+
+function storageLocalGet(keys) {
+  if (!chrome?.storage?.local) {
+    return Promise.resolve({});
+  }
+  return new Promise(resolve => {
+    try {
+      chrome.storage.local.get(keys, items => {
+        const err = chrome?.runtime?.lastError;
+        if (err) {
+          logger.debug('Failed to read from chrome.storage.local.', { error: err });
+          resolve({});
+          return;
+        }
+        resolve(items || {});
+      });
+    } catch (error) {
+      logger.debug('chrome.storage.local.get threw unexpectedly.', { error });
+      resolve({});
+    }
+  });
+}
+
+function storageLocalSet(items) {
+  if (!chrome?.storage?.local) {
+    return Promise.resolve();
+  }
+  return new Promise(resolve => {
+    try {
+      chrome.storage.local.set(items, () => {
+        const err = chrome?.runtime?.lastError;
+        if (err) {
+          logger.debug('Failed to write to chrome.storage.local.', { error: err });
+        }
+        resolve();
+      });
+    } catch (error) {
+      logger.debug('chrome.storage.local.set threw unexpectedly.', { error });
+      resolve();
+    }
+  });
+}
 
 const state = {
   summaries: [],
@@ -110,6 +191,7 @@ const state = {
   provider: DEFAULT_PROVIDER_ID,
   providerLastSynced: null,
   providerOptions: listProviders().map(option => option.id),
+  ttsProvider: DEFAULT_TTS_PROVIDER,
   recorder: null,
   mediaStream: null,
   playbackController: null,
@@ -143,7 +225,9 @@ function assignElements() {
   elements.apiKey = qs('apiKey');
   elements.apiKeyMeta = qs('apiKeyMeta');
   elements.language = qs('languageSelect');
-  elements.voice = qs('voiceSelect');
+  elements.ttsProvider = qs('ttsProviderSelect');
+  elements.voice = qs('ttsVoiceSelect');
+  elements.saveSpeechSettings = qs('saveSpeechSettingsBtn');
   elements.playbackRateLabel = qs('playbackRateLabel');
   elements.playbackRate = qs('playbackRateSelect');
   elements.summarise = qs('summariseBtn');
@@ -170,18 +254,7 @@ function getVoiceOptions() {
 }
 
 async function persistVoicePreference(voice) {
-  if (!chrome?.storage?.sync) {
-    return;
-  }
-  await new Promise(resolve => {
-    chrome.storage.sync.set({ voice }, () => {
-      const err = chrome?.runtime?.lastError;
-      if (err) {
-        logger.debug('Failed to persist voice preference.', { error: err });
-      }
-      resolve();
-    });
-  });
+  await storageLocalSet({ ttsVoice: voice });
 }
 
 function normaliseVoiceValues(values) {
@@ -214,6 +287,91 @@ function renderVoiceSelectOptions(voices) {
     .map(voice => `<option value="${escapeHtml(voice)}">${escapeHtml(formatVoiceLabel(voice))}</option>`)
     .join('');
   voiceSelect.innerHTML = markup;
+}
+
+function renderTtsProviderOptions(selectedId = state.ttsProvider) {
+  if (!elements.ttsProvider) {
+    return;
+  }
+  const markup = TTS_PROVIDER_OPTIONS.map(option => {
+    const value = escapeHtml(option.id);
+    const label = escapeHtml(option.label);
+    return `<option value="${value}">${label}</option>`;
+  }).join('');
+  elements.ttsProvider.innerHTML = markup;
+  const chosen = normaliseTtsProviderId(selectedId);
+  elements.ttsProvider.value = chosen;
+  state.ttsProvider = chosen;
+}
+
+function getLocalSpeechVoices() {
+  if (typeof window === 'undefined' || !window.speechSynthesis) {
+    return [];
+  }
+  try {
+    const voices = window.speechSynthesis.getVoices?.() || [];
+    if (!Array.isArray(voices)) {
+      return [];
+    }
+    return normaliseVoiceValues(
+      voices
+        .map(entry => (typeof entry?.name === 'string' ? entry.name.trim() : ''))
+        .filter(Boolean)
+    );
+  } catch (error) {
+    logger.debug('Failed to read local speech synthesis voices.', { error });
+    return [];
+  }
+}
+
+async function resolveVoicesForProvider(providerId = state.ttsProvider) {
+  const normalised = normaliseTtsProviderId(providerId);
+  if (normalised === 'localTTS') {
+    return getLocalSpeechVoices();
+  }
+  const catalogue = CLOUD_TTS_VOICE_OPTIONS[normalised];
+  if (Array.isArray(catalogue)) {
+    return normaliseVoiceValues(catalogue);
+  }
+  return [];
+}
+
+function ensureLocalVoiceListener() {
+  if (localVoiceListenerAttached) {
+    return;
+  }
+  if (typeof window === 'undefined' || !window.speechSynthesis) {
+    return;
+  }
+  const handler = () => {
+    if (state.ttsProvider === 'localTTS') {
+      refreshVoiceOptions('localTTS', { persistFallback: true });
+    }
+  };
+  try {
+    if (typeof window.speechSynthesis.addEventListener === 'function') {
+      window.speechSynthesis.addEventListener('voiceschanged', handler);
+    } else {
+      window.speechSynthesis.onvoiceschanged = handler;
+    }
+    localVoiceListenerAttached = true;
+  } catch (error) {
+    logger.debug('Failed to attach voiceschanged listener.', { error });
+  }
+}
+
+function resolveSpeechProviderForBackground(providerId = state.ttsProvider) {
+  const normalised = normaliseTtsProviderId(providerId);
+  if (normalised === 'localTTS') {
+    return 'local';
+  }
+  if (normalised === 'googleTTS') {
+    return 'googleTTS';
+  }
+  if (normalised === 'amazonPolly') {
+    return 'amazonPolly';
+  }
+  return 'auto';
 }
 
 async function applyVoiceCapabilities(metadata = null, options = {}) {
@@ -267,22 +425,15 @@ async function applyVoiceCapabilities(metadata = null, options = {}) {
   return resolvedVoice;
 }
 
-async function refreshVoiceOptions(providerId = state.provider, options = {}) {
-  const normalised = normaliseProviderId(providerId, state.provider);
-  logger.debug('Refreshing voice capabilities.', { provider: normalised });
+async function refreshVoiceOptions(providerId = state.ttsProvider, options = {}) {
+  const normalised = normaliseTtsProviderId(providerId);
+  state.ttsProvider = normalised;
+  logger.debug('Refreshing TTS voice catalogue.', { provider: normalised });
   try {
-    const response = await sendMessage('comet:getVoiceCapabilities', { provider: normalised });
-    if (!response) {
-      await applyVoiceCapabilities({ availableVoices: [], preferredVoice: null }, options);
-      return;
-    }
-    const availableVoices = normaliseVoiceValues(response.availableVoices);
-    const preferredVoice = typeof response.preferredVoice === 'string'
-      ? response.preferredVoice
-      : null;
-    await applyVoiceCapabilities({ availableVoices, preferredVoice }, options);
+    const availableVoices = await resolveVoicesForProvider(normalised);
+    await applyVoiceCapabilities({ availableVoices, preferredVoice: state.voice }, options);
   } catch (error) {
-    logger.warn('Failed to refresh voice capabilities.', { error });
+    logger.warn('Failed to refresh TTS voice catalogue.', { error, provider: normalised });
     await applyVoiceCapabilities({ availableVoices: [], preferredVoice: null }, options);
   }
 }
@@ -859,6 +1010,25 @@ async function handleProviderChange(event) {
   }
 }
 
+async function handleTtsProviderChange(event) {
+  const providerId = normaliseTtsProviderId(event.target?.value, state.ttsProvider);
+  const previousProvider = state.ttsProvider;
+  logger.info('TTS provider selection changed.', {
+    previousProvider,
+    nextProvider: providerId,
+  });
+  state.ttsProvider = providerId;
+  if (elements.ttsProvider) {
+    elements.ttsProvider.value = providerId;
+  }
+  state.pendingVoicePreference = state.voice;
+  if (providerId === previousProvider) {
+    return;
+  }
+  await refreshVoiceOptions(providerId, { persistFallback: true });
+  setStatus(`${getTtsProviderLabel(providerId)} selected.`);
+}
+
 /**
  * Formats a timestamp for display using the runtime locale.
  *
@@ -1387,6 +1557,7 @@ async function readAloud() {
     summariesAvailable: state.summaries.length,
     voice: state.voice,
     language: state.language,
+    ttsProvider: state.ttsProvider,
   });
   if (!state.summaries.length) {
     await summarisePage();
@@ -1400,7 +1571,7 @@ async function readAloud() {
     text: first.summary,
     voice: state.voice,
     language: state.language,
-    provider: state.provider,
+    provider: resolveSpeechProviderForBackground(),
   });
   updateUsage(audioResult.usage);
   if (audioResult.audio?.truncated) {
@@ -1440,6 +1611,7 @@ async function readFullPage() {
     voice: state.voice,
     language: state.language,
     provider: state.provider,
+    ttsProvider: state.ttsProvider,
   });
   const tabId = await getActiveTabId();
   logger.debug('Active tab resolved for full-page narration.', { tabId });
@@ -1481,7 +1653,7 @@ async function readFullPage() {
         text: segment.text,
         voice: state.voice,
         language: state.language,
-        provider: state.provider,
+        provider: resolveSpeechProviderForBackground(),
       });
       updateUsage(response.usage);
       if (controller.cancelled) {
@@ -1574,17 +1746,7 @@ async function updateLanguage(event) {
   state.language = event.target.value;
   setLocale(state.language);
   translateUi();
-  if (chrome?.storage?.sync) {
-    await new Promise(resolve => {
-      chrome.storage.sync.set({ language: state.language }, () => {
-        const err = chrome.runtime.lastError;
-        if (err) {
-          logger.debug('Failed to persist language preference.', { error: err });
-        }
-        resolve();
-      });
-    });
-  }
+  await storageLocalSet({ language: state.language, ttsLanguage: state.language });
 }
 
 /**
@@ -1596,6 +1758,15 @@ async function updateLanguage(event) {
 async function updateVoice(event) {
   state.voice = event.target.value;
   await persistVoicePreference(state.voice);
+}
+
+async function saveSpeechSettings() {
+  await storageLocalSet({
+    ttsProvider: state.ttsProvider,
+    ttsVoice: state.voice,
+    ttsLanguage: state.language,
+  });
+  setStatus('Speech settings saved.');
 }
 
 /**
@@ -1614,17 +1785,7 @@ async function updatePlaybackRate(event) {
   if (state.audio && typeof state.audio.playbackRate === 'number') {
     state.audio.playbackRate = state.playbackRate;
   }
-  if (chrome?.storage?.sync) {
-    await new Promise(resolve => {
-      chrome.storage.sync.set({ playbackRate: state.playbackRate }, () => {
-        const err = chrome.runtime.lastError;
-        if (err) {
-          logger.debug('Failed to persist playback rate preference.', { error: err });
-        }
-        resolve();
-      });
-    });
-  }
+  await storageLocalSet({ playbackRate: state.playbackRate });
 }
 
 /**
@@ -1634,20 +1795,30 @@ async function updatePlaybackRate(event) {
  */
 async function loadPreferences() {
   logger.info('Loading persisted preferences.');
-  const stored = await new Promise(resolve => {
-    if (!chrome?.storage?.sync) {
-      resolve({});
-      return;
+  const stored = await storageLocalGet([
+    'language',
+    'ttsLanguage',
+    'ttsProvider',
+    'ttsVoice',
+    'playbackRate',
+  ]);
+  const candidateLanguage = stored.language || stored.ttsLanguage;
+  if (candidateLanguage && availableLocales().includes(candidateLanguage)) {
+    state.language = candidateLanguage;
+    if (elements.language) {
+      elements.language.value = candidateLanguage;
     }
-    chrome.storage.sync.get(['language', 'voice', 'playbackRate'], items => resolve(items || {}));
-  });
-  if (stored.language && availableLocales().includes(stored.language)) {
-    state.language = stored.language;
-    elements.language.value = stored.language;
     setLocale(state.language);
   }
-  if (typeof stored.voice === 'string' && stored.voice.trim().length > 0) {
-    state.pendingVoicePreference = stored.voice.trim();
+  const storedProvider = stored.ttsProvider
+    ? normaliseTtsProviderId(stored.ttsProvider)
+    : state.ttsProvider;
+  state.ttsProvider = storedProvider;
+  if (elements.ttsProvider) {
+    elements.ttsProvider.value = storedProvider;
+  }
+  if (typeof stored.ttsVoice === 'string' && stored.ttsVoice.trim().length > 0) {
+    state.pendingVoicePreference = stored.ttsVoice.trim();
   } else {
     state.pendingVoicePreference = null;
   }
@@ -1669,6 +1840,7 @@ async function loadPreferences() {
     language: state.language,
     voice: state.voice,
     playbackRate: state.playbackRate,
+    ttsProvider: state.ttsProvider,
   });
 }
 
@@ -1814,6 +1986,7 @@ async function refreshUsage() {
 function bindEvents() {
   elements.apiForm.addEventListener('submit', withErrorHandling(saveApiKey));
   elements.provider.addEventListener('change', withErrorHandling(handleProviderChange));
+  elements.ttsProvider.addEventListener('change', withErrorHandling(handleTtsProviderChange));
   elements.summarise.addEventListener('click', withErrorHandling(summarisePage));
   elements.read.addEventListener('click', withErrorHandling(readAloud));
   elements.readPage.addEventListener('click', withErrorHandling(readFullPage));
@@ -1835,6 +2008,7 @@ function bindEvents() {
   elements.resetUsage.addEventListener('click', withErrorHandling(resetUsage));
   elements.language.addEventListener('change', withErrorHandling(updateLanguage));
   elements.voice.addEventListener('change', withErrorHandling(updateVoice));
+  elements.saveSpeechSettings.addEventListener('click', withErrorHandling(saveSpeechSettings));
   elements.playbackRate.addEventListener('change', withErrorHandling(updatePlaybackRate));
   elements.pushToTalk.addEventListener('mousedown', withErrorHandling(startRecording));
   elements.pushToTalk.addEventListener('mouseup', withErrorHandling(stopRecording));
@@ -1870,11 +2044,14 @@ async function init() {
   // empty when the popup opens and ensures required attributes are applied
   // before asynchronous work completes.
   renderProviderOptions(state.providerOptions, state.provider);
+  renderTtsProviderOptions(state.ttsProvider);
+  ensureLocalVoiceListener();
   bindEvents();
   const loggingConfigPromise = loadLoggingConfig().catch(() => {});
   logger.info('Popup initialising.');
   await loadPreferences();
-  await refreshVoiceOptions(state.provider, { persistFallback: true });
+  renderTtsProviderOptions(state.ttsProvider);
+  await refreshVoiceOptions(state.ttsProvider, { persistFallback: true });
   const usagePromise = refreshUsage();
   let loadApiKeyError;
   try {

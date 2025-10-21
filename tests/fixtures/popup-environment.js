@@ -36,7 +36,12 @@ export function setupPopupTestEnvironment() {
   };
 
   globalThis.document = documentStub;
-  globalThis.window = { addEventListener: () => {} };
+  const speechSynthesisStub = {
+    getVoices: () => [],
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  };
+  globalThis.window = { addEventListener: () => {}, speechSynthesis: speechSynthesisStub };
   globalThis.navigator = {
     mediaDevices: {
       getUserMedia: async () => ({
@@ -44,6 +49,7 @@ export function setupPopupTestEnvironment() {
       }),
     },
   };
+  globalThis.speechSynthesis = speechSynthesisStub;
 
   globalThis.Audio = class {
     #handlers = new Map();
@@ -119,6 +125,10 @@ export function setupPopupTestEnvironment() {
     },
     storage: {
       sync: {
+        get: (_keys, callback) => callback({}),
+        set: (_values, callback) => callback(),
+      },
+      local: {
         get: (_keys, callback) => callback({}),
         set: (_values, callback) => callback(),
       },

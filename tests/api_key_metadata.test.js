@@ -238,7 +238,7 @@ test('API key metadata is stored and cleared alongside the key', async () => {
   }
 });
 
-test('API key writes fall back to local storage when sync storage fails', async () => {
+test('API key writes use local storage when sync storage fails', async () => {
   const persistentStore = new Map();
   const { uninstall, stats } = installChromeStubWithDisabledSync(persistentStore);
 
@@ -266,7 +266,7 @@ test('API key writes fall back to local storage when sync storage fails', async 
     assert.ok(metadata);
     assert.equal(typeof metadata.lastUpdated, 'number');
 
-    assert.equal(stats.syncSetCalls(), 2);
+    assert.equal(stats.syncSetCalls(), 0);
     assert.equal(stats.localSetCalls(), 2);
   } finally {
     uninstall();

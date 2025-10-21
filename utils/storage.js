@@ -92,13 +92,13 @@ const clearRuntimeLastError = runtimeApi => {
  * @throws {Error} When storage APIs are unavailable.
  */
 const resolveStorageArea = runtimeApi => {
-  if (runtimeApi.storage && runtimeApi.storage.sync) {
-    logger.trace('Using sync storage area.');
-    return runtimeApi.storage.sync;
-  }
   if (runtimeApi.storage && runtimeApi.storage.local) {
-    logger.trace('Falling back to local storage area.');
+    logger.trace('Using local storage area.');
     return runtimeApi.storage.local;
+  }
+  if (runtimeApi.storage && runtimeApi.storage.sync) {
+    logger.trace('Falling back to sync storage area.');
+    return runtimeApi.storage.sync;
   }
   logger.error('Unable to resolve persistent storage area.');
   throw new Error('Storage APIs are unavailable.');
@@ -110,8 +110,11 @@ const resolveFallbackStorageArea = runtimeApi => {
   if (!runtimeApi.storage) {
     return null;
   }
-  if (runtimeApi.storage.sync && runtimeApi.storage.local) {
-    return runtimeApi.storage.local;
+  if (runtimeApi.storage.local && runtimeApi.storage.sync) {
+    return runtimeApi.storage.sync;
+  }
+  if (runtimeApi.storage.sync) {
+    return runtimeApi.storage.sync;
   }
   return null;
 };
