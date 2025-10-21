@@ -16,6 +16,13 @@ import { readApiKey } from '../../utils/apiKeyStore.js';
 import createLogger from '../../utils/logger.js';
 import { createAdapter } from '../adapters/registry.js';
 
+const ZERO_USAGE_TOTALS = Object.freeze({
+  totalCostUsd: 0,
+  promptTokens: 0,
+  completionTokens: 0,
+  totalTokens: 0,
+});
+
 const PROVIDER_TIERS = Object.freeze({
   LOCAL: 'local',
   FREE: 'free',
@@ -572,9 +579,15 @@ export class LLMRouter {
    */
   async recordCost(model, promptTokens, completionTokens, metadata) {
     if (!this.costTracker) {
-      return 0;
+      return { costUsd: 0, totals: ZERO_USAGE_TOTALS };
     }
-    return this.costTracker.record(model, promptTokens, completionTokens, metadata);
+
+    const costUsd = this.costTracker.record(model, promptTokens, completionTokens, metadata);
+    const totals = typeof this.costTracker.getUsageTotals === 'function'
+      ? this.costTracker.getUsageTotals()
+      : ZERO_USAGE_TOTALS;
+
+    return { costUsd, totals: totals || ZERO_USAGE_TOTALS };
   }
 
   /**
@@ -725,7 +738,7 @@ export class LLMRouter {
         ? response.completionTokens
         : this.costTracker?.estimateTokensFromText(summary) || 0;
       const modelUsed = normaliseModelName(response?.model, model);
-      const cost = await this.recordCost(modelUsed, promptTokens, completionTokens, {
+      const { costUsd: cost, totals: usageTotals } = await this.recordCost(modelUsed, promptTokens, completionTokens, {
         provider: resolved,
         type: metadata?.type || 'summary',
         url: metadata?.url,
@@ -739,6 +752,7 @@ export class LLMRouter {
         model: modelUsed,
         provider: resolved,
         cost,
+        usageTotals,
       };
     };
 
@@ -828,6 +842,11 @@ export class LLMRouter {
 
       if (routing.dryRun) {
         this.logger.info('Dry run routing selected provider.', { provider: resolved });
+        const totalsSnapshot = typeof this.costTracker?.getUsageTotals === 'function'
+          ? this.costTracker.getUsageTotals()
+          : this.costTracker
+            ? ZERO_USAGE_TOTALS
+            : null;
         return {
           text: '[dry-run] no request sent',
           tokensIn: 0,
@@ -836,6 +855,7 @@ export class LLMRouter {
           provider: resolved,
           cost: 0,
           dryRun: true,
+          usageTotals: totalsSnapshot,
         };
       }
 
@@ -849,6 +869,7 @@ export class LLMRouter {
           model: result.model,
           provider: resolved,
           cost_estimate: result.cost,
+          usage_totals: result.usageTotals || null,
         };
       } catch (error) {
         this.markProviderFailure(resolved, error);

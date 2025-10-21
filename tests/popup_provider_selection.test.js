@@ -67,7 +67,14 @@ test('popup retains stored provider preference when agent allows it', async () =
       queueMicrotask(() => {
         callback({
           ok: true,
-          result: { totalCostUsd: 0, limitUsd: 5, lastReset: Date.now() },
+          result: {
+            totalCostUsd: 0,
+            limitUsd: 5,
+            promptTokens: 0,
+            completionTokens: 0,
+            totalTokens: 0,
+            lastReset: Date.now(),
+          },
         });
       });
       return undefined;
@@ -132,7 +139,14 @@ test('popup updates background provider when agent restrictions apply', async ()
       queueMicrotask(() => {
         callback({
           ok: true,
-          result: { totalCostUsd: 0, limitUsd: 5, lastReset: Date.now() },
+          result: {
+            totalCostUsd: 0,
+            limitUsd: 5,
+            promptTokens: 0,
+            completionTokens: 0,
+            totalTokens: 0,
+            lastReset: Date.now(),
+          },
         });
       });
       return undefined;

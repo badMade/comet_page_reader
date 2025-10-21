@@ -24,7 +24,13 @@ test('free audio adapters bypass cost limits and retain zero spend', async () =>
         return amount;
       },
       toJSON() {
-        return { totalCostUsd: 0, requests: [] };
+        return {
+          totalCostUsd: 0,
+          promptTokens: 0,
+          completionTokens: 0,
+          totalTokens: 0,
+          requests: [],
+        };
       },
       estimateCostForText() {
         return 0;
@@ -34,6 +40,14 @@ test('free audio adapters bypass cost limits and retain zero spend', async () =>
       },
       estimateTokensFromText() {
         return 0;
+      },
+      getUsageTotals() {
+        return {
+          totalCostUsd: 0,
+          promptTokens: 0,
+          completionTokens: 0,
+          totalTokens: 0,
+        };
       },
     };
 

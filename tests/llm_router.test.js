@@ -49,6 +49,12 @@ function createCostTracker({ defaultEstimate = 0.001, estimates = {}, canSpend =
     estimates,
     canSpendResult: canSpend,
     recorded: [],
+    totals: {
+      totalCostUsd: 0,
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0,
+    },
     estimateCostForText(model) {
       return Object.prototype.hasOwnProperty.call(this.estimates, model)
         ? this.estimates[model]
@@ -59,10 +65,17 @@ function createCostTracker({ defaultEstimate = 0.001, estimates = {}, canSpend =
     },
     record(model, promptTokens, completionTokens, metadata) {
       this.recorded.push({ model, promptTokens, completionTokens, metadata });
+      this.totals.promptTokens += promptTokens;
+      this.totals.completionTokens += completionTokens;
+      this.totals.totalTokens = this.totals.promptTokens + this.totals.completionTokens;
+      this.totals.totalCostUsd += 0.0001;
       return 0.0001;
     },
     estimateTokensFromText() {
       return 10;
+    },
+    getUsageTotals() {
+      return { ...this.totals };
     },
   };
 }
@@ -135,6 +148,12 @@ test('generate prefers free providers before paid fallbacks', async () => {
 
   assert.equal(result.provider, 'gemini_free');
   assert.equal(result.text, 'Gemini summary');
+  assert.deepEqual(result.usage_totals, {
+    totalCostUsd: 0.0001,
+    promptTokens: 5,
+    completionTokens: 5,
+    totalTokens: 10,
+  });
 });
 
 test('generate falls back to paid provider when free fails', async () => {
@@ -147,6 +166,12 @@ test('generate falls back to paid provider when free fails', async () => {
 
   assert.equal(result.provider, 'openai_paid');
   assert.equal(result.text, 'OpenAI summary');
+  assert.deepEqual(result.usage_totals, {
+    totalCostUsd: 0.0001,
+    promptTokens: 8,
+    completionTokens: 6,
+    totalTokens: 14,
+  });
 });
 
 test('generate respects disablePaid flag', async () => {

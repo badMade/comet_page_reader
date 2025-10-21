@@ -73,9 +73,23 @@ const mockHandlers = {
   'comet:setApiKey': () => Promise.resolve(null),
   'comet:setProvider': () => Promise.resolve({ provider: DEFAULT_PROVIDER_ID }),
   'comet:getUsage': () =>
-    Promise.resolve({ totalCostUsd: 0.0123, limitUsd: 5, lastReset: Date.now() - 3600 * 1000 }),
+    Promise.resolve({
+      totalCostUsd: 0.0123,
+      limitUsd: 5,
+      promptTokens: 2500,
+      completionTokens: 900,
+      totalTokens: 3400,
+      lastReset: Date.now() - 3600 * 1000,
+    }),
   'comet:resetUsage': () =>
-    Promise.resolve({ totalCostUsd: 0, limitUsd: 5, lastReset: Date.now() }),
+    Promise.resolve({
+      totalCostUsd: 0,
+      limitUsd: 5,
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0,
+      lastReset: Date.now(),
+    }),
   'comet:summarise': () =>
     Promise.resolve({
       summaries: [
@@ -84,15 +98,39 @@ const mockHandlers = {
           summary: 'This is a mock summary returned without contacting the provider.',
         },
       ],
-      usage: { totalCostUsd: 0.0123, limitUsd: 5, lastReset: Date.now() - 3600 * 1000 },
+      usage: {
+        totalCostUsd: 0.0123,
+        limitUsd: 5,
+        promptTokens: 2600,
+        completionTokens: 950,
+        totalTokens: 3550,
+        lastReset: Date.now() - 3600 * 1000,
+      },
     }),
   'comet:synthesise': () =>
     Promise.resolve({
       audio: { base64: '', mimeType: 'audio/mpeg' },
-      usage: { totalCostUsd: 0.015, limitUsd: 5, lastReset: Date.now() - 3600 * 1000 },
+      usage: {
+        totalCostUsd: 0.015,
+        limitUsd: 5,
+        promptTokens: 3000,
+        completionTokens: 1000,
+        totalTokens: 4000,
+        lastReset: Date.now() - 3600 * 1000,
+      },
     }),
   'comet:transcribe': () =>
-    Promise.resolve({ text: 'mock summary please', usage: { totalCostUsd: 0.02, limitUsd: 5, lastReset: Date.now() } }),
+    Promise.resolve({
+      text: 'mock summary please',
+      usage: {
+        totalCostUsd: 0.02,
+        limitUsd: 5,
+        promptTokens: 3500,
+        completionTokens: 1250,
+        totalTokens: 4750,
+        lastReset: Date.now(),
+      },
+    }),
 };
 
 const DEFAULT_VOICE = 'alloy';
@@ -1359,7 +1397,14 @@ async function fetchSegments(tabId) {
 /**
  * Renders usage statistics in the popup.
  *
- * @param {{limitUsd?: number, totalCostUsd?: number, lastReset?: number}} usage -
+ * @param {{
+ *   limitUsd?: number,
+ *   totalCostUsd?: number,
+ *   lastReset?: number,
+ *   promptTokens?: number,
+ *   completionTokens?: number,
+ *   totalTokens?: number,
+ * }} usage -
  *   Usage payload returned by the background worker.
  */
 function updateUsage(usage) {
@@ -1376,6 +1421,29 @@ function updateUsage(usage) {
   totalRow.querySelector('dt').textContent = 'Total';
   totalRow.querySelector('dd').textContent = `$${usage.totalCostUsd?.toFixed?.(4) || '0.0000'}`;
   elements.usage.appendChild(totalRow);
+
+  const promptRow = elements.usageRowTemplate.content.cloneNode(true);
+  promptRow.querySelector('dt').textContent = 'Prompt tokens';
+  promptRow.querySelector('dd').textContent = Number.isFinite(usage.promptTokens)
+    ? usage.promptTokens.toLocaleString()
+    : '0';
+  elements.usage.appendChild(promptRow);
+
+  const completionRow = elements.usageRowTemplate.content.cloneNode(true);
+  completionRow.querySelector('dt').textContent = 'Completion tokens';
+  completionRow.querySelector('dd').textContent = Number.isFinite(usage.completionTokens)
+    ? usage.completionTokens.toLocaleString()
+    : '0';
+  elements.usage.appendChild(completionRow);
+
+  const totalTokensRow = elements.usageRowTemplate.content.cloneNode(true);
+  totalTokensRow.querySelector('dt').textContent = 'Total tokens';
+  totalTokensRow.querySelector('dd').textContent = Number.isFinite(usage.totalTokens)
+    ? usage.totalTokens.toLocaleString()
+    : Number.isFinite(usage.promptTokens) && Number.isFinite(usage.completionTokens)
+      ? (usage.promptTokens + usage.completionTokens).toLocaleString()
+      : '0';
+  elements.usage.appendChild(totalTokensRow);
 
   const lastReset = elements.usageRowTemplate.content.cloneNode(true);
   lastReset.querySelector('dt').textContent = 'Last reset';

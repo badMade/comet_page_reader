@@ -8,6 +8,9 @@ const USAGE_STORAGE_KEY = 'comet:usage';
 test('ensureInitialised hydrates stored limit for the cost tracker', async () => {
   const storedUsage = {
     totalCostUsd: 12.5,
+    promptTokens: 1200,
+    completionTokens: 340,
+    totalTokens: 1540,
     requests: [
       {
         model: 'gpt-4o-mini',
@@ -30,6 +33,9 @@ test('ensureInitialised hydrates stored limit for the cost tracker', async () =>
 
     assert.equal(usage.limitUsd, Math.min(storedUsage.limitUsd, 2));
     assert.equal(usage.totalCostUsd, storedUsage.totalCostUsd);
+    assert.equal(usage.promptTokens, storedUsage.promptTokens);
+    assert.equal(usage.completionTokens, storedUsage.completionTokens);
+    assert.equal(usage.totalTokens, storedUsage.totalTokens);
     assert.equal(usage.requests.length, storedUsage.requests.length);
     assert.equal(usage.lastReset, storedUsage.lastReset);
 

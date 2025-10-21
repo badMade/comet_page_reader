@@ -708,7 +708,19 @@ async function ensureInitialised(providerId) {
     if (typeof savedLimit === 'number' && Number.isFinite(savedLimit)) {
       limitUsd = Math.min(configuredLimit, savedLimit);
     }
-    usage = Object.keys(snapshot).length > 0 ? snapshot : undefined;
+    usage = Object.keys(snapshot).length > 0 ? { ...snapshot } : undefined;
+    if (usage) {
+      usage.requests = Array.isArray(usage.requests) ? usage.requests.map(entry => ({ ...entry })) : [];
+      usage.promptTokens = typeof usage.promptTokens === 'number' && Number.isFinite(usage.promptTokens)
+        ? usage.promptTokens
+        : 0;
+      usage.completionTokens = typeof usage.completionTokens === 'number' && Number.isFinite(usage.completionTokens)
+        ? usage.completionTokens
+        : 0;
+      usage.totalTokens = typeof usage.totalTokens === 'number' && Number.isFinite(usage.totalTokens)
+        ? usage.totalTokens
+        : usage.promptTokens + usage.completionTokens;
+    }
   }
 
   costTracker = createCostTracker(limitUsd, usage);

@@ -146,7 +146,14 @@ test('popup messaging content script recovery', async t => {
         success: true,
         result: {
           audio: { base64: 'AA==', mimeType: 'audio/mpeg' },
-          usage: { totalCostUsd: 0.01, limitUsd: 5, lastReset: Date.now() },
+          usage: {
+            totalCostUsd: 0.01,
+            limitUsd: 5,
+            promptTokens: 150,
+            completionTokens: 75,
+            totalTokens: 225,
+            lastReset: Date.now(),
+          },
         },
         error: null,
       });
@@ -172,6 +179,8 @@ test('mock mode bypasses runtime messaging and preserves provider metadata', asy
 
   const usage = await module.sendMessage('comet:getUsage');
   assert.equal(usage.limitUsd, 5);
+  assert.equal(usage.promptTokens, 2500);
+  assert.equal(usage.totalTokens, 3400);
   const summary = await module.sendMessage('comet:summarise');
   assert.ok(Array.isArray(summary.summaries));
 });

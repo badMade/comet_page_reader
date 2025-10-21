@@ -2,6 +2,46 @@ import createLogger from './logger.js';
 
 const logger = createLogger({ name: 'cost-tracker' });
 
+function normaliseNumber(value, fallback = 0) {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  return fallback;
+}
+
+function normaliseUsageSnapshot(snapshot) {
+  const now = Date.now();
+  const base = {
+    totalCostUsd: 0,
+    promptTokens: 0,
+    completionTokens: 0,
+    totalTokens: 0,
+    requests: [],
+    lastReset: now,
+  };
+
+  if (!snapshot || typeof snapshot !== 'object') {
+    return base;
+  }
+
+  const usage = {
+    ...base,
+    ...snapshot,
+  };
+
+  usage.totalCostUsd = normaliseNumber(snapshot.totalCostUsd, base.totalCostUsd);
+  usage.promptTokens = normaliseNumber(snapshot.promptTokens, base.promptTokens);
+  usage.completionTokens = normaliseNumber(snapshot.completionTokens, base.completionTokens);
+  usage.totalTokens = normaliseNumber(
+    snapshot.totalTokens,
+    usage.promptTokens + usage.completionTokens,
+  );
+  usage.lastReset = normaliseNumber(snapshot.lastReset, base.lastReset);
+  usage.requests = Array.isArray(snapshot.requests) ? snapshot.requests.map(request => ({ ...request })) : [];
+
+  return usage;
+}
+
 /**
  * Cost tracking helpers shared by the background worker and popup UI.
  *
@@ -47,18 +87,19 @@ export class CostTracker {
    * @param {number} [usage.totalCostUsd] - The total accumulated cost in USD.
    * @param {Array<object>} [usage.requests] - A list of recorded API requests.
    * @param {number} [usage.lastReset] - Timestamp of the last usage reset.
+   * @param {number} [usage.promptTokens] - Aggregated prompt tokens consumed.
+   * @param {number} [usage.completionTokens] - Aggregated completion tokens consumed.
+   * @param {number} [usage.totalTokens] - Aggregated total tokens consumed.
    */
   constructor(limitUsd = DEFAULT_LIMIT_USD, usage = undefined) {
     this.limitUsd = limitUsd;
-    this.usage = usage || {
-      totalCostUsd: 0,
-      requests: [],
-      lastReset: Date.now(),
-    };
+    this.usage = usage ? normaliseUsageSnapshot(usage) : normaliseUsageSnapshot();
     logger.info('Cost tracker initialised.', {
       limitUsd: this.limitUsd,
       preloadedRequests: this.usage.requests.length,
       totalCostUsd: this.usage.totalCostUsd,
+      promptTokens: this.usage.promptTokens,
+      completionTokens: this.usage.completionTokens,
     });
   }
 
@@ -92,22 +133,31 @@ export class CostTracker {
    */
   record(model, promptTokens, completionTokens, metadata = {}) {
     const pricing = MODEL_PRICING[model] || MODEL_PRICING['gpt-4o-mini'];
-    const promptCost = (promptTokens / 1000) * (pricing.prompt || 0);
-    const completionCost = (completionTokens / 1000) * (pricing.completion || 0);
+    const safePromptTokens = normaliseNumber(promptTokens);
+    const safeCompletionTokens = normaliseNumber(completionTokens);
+    const promptCost = (safePromptTokens / 1000) * (pricing.prompt || 0);
+    const completionCost = (safeCompletionTokens / 1000) * (pricing.completion || 0);
     const amount = promptCost + completionCost;
     this.usage.totalCostUsd += amount;
+    this.usage.promptTokens += safePromptTokens;
+    this.usage.completionTokens += safeCompletionTokens;
+    this.usage.totalTokens = this.usage.promptTokens + this.usage.completionTokens;
     this.usage.requests.push({
       model,
-      promptTokens,
-      completionTokens,
+      promptTokens: safePromptTokens,
+      completionTokens: safeCompletionTokens,
+      totalTokens: safePromptTokens + safeCompletionTokens,
       costUsd: amount,
       timestamp: Date.now(),
       ...metadata,
     });
     logger.info('Recorded token usage event.', {
       model,
-      promptTokens,
-      completionTokens,
+      promptTokens: safePromptTokens,
+      completionTokens: safeCompletionTokens,
+      totalPromptTokens: this.usage.promptTokens,
+      totalCompletionTokens: this.usage.completionTokens,
+      totalTokens: this.usage.totalTokens,
       amount,
       totalCostUsd: this.usage.totalCostUsd,
     });
@@ -124,21 +174,24 @@ export class CostTracker {
    * @returns {number} Recorded USD amount.
    */
   recordFlat(model, amountUsd, metadata = {}) {
-    this.usage.totalCostUsd += amountUsd;
+    const safeAmount = normaliseNumber(amountUsd);
+    this.usage.totalCostUsd += safeAmount;
+    this.usage.totalTokens = this.usage.promptTokens + this.usage.completionTokens;
     this.usage.requests.push({
       model,
       promptTokens: 0,
       completionTokens: 0,
-      costUsd: amountUsd,
+      totalTokens: 0,
+      costUsd: safeAmount,
       timestamp: Date.now(),
       ...metadata,
     });
     logger.info('Recorded flat usage event.', {
       model,
-      amountUsd,
+      amountUsd: safeAmount,
       totalCostUsd: this.usage.totalCostUsd,
     });
-    return amountUsd;
+    return safeAmount;
   }
 
   /**
@@ -147,9 +200,67 @@ export class CostTracker {
    */
   reset() {
     this.usage.totalCostUsd = 0;
+    this.usage.promptTokens = 0;
+    this.usage.completionTokens = 0;
+    this.usage.totalTokens = 0;
     this.usage.requests = [];
     this.usage.lastReset = Date.now();
     logger.warn('Cost tracker reset invoked.', { timestamp: this.usage.lastReset });
+  }
+
+  /**
+   * Retrieves aggregate usage totals without mutating state.
+   *
+   * @returns {{
+   *   totalCostUsd: number,
+   *   promptTokens: number,
+   *   completionTokens: number,
+   *   totalTokens: number,
+   * }}
+   */
+  getUsageTotals() {
+    return {
+      totalCostUsd: this.usage.totalCostUsd,
+      promptTokens: this.usage.promptTokens,
+      completionTokens: this.usage.completionTokens,
+      totalTokens: this.usage.totalTokens,
+    };
+  }
+
+  /**
+   * Retrieves the cumulative cost in USD.
+   *
+   * @returns {number}
+   */
+  getTotalCostUsd() {
+    return this.usage.totalCostUsd;
+  }
+
+  /**
+   * Retrieves the cumulative prompt tokens consumed.
+   *
+   * @returns {number}
+   */
+  getTotalPromptTokens() {
+    return this.usage.promptTokens;
+  }
+
+  /**
+   * Retrieves the cumulative completion tokens consumed.
+   *
+   * @returns {number}
+   */
+  getTotalCompletionTokens() {
+    return this.usage.completionTokens;
+  }
+
+  /**
+   * Retrieves the cumulative total tokens consumed.
+   *
+   * @returns {number}
+   */
+  getTotalTokens() {
+    return this.usage.totalTokens;
   }
 
   /**
@@ -203,6 +314,9 @@ export class CostTracker {
     logger.trace('Serialising cost tracker snapshot.', {
       requestCount: this.usage.requests.length,
       totalCostUsd: this.usage.totalCostUsd,
+      promptTokens: this.usage.promptTokens,
+      completionTokens: this.usage.completionTokens,
+      totalTokens: this.usage.totalTokens,
     });
     return { ...this.usage, limitUsd: this.limitUsd };
   }
@@ -220,7 +334,8 @@ export function createCostTracker(limitUsd, usage) {
     limitUsd,
     hasUsage: Boolean(usage),
   });
-  return new CostTracker(limitUsd, usage);
+  const snapshot = usage ? normaliseUsageSnapshot(usage) : undefined;
+  return new CostTracker(limitUsd, snapshot);
 }
 
 export { DEFAULT_LIMIT_USD, MODEL_PRICING };
