@@ -8,7 +8,7 @@ const logger = createLogger({ name: 'cost-tracker' });
  * previous USD-based ceiling when converted using the legacy exchange rate
  * defined in {@link LEGACY_TOKENS_PER_USD}.
  */
-const DEFAULT_TOKEN_LIMIT = 15000;
+const DEFAULT_TOKEN_LIMIT = 18000;
 
 /** Default number of completion tokens assumed when estimating usage. */
 const DEFAULT_COMPLETION_TOKEN_ESTIMATE = 400;

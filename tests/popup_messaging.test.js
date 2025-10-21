@@ -155,7 +155,7 @@ test('popup messaging content script recovery', async t => {
             cumulativeTotalTokens: 10,
             cumulativePromptTokens: 10,
             cumulativeCompletionTokens: 0,
-            limitTokens: 15000,
+            limitTokens: DEFAULT_TOKEN_LIMIT,
             lastReset: resetAt,
             tokens: {
               total: 10,

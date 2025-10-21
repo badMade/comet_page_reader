@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { URL as NodeURL } from 'node:url';
 
+import { DEFAULT_TOKEN_LIMIT } from '../utils/cost.js';
 import { setupPopupTestEnvironment } from './fixtures/popup-environment.js';
 
 async function importPopupModule() {
@@ -74,7 +75,7 @@ test('popup retains stored provider preference when agent allows it', async () =
             cumulativeTotalTokens: 420,
             cumulativePromptTokens: 280,
             cumulativeCompletionTokens: 140,
-            limitTokens: 15000,
+            limitTokens: DEFAULT_TOKEN_LIMIT,
             lastReset: 1_700_000_000_000,
             tokens: {
               total: 420,
@@ -154,7 +155,7 @@ test('popup updates background provider when agent restrictions apply', async ()
             cumulativeTotalTokens: 320,
             cumulativePromptTokens: 200,
             cumulativeCompletionTokens: 120,
-            limitTokens: 15000,
+            limitTokens: DEFAULT_TOKEN_LIMIT,
             lastReset: 1_700_000_500_000,
             tokens: {
               total: 320,
