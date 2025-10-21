@@ -1,63 +1,8 @@
 import createLogger from '../../utils/logger.js';
-import { readApiKey } from '../../utils/apiKeyStore.js';
-import { OpenAIAdapter } from './openai.js';
-import { synthesise as synthesiseWithGoogle } from './googleTTS.js';
-import { synthesise as synthesiseWithAmazonPolly } from './amazonPolly.js';
-import { synthesise as synthesiseLocally } from './localTTS.js';
 
 const logger = createLogger({ name: 'adapter-registry' });
 
 const factories = new Map();
-
-let openAiTtsAdapter = null;
-
-function toBase64(arrayBuffer) {
-  if (!(arrayBuffer instanceof ArrayBuffer)) {
-    throw new Error('OpenAI TTS response did not include audio data.');
-  }
-  const bytes = new Uint8Array(arrayBuffer);
-  if (typeof Buffer !== 'undefined') {
-    return Buffer.from(bytes).toString('base64');
-  }
-  let binary = '';
-  for (let index = 0; index < bytes.length; index += 1) {
-    binary += String.fromCharCode(bytes[index]);
-  }
-  if (typeof btoa === 'function') {
-    return btoa(binary);
-  }
-  throw new Error('Base64 encoding is not supported in this environment.');
-}
-
-function getOpenAiTtsAdapter() {
-  if (!openAiTtsAdapter) {
-    openAiTtsAdapter = new OpenAIAdapter({}, {
-      logger: logger.child({ adapter: 'openai-tts-proxy' }),
-    });
-  }
-  return openAiTtsAdapter;
-}
-
-async function synthesiseWithOpenAi({ text, voice, languageCode }) {
-  if (typeof text !== 'string' || !text.trim()) {
-    throw new Error('Text is required for speech synthesis.');
-  }
-  const apiKey = await readApiKey({ provider: 'openai' });
-  if (!apiKey) {
-    throw new Error('OpenAI API key is not configured.');
-  }
-  const adapter = getOpenAiTtsAdapter();
-  const response = await adapter.synthesise({
-    apiKey,
-    text,
-    voice,
-    format: 'mp3',
-    languageCode,
-  });
-  const base64 = toBase64(response?.arrayBuffer);
-  const mimeType = response?.mimeType || 'audio/mpeg';
-  return { base64, mimeType };
-}
 
 /**
  * Registers an adapter factory for the specified provider key.
@@ -132,24 +77,3 @@ export function listRegisteredAdapters() {
   logger.trace('Listing registered adapters.', { count: registered.length });
   return registered;
 }
-
-const builtinTtsAdapters = {
-  openai: { synthesise: synthesiseWithOpenAi },
-  google: { synthesise: synthesiseWithGoogle },
-  googletts: { synthesise: synthesiseWithGoogle },
-  'google-tts': { synthesise: synthesiseWithGoogle },
-  amazonpolly: { synthesise: synthesiseWithAmazonPolly },
-  'amazon-polly': { synthesise: synthesiseWithAmazonPolly },
-  polly: { synthesise: synthesiseWithAmazonPolly },
-  local: { synthesise: synthesiseLocally },
-  browser: { synthesise: synthesiseLocally },
-};
-
-Object.keys(builtinTtsAdapters).forEach(key => {
-  const entry = builtinTtsAdapters[key];
-  if (!entry || typeof entry.synthesise !== 'function') {
-    throw new Error(`Invalid TTS adapter registration for key: ${key}`);
-  }
-});
-
-export const ttsAdapters = Object.freeze({ ...builtinTtsAdapters });
