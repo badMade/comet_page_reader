@@ -35,7 +35,7 @@ const DEFAULT_ROUTING_CONFIG = Object.freeze({
   disablePaid: false,
   timeoutMs: 20000,
   retryLimit: 2,
-  maxTokensPerCall: DEFAULT_MAX_TOKENS_PER_CALL, // Fixed 2400-token budget replaces estimateTokensFromUsd(0.01) to satisfy summariser prompt/completion requirements.
+  maxTokensPerCall: DEFAULT_MAX_TOKENS_PER_CALL, // Fixed 2400 tokens replaces estimateTokensFromUsd(0.01) so summariser prompt/completion requirements are met.
   maxMonthlyTokens: DEFAULT_TOKEN_LIMIT,
   dryRun: false,
 });
