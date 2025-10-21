@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
+import { t } from '../utils/i18n.js';
+
 const NativeURL = URL;
 
 function createElementStub() {
@@ -72,6 +74,7 @@ test('popup initialises immediately when DOMContentLoaded already fired', async 
     lastError: null,
     sendMessage(message, callback) {
       recordedMessages.push(message);
+      const lastReset = 1_700_000_000_000;
       const responses = {
         'comet:getApiKeyDetails': {
           provider: 'openai',
@@ -80,14 +83,20 @@ test('popup initialises immediately when DOMContentLoaded already fired', async 
           lastUpdated: null,
         },
         'comet:getUsage': {
-          totalTokens: 0,
-          totalPromptTokens: 0,
-          totalCompletionTokens: 0,
-          cumulativeTotalTokens: 0,
-          cumulativePromptTokens: 0,
-          cumulativeCompletionTokens: 0,
+          totalTokens: 1800,
+          totalPromptTokens: 1200,
+          totalCompletionTokens: 600,
+          cumulativeTotalTokens: 5400,
+          cumulativePromptTokens: 3600,
+          cumulativeCompletionTokens: 1800,
           limitTokens: 15000,
-          lastReset: Date.now(),
+          lastReset,
+          tokens: {
+            total: 1800,
+            prompt: 1200,
+            completion: 600,
+            lastReset,
+          },
         },
         'comet:setProvider': {
           provider: 'openai',
@@ -167,6 +176,11 @@ test('popup initialises immediately when DOMContentLoaded already fired', async 
     const waitForTick = () => new Promise(resolve => setTimeout(resolve, 0));
     await waitForTick();
     await waitForTick();
+
+    const resetButton = getElement('resetUsageBtn');
+    assert.equal(resetButton.textContent, 'Reset token usage');
+
+    assert.equal(t('usage'), 'Tokens this cycle');
 
     const apiForm = getElement('api-form');
     const submitHandlers = apiForm.listeners.get('submit') || [];
