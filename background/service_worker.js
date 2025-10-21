@@ -24,12 +24,18 @@ import { MistralAdapter } from './adapters/mistral.js';
 import { HuggingFaceAdapter } from './adapters/huggingface.js';
 import { OllamaAdapter } from './adapters/ollama.js';
 import { GeminiAdapter } from './adapters/gemini.js';
+import { playAudioFromBase64 } from '../utils/audio.js';
+import { ttsAdapters } from './tts/registry.js';
+import { createLocalTtsAdapter } from './tts/local.js';
 import { LLMRouter } from './llm/router.js';
 
 const logger = createLogger({ name: 'background-service' });
 setGlobalContext({ runtime: 'background-service' });
 
 const adapterLogger = logger.child({ subsystem: 'adapter' });
+
+ttsAdapters.register('local', createLocalTtsAdapter({ logger: adapterLogger.child({ provider: 'local-tts' }) }));
+ttsAdapters.register('auto', createCloudTtsAdapter('auto'));
 
 registerAdapter('openai', config => new OpenAIAdapter(config, { logger: adapterLogger.child({ provider: 'openai' }) }));
 registerAdapter('anthropic', config => new AnthropicAdapter(config, { logger: adapterLogger.child({ provider: 'anthropic' }) }));
@@ -60,6 +66,15 @@ let activeProviderId = providerConfig.provider || DEFAULT_PROVIDER;
 let routingSettings = DEFAULT_ROUTING_CONFIG;
 let llmRouter = null;
 let loggingConfigured = false;
+
+async function ensureLoggingConfiguredOnce() {
+  if (loggingConfigured) {
+    return;
+  }
+  await loadLoggingConfig().catch(() => {});
+  loggingConfigured = true;
+  logger.debug('Logging configuration applied in background service worker.');
+}
 
 function applyProviderLoggingContext(providerId) {
   if (!providerId) {
@@ -102,6 +117,7 @@ const SPEECH_MIN_CHARS = 64;
 const SPEECH_TOKEN_PATTERN = /(?:\p{Script=Han}|\p{Script=Hiragana}|\p{Script=Katakana}|\p{Script=Hangul}|[\p{L}\p{N}]+|[^\s])/gu;
 const SPEECH_TOKEN_PATTERN_SOURCE = SPEECH_TOKEN_PATTERN.source;
 const SPEECH_TOKEN_PATTERN_FLAGS = SPEECH_TOKEN_PATTERN.flags;
+const TTS_STORAGE_KEYS = Object.freeze(['ttsProvider', 'ttsVoice', 'ttsLanguage']);
 
 function getAdapterKey(providerId) {
   const normalised = normaliseProviderId(providerId, providerId);
@@ -257,6 +273,188 @@ function clampSpeechInput(rawText) {
     originalTokenCount: totalTokens,
     deliveredTokenCount,
     omittedTokenCount,
+  };
+}
+
+function createSpeechMetrics(rawText) {
+  const trimmed = typeof rawText === 'string' ? rawText.trim() : '';
+  if (!trimmed) {
+    return {
+      text: '',
+      truncated: false,
+      originalTokenCount: 0,
+      deliveredTokenCount: 0,
+      omittedTokenCount: 0,
+    };
+  }
+  const tokens = tokeniseSpeechText(trimmed);
+  const totalTokens = tokens.length;
+  return {
+    text: trimmed,
+    truncated: false,
+    originalTokenCount: totalTokens,
+    deliveredTokenCount: totalTokens,
+    omittedTokenCount: 0,
+  };
+}
+
+function normaliseTtsPreference(value) {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function pickTtsPreference(stored, override) {
+  const storedValue = normaliseTtsPreference(stored);
+  if (storedValue) {
+    return storedValue;
+  }
+  const overrideValue = normaliseTtsPreference(override);
+  if (overrideValue) {
+    return overrideValue;
+  }
+  return null;
+}
+
+function classifyTtsProvider(preference) {
+  const normalised = normaliseTtsPreference(preference);
+  if (!normalised) {
+    return { type: 'cloud', providerId: 'auto' };
+  }
+  const lower = normalised.toLowerCase();
+  if (lower === 'local' || lower === 'browser' || lower === 'system' || lower === 'chrome') {
+    return { type: 'local', providerId: 'local' };
+  }
+  if (lower === 'auto') {
+    return { type: 'cloud', providerId: 'auto' };
+  }
+  return { type: 'cloud', providerId: normalised };
+}
+
+async function readStoredTtsDefaults() {
+  if (!chrome?.storage?.local || typeof chrome.storage.local.get !== 'function') {
+    return {};
+  }
+  return new Promise(resolve => {
+    try {
+      chrome.storage.local.get(TTS_STORAGE_KEYS, items => {
+        const error = chrome?.runtime?.lastError;
+        if (error) {
+          logger.debug('Failed to read TTS defaults from chrome.storage.local.', { error });
+          resolve({});
+          return;
+        }
+        resolve(items || {});
+      });
+    } catch (error) {
+      logger.debug('chrome.storage.local.get threw while reading TTS defaults.', { error });
+      resolve({});
+    }
+  });
+}
+
+async function resolveTtsSettings(overrides = {}) {
+  const stored = await readStoredTtsDefaults();
+  const providerPreference = pickTtsPreference(stored.ttsProvider, overrides.provider);
+  const providerDescriptor = classifyTtsProvider(providerPreference);
+  const voice = pickTtsPreference(stored.ttsVoice, overrides.voice);
+  const languageCode = pickTtsPreference(stored.ttsLanguage, overrides.language);
+  return {
+    providerId: providerDescriptor.providerId,
+    type: providerDescriptor.type,
+    voice,
+    languageCode,
+  };
+}
+
+function ensureTtsAdapterRegistration(providerKey) {
+  const candidate = normaliseTtsPreference(providerKey) || 'auto';
+  const adapterKey = candidate.toLowerCase();
+  if (ttsAdapters.has(adapterKey)) {
+    return ttsAdapters.get(adapterKey);
+  }
+  if (adapterKey === 'local') {
+    const adapter = createLocalTtsAdapter({ logger: adapterLogger.child({ provider: 'local-tts' }) });
+    ttsAdapters.register('local', adapter);
+    return adapter;
+  }
+  const adapter = createCloudTtsAdapter(adapterKey);
+  ttsAdapters.register(adapterKey, adapter);
+  return adapter;
+}
+
+function createCloudTtsAdapter(providerKey) {
+  const resolvedKey = normaliseTtsPreference(providerKey) || 'auto';
+  const adapterLoggerContext = adapterLogger.child({ provider: `tts-${resolvedKey}` });
+  return {
+    id: resolvedKey,
+    type: 'cloud',
+    async synthesise({ text, voice, languageCode }) {
+      const targetProviderRaw = resolvedKey === 'auto' ? await getActiveProviderId() : resolvedKey;
+      const normalisedProvider = normaliseProviderId(targetProviderRaw, targetProviderRaw);
+      const resolvedProvider = resolveAlias(normalisedProvider);
+      adapterLoggerContext.debug('Dispatching cloud TTS request.', {
+        provider: resolvedProvider,
+        hasVoice: Boolean(voice),
+        hasLanguage: Boolean(languageCode),
+        textLength: typeof text === 'string' ? text.length : 0,
+      });
+      const adapter = await ensureAdapter(resolvedProvider);
+      const costMetadata = getCostMetadata(adapter);
+      const synthMeta = costMetadata.synthesise || {};
+      const estimatedCost = resolveFlatCost(synthMeta, 0.01);
+      if (!costTracker.canSpend(estimatedCost)) {
+        adapterLoggerContext.warn('Speech synthesis aborted due to cost limit.', { estimatedCost, provider: resolvedProvider });
+        throw new Error('Cost limit reached for speech synthesis.');
+      }
+
+      const { apiKey, providerId } = await resolveApiKey(resolvedProvider);
+      ensureKeyAvailable(apiKey, providerId);
+
+      try {
+        const response = await adapter.synthesise({
+          apiKey,
+          text,
+          voice: voice, // Let the underlying adapter handle defaults or pass a provider-aware default
+          format: 'mp3',
+          model: synthMeta.model,
+          languageCode,
+        });
+        costTracker.recordFlat(synthMeta.label || 'tts', estimatedCost, { type: synthMeta.label || 'tts' });
+        await persistUsage();
+        const base64 = typeof response?.base64 === 'string'
+          ? response.base64
+          : response?.arrayBuffer
+            ? toBase64(response.arrayBuffer)
+            : null;
+        const mimeType = response?.mimeType || 'audio/mp3';
+        adapterLoggerContext.info('Cloud TTS request completed.', {
+          provider: providerId,
+          mimeType,
+        });
+        return {
+          base64,
+          mimeType,
+          providerId,
+          model: synthMeta.model || null,
+        };
+      } catch (error) {
+        const displayName = getProviderDisplayName(providerId) || providerId || 'Provider';
+        const message = error?.message
+          ? `${displayName} text-to-speech failed: ${error.message}`
+          : `${displayName} text-to-speech failed.`;
+        adapterLoggerContext.error('Cloud TTS adapter failed.', {
+          provider: providerId,
+          resolvedKey,
+          error,
+        });
+        const wrapped = new Error(message);
+        wrapped.cause = error;
+        throw wrapped;
+      }
+    },
   };
 }
 
@@ -473,11 +671,7 @@ async function getActiveProviderId(providerId) {
 
 async function ensureInitialised(providerId) {
   const previousProvider = activeProviderId;
-  if (!loggingConfigured) {
-    await loadLoggingConfig().catch(() => {});
-    loggingConfigured = true;
-    logger.debug('Logging configuration applied in background service worker.');
-  }
+  await ensureLoggingConfiguredOnce();
   await ensureAgentConfig();
   await ensureAdapter(providerId);
   const providerChanged = previousProvider && previousProvider !== activeProviderId;
@@ -802,53 +996,66 @@ async function transcribeAudio({ base64, filename = 'speech.webm', mimeType = 'a
   return result.text;
 }
 
-async function synthesiseSpeech({ text, voice = 'alloy', format = 'mp3', provider }) {
-  logger.info('Speech synthesis request received.', {
-    voice,
-    format,
-    provider,
-  });
-  const adapter = await ensureAdapter(provider);
-  const costMetadata = getCostMetadata(adapter);
-  const synthMeta = costMetadata.synthesise || {};
-  const estimatedCost = resolveFlatCost(synthMeta, 0.01);
-  if (!costTracker.canSpend(estimatedCost)) {
-    logger.warn('Speech synthesis aborted due to cost limit.', { estimatedCost });
-    throw new Error('Cost limit reached for speech synthesis.');
-  }
+async function synthesiseSpeech(payload = {}, resolvedSettings = null) {
+  const { text = '', provider, voice, language } = payload;
+  const settings = resolvedSettings || await resolveTtsSettings({ provider, voice, language });
+  const adapter = ensureTtsAdapterRegistration(settings.providerId);
+  const effectiveVoice = settings.voice || (settings.type === 'cloud' ? 'alloy' : null);
+  const languageCode = settings.languageCode || null;
+  const metrics = settings.type === 'cloud' ? clampSpeechInput(text) : createSpeechMetrics(text);
 
-  const clamped = clampSpeechInput(text);
-  if (clamped.truncated) {
+  logger.info('Speech synthesis request received.', {
+    provider: settings.providerId,
+    adapterType: adapter.type,
+    requestedProvider: provider,
+    voice: effectiveVoice,
+    language: languageCode,
+    truncated: metrics.truncated,
+  });
+
+  if (adapter.type === 'cloud' && metrics.truncated) {
     logger.warn('Speech input exceeded provider limits; truncating request.', {
-      originalTokens: clamped.originalTokenCount,
-      deliveredTokens: clamped.deliveredTokenCount,
-      omittedTokens: clamped.omittedTokenCount,
+      originalTokens: metrics.originalTokenCount,
+      deliveredTokens: metrics.deliveredTokenCount,
+      omittedTokens: metrics.omittedTokenCount,
     });
   }
 
-  const { apiKey, providerId } = await resolveApiKey(provider);
-  ensureKeyAvailable(apiKey, providerId);
-  const result = await adapter.synthesise({
-    apiKey,
-    text: clamped.text,
-    voice,
-    format,
-    model: synthMeta.model,
+  const synthesisResult = await adapter.synthesise({
+    text: metrics.text,
+    voice: effectiveVoice || undefined,
+    languageCode,
   });
 
-  costTracker.recordFlat(synthMeta.label || 'tts', estimatedCost, { type: synthMeta.label || 'tts' });
-  await persistUsage();
-  logger.info('Speech synthesis completed.', {
-    provider: providerId,
-    model: synthMeta.model,
-  });
+  if (synthesisResult?.base64) {
+    try {
+      await playAudioFromBase64(synthesisResult.base64, synthesisResult.mimeType || 'audio/mpeg');
+      logger.debug('Background audio playback started from base64 payload.');
+    } catch (error) {
+      logger.warn('Background audio playback failed; continuing without interruption.', { error });
+    }
+  } else {
+    logger.debug('No base64 payload returned; skipping background playback.', {
+      adapterType: adapter.type,
+    });
+  }
+
+  const resolvedProvider = synthesisResult?.providerId
+    || (adapter.type === 'local' ? 'local' : settings.providerId || 'auto');
+
   return {
-    base64: toBase64(result.arrayBuffer),
-    mimeType: result.mimeType || `audio/${format}`,
-    truncated: clamped.truncated,
-    originalTokenCount: clamped.originalTokenCount,
-    deliveredTokenCount: clamped.deliveredTokenCount,
-    omittedTokenCount: clamped.omittedTokenCount,
+    audio: {
+      base64: synthesisResult?.base64 || null,
+      mimeType: synthesisResult?.mimeType || 'audio/mpeg',
+      truncated: metrics.truncated,
+      originalTokenCount: metrics.originalTokenCount,
+      deliveredTokenCount: metrics.deliveredTokenCount,
+      omittedTokenCount: metrics.omittedTokenCount,
+    },
+    adapter: {
+      id: resolvedProvider,
+      type: adapter.type,
+    },
   };
 }
 
@@ -972,9 +1179,24 @@ async function handleSpeechRequest(message) {
     provider: message.payload?.provider,
     voice: message.payload?.voice,
   });
-  await ensureInitialised(message.payload?.provider);
-  const result = await synthesiseSpeech(message.payload);
-  return { audio: result, usage: costTracker.toJSON() };
+  const settings = await resolveTtsSettings({
+    provider: message.payload?.provider,
+    voice: message.payload?.voice,
+    language: message.payload?.language,
+  });
+  if (settings.type === 'cloud') {
+    const initProvider = settings.providerId && settings.providerId !== 'auto'
+      ? settings.providerId
+      : normaliseTtsPreference(message.payload?.provider);
+    await ensureInitialised(initProvider === 'auto' ? undefined : initProvider);
+  } else {
+    await ensureLoggingConfiguredOnce();
+  }
+  const result = await synthesiseSpeech(message.payload, settings);
+  const usage = result.adapter.type === 'cloud' && costTracker
+    ? costTracker.toJSON()
+    : null;
+  return { audio: result.audio, usage };
 }
 
 async function handleUsageRequest() {
@@ -1118,6 +1340,9 @@ function __clearTestOverrides() {
   preferredProviderId = null;
   routingSettings = DEFAULT_ROUTING_CONFIG;
   llmRouter = null;
+  ttsAdapters.clear();
+  ttsAdapters.register('local', createLocalTtsAdapter({ logger: adapterLogger.child({ provider: 'local-tts' }) }));
+  ttsAdapters.register('auto', createCloudTtsAdapter('auto'));
 }
 
 async function __transcribeForTests(payload) {
