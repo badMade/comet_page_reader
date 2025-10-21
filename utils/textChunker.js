@@ -268,17 +268,8 @@ export function chunkTextByTokens(text, maxTokens, options = {}) {
         chunks.push(chunk);
       }
 
-      if (overlapCount > 0 && wordChunks.length) {
-        const overlapWordChunks = wordChunks.slice(-overlapCount);
-        bufferSentences = [...overlapWordChunks];
-        bufferText = overlapWordChunks.join(' ');
-        hasFreshContent = false;
-        setOverlap();
-      } else {
-        bufferSentences = [];
-        bufferText = '';
-        hasFreshContent = false;
-      }
+      bufferSentences = wordChunks;
+      setOverlap();
 
       continue;
     }
