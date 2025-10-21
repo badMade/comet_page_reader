@@ -486,13 +486,13 @@ export function clearGlobalContext() {
 /**
  * Update logger configuration in-place.
  *
- * Args:
- *   config (Object): Partial configuration containing console/file toggles,
- *     logging thresholds, or default context. Unknown values are merged and
- *     the log level is normalised to a supported severity.
+ * @param {Object} config Partial configuration containing console/file toggles,
+ *   logging thresholds, or default context. Unknown values are merged and
+ *   the log level is normalised to a supported severity.
  *
- * Returns:
- *   void
+ * @returns {void}
+ *
+ *
  */
 export function setLoggerConfig(config) {
   if (!config || typeof config !== 'object') {
