@@ -517,10 +517,10 @@ export function setLoggerConfig(config) {
 /**
  * Obtain a copy of the active logger configuration.
  *
- * Returns:
- *   Object: A shallow clone of the configuration so callers cannot mutate the
- *     internal state directly.
+ * @returns {Object} A shallow clone of the configuration so callers cannot mutate the
+ *   internal state directly.
  */
+
 export function getLoggerConfig() {
   return { ...activeConfig };
 }
