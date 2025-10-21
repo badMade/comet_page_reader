@@ -626,7 +626,7 @@ async function resolveVoiceCapabilities(providerId, adapterOverride) {
   const targetProvider = requestedProviderRaw === 'auto'
     ? fallbackProvider
     : resolveAlias(requestedProviderRaw);
-  const providerResult = targetProvider || fallbackProvider;
+  const providerResult = targetProvider;
 
   let adapter = adapterOverride;
   if (!adapter && adapterLoadPromise && targetProvider === loadingProviderId) {
