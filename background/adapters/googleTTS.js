@@ -6,7 +6,49 @@ const logger = createLogger({ name: 'adapter-google-tts' });
 
 const DEFAULT_LANGUAGE_CODE = 'en-US';
 
-const match = voiceName.match(/^([a-z]{2,3}(?:-[A-Z][a-z]{3})?(?:-[A-Z]{2}|-[0-9]{3})?)(?:-|$)/i);
+function extractLanguageFromVoiceName(voiceName) {
+  if (typeof voiceName !== 'string') {
+    return null;
+  }
+
+  const trimmed = voiceName.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const segments = trimmed.split('-').filter(Boolean);
+  if (segments.length === 0) {
+    return null;
+  }
+
+  const [language] = segments;
+  if (!/^[a-z]{2,3}$/i.test(language)) {
+    return null;
+  }
+
+  const localeParts = [language];
+  let index = 1;
+
+  if (index < segments.length && /^[A-Z][a-z]{3}$/.test(segments[index])) {
+    localeParts.push(segments[index]);
+    index += 1;
+  }
+
+  if (index < segments.length && /^(?:[A-Z]{2}|[0-9]{3})$/.test(segments[index])) {
+    localeParts.push(segments[index]);
+    index += 1;
+  }
+
+  while (
+    index < segments.length &&
+    (/^[0-9][a-zA-Z0-9]{3}$/.test(segments[index]) ||
+      (/^[a-z0-9]{5,8}$/.test(segments[index]) && segments[index] === segments[index].toLowerCase()))
+  ) {
+    localeParts.push(segments[index]);
+    index += 1;
+  }
+
+  return localeParts.join('-');
 }
 
 function ensureFetch() {
