@@ -11,6 +11,7 @@ import {
   CONSOLE_LOGGING_ENABLED,
   ENV as ENVIRONMENT_CONSTANT,
   LOG_FILE_ENABLED,
+  LOG_FILE_ENABLED_DEFINED,
   LOG_FILE_PATH,
   LOG_LEVEL,
   getAppVersion,
@@ -837,8 +838,9 @@ if (typeof CONSOLE_LOGGING_ENABLED === 'boolean') {
 
 const fileConfig = {};
 let hasFileConfig = false;
+const fileLoggingExplicitlyConfigured = LOG_FILE_ENABLED_DEFINED === true;
 
-if (typeof LOG_FILE_ENABLED === 'boolean') {
+if (fileLoggingExplicitlyConfigured) {
   fileConfig.enabled = LOG_FILE_ENABLED;
   hasFileConfig = true;
 }
@@ -847,7 +849,7 @@ if (typeof LOG_FILE_PATH === 'string') {
   const trimmedPath = LOG_FILE_PATH.trim();
   if (trimmedPath.length > 0) {
     fileConfig.path = trimmedPath;
-    if (typeof fileConfig.enabled === 'undefined') {
+    if (!fileLoggingExplicitlyConfigured) {
       fileConfig.enabled = true;
     }
     hasFileConfig = true;

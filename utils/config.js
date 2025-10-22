@@ -4,6 +4,8 @@ const DEFAULT_LOG_LEVEL = 'info';
 const DEFAULT_CONSOLE_ENABLED = true;
 const DEFAULT_FILE_ENABLED = false;
 
+let fileLoggingEnabledDefined = false;
+
 const globalScope = typeof globalThis !== 'undefined' ? globalThis : null;
 const isNode = typeof process !== 'undefined' && !!process.versions?.node;
 
@@ -280,6 +282,7 @@ function getConsoleLoggingEnabled() {
 }
 
 function getFileLoggingEnabled() {
+  fileLoggingEnabledDefined = false;
   const manifest = loadManifest();
   const manifestFile = parseBoolean(
     readValue(manifest, [
@@ -288,17 +291,20 @@ function getFileLoggingEnabled() {
     ]),
   );
   if (manifestFile !== null) {
+    fileLoggingEnabledDefined = true;
     return manifestFile;
   }
 
   const globalFile = parseBoolean(readValue(globalScope, ['COMET_LOG_FILE_ENABLED', 'LOG_FILE_ENABLED']));
   if (globalFile !== null) {
+    fileLoggingEnabledDefined = true;
     return globalFile;
   }
 
   if (typeof import.meta !== 'undefined' && import.meta?.env) {
     const metaFile = parseBoolean(readValue(import.meta.env, ['COMET_LOG_FILE_ENABLED', 'LOG_FILE_ENABLED']));
     if (metaFile !== null) {
+      fileLoggingEnabledDefined = true;
       return metaFile;
     }
   }
@@ -306,6 +312,7 @@ function getFileLoggingEnabled() {
   if (isNode && process?.env) {
     const processFile = parseBoolean(readValue(process.env, ['COMET_LOG_FILE_ENABLED', 'LOG_FILE_ENABLED']));
     if (processFile !== null) {
+      fileLoggingEnabledDefined = true;
       return processFile;
     }
   }
@@ -365,4 +372,5 @@ export const APP_VERSION = getAppVersion();
 export const LOG_LEVEL = getLogLevel();
 export const CONSOLE_LOGGING_ENABLED = getConsoleLoggingEnabled();
 export const LOG_FILE_ENABLED = getFileLoggingEnabled();
+export const LOG_FILE_ENABLED_DEFINED = fileLoggingEnabledDefined;
 export const LOG_FILE_PATH = getLogFilePath();
