@@ -278,9 +278,14 @@ function pushScopeContext(context) {
   scopeStack.push(context);
   return () => {
     const index = scopeStack.lastIndexOf(context);
-    if (index !== -1) {
-      scopeStack.splice(index, 1);
+    if (index === -1) {
+      return;
     }
+
+    const nextScopes = [...scopeStack];
+    nextScopes.splice(index, 1);
+    scopeStack.length = 0;
+    scopeStack.push(...nextScopes);
   };
 }
 
