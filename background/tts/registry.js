@@ -22,7 +22,7 @@ function validateAdapter(adapter, key) {
  * Registers a text-to-speech adapter so it can be looked up by other modules.
  *
  * @param {string} key - Logical adapter identifier (for example `openai`).
- * @param {{ synthesise: Function }} adapter - Adapter implementation exposing
+ * @param {{ synthesise: (options: object) => Promise<object> }} adapter - Adapter implementation exposing
  *   a `synthesise` method.
  * @returns {void}
  */
