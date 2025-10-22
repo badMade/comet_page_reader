@@ -736,12 +736,12 @@ function resolveScopeContext(rawContext, args) {
   };
 }
 
-function logWrappedError(logger, message, error, context) {
+function logWrappedError(logger, message, error) {
   if (!message) {
     return;
   }
   const target = logger && typeof logger.error === 'function' ? logger : fallbackLogger;
-  const meta = context && Object.keys(context).length > 0 ? { context, error } : { error };
+  const meta = { error };
   Promise.resolve(target.error(message, meta)).catch(() => {});
 }
 
