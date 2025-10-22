@@ -41,7 +41,9 @@ let activeConfig = {
 };
 
 let globalContext = {};
-const scopeStack = [];
+const isNode = typeof process !== 'undefined' && !!process.versions && !!process.versions.node;
+const scopeContextMap = new WeakMap();
+const scopeStorage = createScopeStorage();
 let fileStream = null;
 let fsModule;
 
@@ -70,8 +72,6 @@ function safeStringify(value) {
     }
   }
 }
-
-const isNode = typeof process !== 'undefined' && !!process.versions && !!process.versions.node;
 
 function parseScalar(value) {
   if (value === 'true') {
@@ -271,24 +271,300 @@ function sanitizeMeta(meta) {
   return meta;
 }
 
-function pushScopeContext(context) {
-  if (!context || typeof context !== 'object' || Object.keys(context).length === 0) {
+function pushScopeContext(context, store = getCurrentScopeStore()) {
+  if (!store || !context || typeof context !== 'object' || Object.keys(context).length === 0) {
     return () => {};
   }
-  scopeStack.push(context);
+  let stack = scopeContextMap.get(store);
+  if (!stack) {
+    stack = [];
+    scopeContextMap.set(store, stack);
+  }
+  stack.push(context);
   return () => {
-    const index = scopeStack.lastIndexOf(context);
+    const index = stack.lastIndexOf(context);
     if (index !== -1) {
-      scopeStack.splice(index, 1);
+      stack.splice(index, 1);
+    }
+    if (stack.length === 0) {
+      scopeContextMap.delete(store);
     }
   };
 }
 
 function collectScopeContext() {
-  if (scopeStack.length === 0) {
+  const store = getCurrentScopeStore();
+  if (!store) {
     return {};
   }
-  return scopeStack.reduce((accumulator, scope) => ({ ...accumulator, ...scope }), {});
+  const lineage = [];
+  let current = store;
+  while (current) {
+    lineage.push(current);
+    current = current.parent || null;
+  }
+  const merged = {};
+  for (let i = lineage.length - 1; i >= 0; i -= 1) {
+    const stack = scopeContextMap.get(lineage[i]);
+    if (!stack || stack.length === 0) {
+      continue;
+    }
+    stack.forEach(scope => {
+      if (!scope || typeof scope !== 'object') {
+        return;
+      }
+      Object.entries(scope).forEach(([key, value]) => {
+        if (typeof value === 'undefined') {
+          return;
+        }
+        merged[key] = value;
+      });
+    });
+  }
+  return merged;
+}
+
+function getCurrentScopeStore() {
+  if (!scopeStorage || typeof scopeStorage.getStore !== 'function') {
+    return null;
+  }
+  try {
+    return scopeStorage.getStore();
+  } catch (error) {
+    return null;
+  }
+}
+
+function createScopeStore(parent = null) {
+  return { id: Symbol('loggerScope'), parent };
+}
+
+function runInScope(store, callback) {
+  if (!scopeStorage || typeof scopeStorage.run !== 'function') {
+    return callback();
+  }
+  return scopeStorage.run(store, callback);
+}
+
+function createScopeStorage() {
+  const nativeStorage = resolveNativeAsyncLocalStorage();
+  if (nativeStorage) {
+    return nativeStorage;
+  }
+  return createFallbackScopeStorage();
+}
+
+function resolveNativeAsyncLocalStorage() {
+  if (!isNode) {
+    return null;
+  }
+  const globalConstructor = typeof AsyncLocalStorage === 'function' ? AsyncLocalStorage : null;
+  if (globalConstructor) {
+    try {
+      return new globalConstructor();
+    } catch (error) {
+      // Ignore and fall back to polyfill below.
+    }
+  }
+  let requireFn = null;
+  try {
+    if (typeof module !== 'undefined' && typeof module.createRequire === 'function') {
+      requireFn = module.createRequire(import.meta.url);
+    } else if (typeof require === 'function') {
+      requireFn = require;
+    }
+  } catch (error) {
+    requireFn = null;
+  }
+  if (requireFn) {
+    try {
+      const asyncHooks = requireFn('node:async_hooks');
+      if (asyncHooks && typeof asyncHooks.AsyncLocalStorage === 'function') {
+        return new asyncHooks.AsyncLocalStorage();
+      }
+    } catch (error) {
+      return null;
+    }
+  }
+  return null;
+}
+
+function createFallbackScopeStorage() {
+  const globalObject = typeof globalThis !== 'undefined' ? globalThis : (typeof self !== 'undefined' ? self : {});
+  const storageKey = Symbol.for('comet.logger.scopeStorage');
+  if (globalObject[storageKey]) {
+    return globalObject[storageKey];
+  }
+
+  const promiseStore = new WeakMap();
+  let currentStore = null;
+
+  function associatePromise(promise, store) {
+    if (!promise || typeof promise.then !== 'function' || !store) {
+      return;
+    }
+    if (!promiseStore.has(promise)) {
+      promiseStore.set(promise, store);
+    }
+  }
+
+  function bindCallback(callback, storeCandidate) {
+    if (typeof callback !== 'function') {
+      return callback;
+    }
+    const store = storeCandidate || currentStore;
+    if (!store) {
+      return function scopePassthrough(...args) {
+        return callback.apply(this, args);
+      };
+    }
+    return function scopeBoundCallback(...args) {
+      const previous = currentStore;
+      currentStore = store;
+      try {
+        const result = callback.apply(this, args);
+        associatePromise(result, store);
+        return result;
+      } finally {
+        currentStore = previous;
+      }
+    };
+  }
+
+  function firstStoreFromIterable(iterable) {
+    if (!iterable || typeof iterable[Symbol.iterator] !== 'function') {
+      return null;
+    }
+    for (const item of iterable) {
+      if (!item || typeof item.then !== 'function') {
+        continue;
+      }
+      const store = promiseStore.get(item);
+      if (store) {
+        return store;
+      }
+    }
+    return null;
+  }
+
+  function patchPromisePrototype(method) {
+    if (typeof Promise.prototype[method] !== 'function') {
+      return;
+    }
+    const original = Promise.prototype[method];
+    try {
+      Object.defineProperty(Promise.prototype, method, {
+        configurable: true,
+        writable: true,
+        value(...handlers) {
+          const store = promiseStore.get(this) || currentStore;
+          const wrappedHandlers = handlers.map(handler => bindCallback(handler, store));
+          const result = original.apply(this, wrappedHandlers);
+          associatePromise(result, store);
+          return result;
+        },
+      });
+    } catch (error) {
+      // Ignore environments that do not allow patching Promise methods.
+    }
+  }
+
+  function patchPromiseStatic(method, storeResolver) {
+    if (typeof Promise[method] !== 'function') {
+      return;
+    }
+    const original = Promise[method];
+    try {
+      Object.defineProperty(Promise, method, {
+        configurable: true,
+        writable: true,
+        value(...args) {
+          const resolvedStore = (typeof storeResolver === 'function' ? storeResolver(args) : null) || currentStore;
+          const result = original.apply(this, args);
+          associatePromise(result, resolvedStore);
+          return result;
+        },
+      });
+    } catch (error) {
+      // Ignore environments that do not allow patching Promise statics.
+    }
+  }
+
+  function patchTimer(target, name) {
+    if (!target || typeof target[name] !== 'function') {
+      return;
+    }
+    const original = target[name];
+    try {
+      Object.defineProperty(target, name, {
+        configurable: true,
+        writable: true,
+        value(callback, ...args) {
+          const store = currentStore;
+          const wrapped = bindCallback(callback, store);
+          return original.call(this, wrapped, ...args);
+        },
+      });
+    } catch (error) {
+      // Ignore environments that do not allow patching timer APIs.
+    }
+  }
+
+  patchPromisePrototype('then');
+  patchPromisePrototype('catch');
+  patchPromisePrototype('finally');
+
+  patchPromiseStatic('resolve', ([value]) => {
+    if (value && typeof value.then === 'function') {
+      return promiseStore.get(value) || currentStore;
+    }
+    return currentStore;
+  });
+  patchPromiseStatic('reject', () => currentStore);
+  patchPromiseStatic('all', ([iterable]) => firstStoreFromIterable(iterable) || currentStore);
+  patchPromiseStatic('allSettled', ([iterable]) => firstStoreFromIterable(iterable) || currentStore);
+  patchPromiseStatic('any', ([iterable]) => firstStoreFromIterable(iterable) || currentStore);
+  patchPromiseStatic('race', ([iterable]) => firstStoreFromIterable(iterable) || currentStore);
+
+  patchTimer(globalObject, 'setTimeout');
+  patchTimer(globalObject, 'setInterval');
+  patchTimer(globalObject, 'setImmediate');
+  patchTimer(globalObject, 'requestAnimationFrame');
+  if (typeof globalObject.queueMicrotask === 'function') {
+    const originalQueueMicrotask = globalObject.queueMicrotask.bind(globalObject);
+    try {
+      Object.defineProperty(globalObject, 'queueMicrotask', {
+        configurable: true,
+        writable: true,
+        value(callback, ...args) {
+          const store = currentStore;
+          return originalQueueMicrotask(bindCallback(callback, store), ...args);
+        },
+      });
+    } catch (error) {
+      // Ignore environments that do not allow patching queueMicrotask.
+    }
+  }
+
+  const storage = {
+    run(store, callback) {
+      const previous = currentStore;
+      currentStore = store;
+      try {
+        const result = callback();
+        associatePromise(result, store);
+        return result;
+      } finally {
+        currentStore = previous;
+      }
+    },
+    getStore() {
+      return currentStore;
+    },
+  };
+
+  globalObject[storageKey] = storage;
+  return storage;
 }
 
 function mergeContexts(...contexts) {
@@ -762,15 +1038,19 @@ export function wrap(fn, ctx = {}) {
   }
   return (...args) => {
     const { context, logger, errorMessage } = resolveScopeContext(ctx, args);
-    const popScope = pushScopeContext(context);
-    try {
-      return fn(...args);
-    } catch (error) {
-      logWrappedError(logger, errorMessage, error, context || {});
-      throw error;
-    } finally {
-      popScope();
-    }
+    const store = createScopeStore(getCurrentScopeStore());
+    const execute = () => {
+      const popScope = pushScopeContext(context, store);
+      try {
+        return fn(...args);
+      } catch (error) {
+        logWrappedError(logger, errorMessage, error, context || {});
+        throw error;
+      } finally {
+        popScope();
+      }
+    };
+    return runInScope(store, execute);
   };
 }
 
@@ -780,15 +1060,19 @@ export function wrapAsync(fn, ctx = {}) {
   }
   return async (...args) => {
     const { context, logger, errorMessage } = resolveScopeContext(ctx, args);
-    const popScope = pushScopeContext(context);
-    try {
-      return await fn(...args);
-    } catch (error) {
-      logWrappedError(logger, errorMessage, error, context || {});
-      throw error;
-    } finally {
-      popScope();
-    }
+    const store = createScopeStore(getCurrentScopeStore());
+    const execute = async () => {
+      const popScope = pushScopeContext(context, store);
+      try {
+        return await fn(...args);
+      } catch (error) {
+        logWrappedError(logger, errorMessage, error, context || {});
+        throw error;
+      } finally {
+        popScope();
+      }
+    };
+    return runInScope(store, execute);
   };
 }
 
