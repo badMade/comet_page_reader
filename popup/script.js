@@ -57,11 +57,17 @@ const logger = createLogger({
 setGlobalContext({ runtime: 'popup' });
 
 function createCorrelationId(prefix = 'msg') {
+  const normalisedPrefix = typeof prefix === 'string' && prefix.trim() ? prefix.trim() : '';
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID();
+    const uuid = crypto.randomUUID();
+    return normalisedPrefix ? `${normalisedPrefix}-${uuid}` : uuid;
   }
   const random = Math.random().toString(36).slice(2, 8);
-  return `${prefix}-${Date.now().toString(36)}-${random}`;
+  const timestamp = Date.now().toString(36);
+  if (!normalisedPrefix) {
+    return `${timestamp}-${random}`;
+  }
+  return `${normalisedPrefix}-${timestamp}-${random}`;
 }
 const mockHandlers = {
   'comet:getApiKey': () => Promise.resolve('sk-mock-1234'),
