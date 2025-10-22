@@ -1,4 +1,4 @@
-import createLogger, { loadLoggingConfig, setGlobalContext } from '../utils/logger.js';
+import createLogger, { loadLoggingConfig, setGlobalContext, withCorrelation, wrapAsync } from '../utils/logger.js';
 import { DEFAULT_TOKEN_LIMIT } from '../utils/cost.js';
 import { availableLocales, setLocale, t } from '../utils/i18n.js';
 import { createRecorder } from '../utils/audio.js';
@@ -977,88 +977,101 @@ function responseIndicatesSuccess(response) {
  */
 function sendMessage(type, payload) {
   const correlationId = createCorrelationId('bg');
-  const metadata = {
-    type,
-    hasPayload: Boolean(payload),
-    correlationId,
-  };
-  logger.debug('Dispatching message to background worker.', metadata);
-  if (MOCK_MODE && mockHandlers[type]) {
-    try {
-      const result = mockHandlers[type](payload);
-      if (result && typeof result.then === 'function') {
-        return result
-          .then(value => {
-            logger.debug('Mock background message resolved.', { ...metadata });
-            return value;
-          })
-          .catch(error => {
-            logger.error('Mock background message rejected.', { ...metadata, error });
-            throw normaliseError(error);
-          });
-      }
-      logger.debug('Mock background message resolved synchronously.', { ...metadata });
-      return result;
-    } catch (error) {
-      logger.error('Mock background message threw synchronously.', { ...metadata, error });
-      throw normaliseError(error);
-    }
-  }
-  const payloadMessage = { type, payload };
-  if (usesBrowserPromises) {
-    return runtime
-      .sendMessage(payloadMessage)
-      .then(response => {
-        if (!response) {
-          throw new Error('No response from background script.');
-        }
-        if (!responseIndicatesSuccess(response)) {
-          throw new Error(response.error || 'Request failed.');
-        }
-        logger.debug('Background message resolved.', { ...metadata });
-        return response.result;
-      })
-      .catch(error => {
-        logger.error('Background message rejected.', { ...metadata, error });
-        throw normaliseError(error);
-      });
-  }
+  const execute = wrapAsync(
+    async (messageType, messagePayload) => {
+      const metadata = {
+        type: messageType,
+        hasPayload: Boolean(messagePayload),
+        correlationId,
+      };
+      logger.debug('Dispatching message to background worker.', metadata);
 
-  return new Promise((resolve, reject) => {
-    try {
-      const maybePromise = runtime.sendMessage(payloadMessage, response => {
-        const lastError = getRuntimeLastError();
-        if (lastError) {
-          logger.error('Background message rejected via callback.', { ...metadata, error: lastError });
-          reject(normaliseError(lastError));
-          return;
+      if (MOCK_MODE && mockHandlers[messageType]) {
+        try {
+          const result = mockHandlers[messageType](messagePayload);
+          if (result && typeof result.then === 'function') {
+            try {
+              const value = await result;
+              logger.debug('Mock background message resolved.', { ...metadata });
+              return value;
+            } catch (error) {
+              logger.error('Mock background message rejected.', { ...metadata, error });
+              throw normaliseError(error);
+            }
+          }
+          logger.debug('Mock background message resolved synchronously.', { ...metadata });
+          return result;
+        } catch (error) {
+          logger.error('Mock background message threw synchronously.', { ...metadata, error });
+          throw normaliseError(error);
         }
-        if (!response) {
-          const error = new Error('No response from background script.');
-          logger.error('Background message received empty response.', { ...metadata, error });
-          reject(error);
-          return;
-        }
-        if (!responseIndicatesSuccess(response)) {
-          const error = new Error(response.error || 'Request failed.');
-          logger.error('Background message returned error response.', { ...metadata, error });
-          reject(error);
-          return;
-        }
-        logger.debug('Background message resolved via callback.', { ...metadata });
-        resolve(response.result);
-      });
-      if (maybePromise && typeof maybePromise.catch === 'function') {
-        maybePromise.catch(error => {
-          logger.error('Background message promise rejected.', { ...metadata, error });
-          reject(normaliseError(error));
-        });
       }
-    } catch (error) {
-      logger.error('Background message send threw synchronously.', { ...metadata, error });
-      reject(normaliseError(error));
-    }
-  });
+
+      const payloadMessage = { type: messageType, payload: messagePayload };
+
+      if (usesBrowserPromises) {
+        try {
+          const response = await runtime.sendMessage(payloadMessage);
+          if (!response) {
+            throw new Error('No response from background script.');
+          }
+          if (!responseIndicatesSuccess(response)) {
+            throw new Error(response.error || 'Request failed.');
+          }
+          logger.debug('Background message resolved.', { ...metadata });
+          return response.result;
+        } catch (error) {
+          logger.error('Background message rejected.', { ...metadata, error });
+          throw normaliseError(error);
+        }
+      }
+
+      return new Promise((resolve, reject) => {
+        try {
+          const maybePromise = runtime.sendMessage(payloadMessage, response => {
+            const lastError = getRuntimeLastError();
+            if (lastError) {
+              logger.error('Background message rejected via callback.', { ...metadata, error: lastError });
+              reject(normaliseError(lastError));
+              return;
+            }
+            if (!response) {
+              const error = new Error('No response from background script.');
+              logger.error('Background message received empty response.', { ...metadata, error });
+              reject(error);
+              return;
+            }
+            if (!responseIndicatesSuccess(response)) {
+              const error = new Error(response.error || 'Request failed.');
+              logger.error('Background message returned error response.', { ...metadata, error });
+              reject(error);
+              return;
+            }
+            logger.debug('Background message resolved via callback.', { ...metadata });
+            resolve(response.result);
+          });
+          if (maybePromise && typeof maybePromise.catch === 'function') {
+            maybePromise.catch(error => {
+              logger.error('Background message promise rejected.', { ...metadata, error });
+              reject(normaliseError(error));
+            });
+          }
+        } catch (error) {
+          logger.error('Background message send threw synchronously.', { ...metadata, error });
+          reject(normaliseError(error));
+        }
+      });
+    },
+    () => ({
+      logger,
+      component: logger.component,
+      ...withCorrelation(correlationId),
+      messageType: type,
+      errorMessage: null,
+    }),
+  );
+
+  return execute(type, payload);
 }
 
 /**
