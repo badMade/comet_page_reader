@@ -1,15 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-const createModuleSpecifier = (() => {
-  let counter = 0;
-  return () => `../utils/logger.js?structured=${Date.now()}-${counter++}`;
-})();
-
-async function importFreshLoggerModule() {
-  const moduleUrl = new URL(createModuleSpecifier(), import.meta.url);
-  return import(moduleUrl.href);
-}
+import { importFreshLoggerModule } from './fixtures/logger-test-utils.js';
 
 test('structured logger redacts sensitive metadata before emission', async () => {
   const loggerModule = await importFreshLoggerModule();
