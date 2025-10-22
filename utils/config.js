@@ -35,7 +35,39 @@ function getGlobalScope() {
 
 const GLOBAL_SCOPE = getGlobalScope();
 const isNode = typeof process !== 'undefined' && !!process?.versions?.node;
-const ENV_VARS = isNode && typeof process?.env === 'object' ? process.env : null;
+
+const IMPORT_META = typeof import.meta !== 'undefined' ? import.meta : undefined;
+const IMPORT_META_ENV = IMPORT_META && typeof IMPORT_META.env === 'object' ? IMPORT_META.env : null;
+
+const hasProcess = typeof process === 'object' && process !== null;
+const PROCESS_ENV = hasProcess && typeof process.env === 'object' ? process.env : null;
+
+function mergeEnvSources(sources) {
+  if (!Array.isArray(sources) || sources.length === 0) {
+    return null;
+  }
+
+  const merged = sources.reduce((accumulator, source) => {
+    if (!source || typeof source !== 'object') {
+      return accumulator;
+    }
+    Object.entries(source).forEach(([key, value]) => {
+      if (typeof accumulator[key] === 'undefined' && typeof value !== 'undefined') {
+        accumulator[key] = value;
+      }
+    });
+    return accumulator;
+  }, {});
+
+  return Object.keys(merged).length > 0 ? merged : null;
+}
+
+const ENV_VARS = mergeEnvSources([
+  PROCESS_ENV,
+  IMPORT_META_ENV,
+  GLOBAL_SCOPE && typeof GLOBAL_SCOPE.__ENV__ === 'object' ? GLOBAL_SCOPE.__ENV__ : null,
+  GLOBAL_SCOPE && typeof GLOBAL_SCOPE.env === 'object' ? GLOBAL_SCOPE.env : null,
+]);
 
 function loadManifest() {
   if (!GLOBAL_SCOPE) {
