@@ -6,7 +6,7 @@
  * under Node.js. Configuration can be provided programmatically or sourced
  * from JSON/YAML manifests to keep behaviour consistent across environments.
  */
-import { getAppVersion, getEnvironment } from './config.js';
+import { APP_VERSION, ENV, LOG_LEVEL } from './config.js';
 const LOG_LEVELS = Object.freeze({
   error: 0,
   warn: 1,
@@ -490,8 +490,8 @@ async function emitLog(level, loggerInstance, message, meta) {
   const componentName = typeof loggerInstance?.component === 'string' && loggerInstance.component.trim().length > 0
     ? loggerInstance.component.trim()
     : loggerName;
-  const environment = getEnvironment() || 'production';
-  const version = getAppVersion() || '0.0.0';
+  const environment = ENV ?? 'production';
+  const version = APP_VERSION ?? '0.0.0';
 
   const scopedContext = collectScopeContext();
   const mergedContext = mergeContexts(
@@ -596,7 +596,7 @@ export function setLoggerConfig(config) {
     ...activeConfig,
     ...config,
   };
-  if (config.level) {
+  if (typeof config.level === 'string') {
     nextConfig.level = normaliseLevel(config.level);
   }
   activeConfig = nextConfig;
@@ -810,15 +810,13 @@ export function createLogger(options = {}) {
   return new StructuredLogger(name, sanitizeMeta(context), component);
 }
 
-const envLevel = isNode && process.env && typeof process.env.COMET_LOG_LEVEL === 'string'
-  ? process.env.COMET_LOG_LEVEL
-  : null;
+const initialLogLevel = LOG_LEVEL;
 const envLogFile = isNode && process.env && typeof process.env.COMET_LOG_FILE === 'string'
   ? process.env.COMET_LOG_FILE
   : null;
 
-if (envLevel) {
-  setLoggerConfig({ level: envLevel });
+if (typeof initialLogLevel === 'string') {
+  setLoggerConfig({ level: initialLogLevel });
 }
 if (envLogFile) {
   setLoggerConfig({ file: { enabled: true, path: envLogFile } });
