@@ -6,7 +6,7 @@
  * responsible for persisting provider preferences and token usage across
  * sessions while exposing request handlers to the extension runtime.
  */
-import createLogger, { loadLoggingConfig, setGlobalContext } from '../utils/logger.js';
+import createLogger, { createCorrelationId, loadLoggingConfig, setGlobalContext } from '../utils/logger.js';
 import { createCostTracker, DEFAULT_TOKEN_LIMIT, estimateTokensFromUsd } from '../utils/cost.js';
 import { ensureNotesFile } from '../utils/notes.js';
 import { DEFAULT_PROVIDER, fetchApiKeyDetails, readApiKey, saveApiKey } from '../utils/apiKeyStore.js';
@@ -105,14 +105,6 @@ function applyProviderLoggingContext(providerId) {
     aiProviderId: resolved,
     aiProviderLabel: label,
   });
-}
-
-function createCorrelationId(prefix = 'bg') {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID();
-  }
-  const random = Math.random().toString(36).slice(2, 8);
-  return `${prefix}-${Date.now().toString(36)}-${random}`;
 }
 
 const testAdapterOverrides = new Map();
@@ -1881,12 +1873,6 @@ runtime.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return true;
     }
 
-    logger.debug('Background message handled successfully.', {
-      type: message.type,
-      correlationId,
-    });
-    sendResponse({ success: true, result: handlerResult, error: null });
-    return false;
   } catch (caughtError) {
     const resolvedError = caughtError instanceof Error ? caughtError : new Error(String(caughtError));
     logger.error('Background message handler threw synchronously.', {

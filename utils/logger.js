@@ -341,6 +341,49 @@ function detectError(messageOrMeta, meta) {
   return null;
 }
 
+function removeErrorReference(meta, error) {
+  if (!error || typeof meta === 'undefined' || meta === null) {
+    return meta;
+  }
+
+  if (meta === error) {
+    return undefined;
+  }
+
+  if (Array.isArray(meta)) {
+    let changed = false;
+    const filtered = meta.filter(item => {
+      if (item === error) {
+        changed = true;
+        return false;
+      }
+      return true;
+    });
+    if (!changed) {
+      return meta;
+    }
+    return filtered.length > 0 ? filtered : undefined;
+  }
+
+  if (typeof meta === 'object') {
+    let changed = false;
+    const pruned = Object.entries(meta).reduce((accumulator, [key, value]) => {
+      if (value === error && (key === 'error' || key === 'cause' || key === 'reason')) {
+        changed = true;
+        return accumulator;
+      }
+      accumulator[key] = value;
+      return accumulator;
+    }, {});
+    if (!changed) {
+      return meta;
+    }
+    return Object.keys(pruned).length > 0 ? pruned : undefined;
+  }
+
+  return meta;
+}
+
 async function ensureFileStream() {
   if (!isNode || !activeConfig.file?.enabled || !activeConfig.file?.path) {
     return null;
@@ -405,6 +448,7 @@ async function emitLog(level, loggerName, loggerContext, message, meta) {
   }
   const timestamp = new Date().toISOString();
   const error = detectError(message, meta);
+  const metaWithoutError = removeErrorReference(meta, error);
   const baseEntry = {
     timestamp,
     level: normaliseLevel(level),
@@ -419,7 +463,7 @@ async function emitLog(level, loggerName, loggerContext, message, meta) {
   if (error) {
     baseEntry.error = sanitizeMeta(error);
   }
-  const additionalMeta = sanitizeMeta(meta);
+  const additionalMeta = sanitizeMeta(metaWithoutError);
   if (additionalMeta && Object.keys(additionalMeta).length > 0 && !(Array.isArray(additionalMeta) && additionalMeta.length === 0)) {
     baseEntry.meta = additionalMeta;
   }
@@ -481,6 +525,16 @@ export function setGlobalContext(context) {
  */
 export function clearGlobalContext() {
   globalContext = {};
+}
+
+export function createCorrelationId(prefix = 'corr') {
+  const runtimeCrypto = typeof globalThis !== 'undefined' ? globalThis.crypto : typeof crypto !== 'undefined' ? crypto : null;
+  if (runtimeCrypto && typeof runtimeCrypto.randomUUID === 'function') {
+    return runtimeCrypto.randomUUID();
+  }
+  const safePrefix = typeof prefix === 'string' && prefix.trim() ? prefix.trim() : 'corr';
+  const random = Math.random().toString(36).slice(2, 8);
+  return `${safePrefix}-${Date.now().toString(36)}-${random}`;
 }
 
 /**

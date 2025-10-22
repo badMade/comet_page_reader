@@ -1,4 +1,4 @@
-import createLogger, { loadLoggingConfig, setGlobalContext } from '../utils/logger.js';
+import createLogger, { createCorrelationId, loadLoggingConfig, setGlobalContext } from '../utils/logger.js';
 import { DEFAULT_TOKEN_LIMIT } from '../utils/cost.js';
 import { availableLocales, setLocale, t } from '../utils/i18n.js';
 import { createRecorder } from '../utils/audio.js';
@@ -55,13 +55,6 @@ const logger = createLogger({
 
 setGlobalContext({ runtime: 'popup' });
 
-function createCorrelationId(prefix = 'msg') {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID();
-  }
-  const random = Math.random().toString(36).slice(2, 8);
-  return `${prefix}-${Date.now().toString(36)}-${random}`;
-}
 const mockHandlers = {
   'comet:getApiKey': () => Promise.resolve('sk-mock-1234'),
   'comet:getApiKeyDetails': () =>
