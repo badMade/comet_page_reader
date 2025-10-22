@@ -523,8 +523,8 @@ function createFallbackScopeStorage() {
   patchPromiseStatic('reject', () => currentStore);
   patchPromiseStatic('all', ([iterable]) => firstStoreFromIterable(iterable) || currentStore);
   patchPromiseStatic('allSettled', ([iterable]) => firstStoreFromIterable(iterable) || currentStore);
-  patchPromiseStatic('any', ([iterable]) => firstStoreFromIterable(iterable) || currentStore);
-  patchPromiseStatic('race', ([iterable]) => firstStoreFromIterable(iterable) || currentStore);
+  patchPromiseStatic('any', () => currentStore);
+  patchPromiseStatic('race', () => currentStore);
 
   patchTimer(globalObject, 'setTimeout');
   patchTimer(globalObject, 'setInterval');
