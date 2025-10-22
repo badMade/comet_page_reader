@@ -13,10 +13,18 @@ import { URL } from 'node:url';
 import { HttpProxyAgent } from 'http-proxy-agent';
 import { HttpsProxyAgent } from 'https-proxy-agent';
 
-import createLogger, { loadLoggingConfig, setGlobalContext } from '../utils/logger.js';
+import createLogger, { loadLoggingConfig, setGlobalContext, withCorrelation, wrapAsync } from '../utils/logger.js';
 
 const logger = createLogger({ name: 'verify-npm-registry' });
 setGlobalContext({ script: 'verify-npm-registry' });
+
+function createCorrelationId(prefix = 'verify') {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  const random = Math.random().toString(36).slice(2, 8);
+  return `${prefix}-${Date.now().toString(36)}-${random}`;
+}
 
 function parseArguments(rawArgs) {
   let registry = process.env.NPM_REGISTRY_URL ?? 'https://registry.npmjs.org/';
@@ -174,5 +182,12 @@ async function main() {
   }
 }
 
-await main();
+const run = wrapAsync(main, () => ({
+  logger,
+  component: logger.component,
+  ...withCorrelation(createCorrelationId('verify-run')),
+  errorMessage: null,
+}));
+
+await run();
 

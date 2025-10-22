@@ -32,7 +32,7 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["utils/dom.js", "utils/logger.js", "logging_config.yaml"],
+      "resources": ["utils/dom.js", "utils/logger.js", "utils/config.js", "logging_config.yaml"],
       "matches": ["<all_urls>"]
     }
   ],

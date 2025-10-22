@@ -6,7 +6,7 @@
  * responsible for persisting provider preferences and token usage across
  * sessions while exposing request handlers to the extension runtime.
  */
-import createLogger, { loadLoggingConfig, setGlobalContext } from '../utils/logger.js';
+import createLogger, { loadLoggingConfig, setGlobalContext, withCorrelation, wrap, wrapAsync } from '../utils/logger.js';
 import { createCostTracker, DEFAULT_TOKEN_LIMIT, estimateTokensFromUsd } from '../utils/cost.js';
 import { ensureNotesFile } from '../utils/notes.js';
 import { DEFAULT_PROVIDER, fetchApiKeyDetails, readApiKey, saveApiKey } from '../utils/apiKeyStore.js';
@@ -1841,62 +1841,71 @@ const handlers = {
 
 runtime.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const correlationId = createCorrelationId('bg-handler');
+  const wrapped = wrap(
+    (incomingMessage, incomingSender, respond) => {
+      if (!incomingMessage || !incomingMessage.type || !handlers[incomingMessage.type]) {
+        logger.warn('Received unsupported message.', {
+          messageType: incomingMessage?.type,
+          correlationId,
+        });
+        respond({ success: false, result: null, error: 'Unsupported message type.' });
+        return false;
+      }
 
-  try {
-    if (!message || !message.type || !handlers[message.type]) {
-      logger.warn('Received unsupported message.', {
-        messageType: message?.type,
+      logger.debug('Received background message.', {
+        type: incomingMessage.type,
         correlationId,
       });
-      sendResponse({ success: false, result: null, error: 'Unsupported message type.' });
+
+      const handler = handlers[incomingMessage.type];
+      const executeHandler = wrapAsync(handler, () => ({
+        logger,
+        component: logger.component,
+        ...withCorrelation(correlationId),
+        messageType: incomingMessage.type,
+        errorMessage: null,
+      }));
+
+      const handlerResult = executeHandler(incomingMessage, incomingSender);
+
+      if (handlerResult && typeof handlerResult.then === 'function') {
+        handlerResult
+          .then(result => {
+            logger.debug('Background message handled successfully.', {
+              type: incomingMessage.type,
+              correlationId,
+            });
+            respond({ success: true, result, error: null });
+          })
+          .catch(error => {
+            const resolvedError = error instanceof Error ? error : new Error(String(error));
+            logger.error('Background message handler failed.', {
+              type: incomingMessage.type,
+              correlationId,
+              error: resolvedError,
+            });
+            respond({ success: false, result: null, error: resolvedError.message });
+          });
+        return true;
+      }
+
+      logger.debug('Background message handled successfully.', {
+        type: incomingMessage.type,
+        correlationId,
+      });
+      respond({ success: true, result: handlerResult, error: null });
       return false;
-    }
+    },
+    incomingMessage => ({
+      logger,
+      component: logger.component,
+      ...withCorrelation(correlationId),
+      messageType: incomingMessage?.type,
+      errorMessage: 'Background message handler threw synchronously.',
+    }),
+  );
 
-    logger.debug('Received background message.', {
-      type: message.type,
-      correlationId,
-    });
-
-    const handler = handlers[message.type];
-    const handlerResult = handler(message, sender);
-
-    if (handlerResult && typeof handlerResult.then === 'function') {
-      handlerResult
-        .then(result => {
-          logger.debug('Background message handled successfully.', {
-            type: message.type,
-            correlationId,
-          });
-          sendResponse({ success: true, result, error: null });
-        })
-        .catch(error => {
-          const resolvedError = error instanceof Error ? error : new Error(String(error));
-          logger.error('Background message handler failed.', {
-            type: message.type,
-            correlationId,
-            error: resolvedError,
-          });
-          sendResponse({ success: false, result: null, error: resolvedError.message });
-        });
-      return true;
-    }
-
-    logger.debug('Background message handled successfully.', {
-      type: message.type,
-      correlationId,
-    });
-    sendResponse({ success: true, result: handlerResult, error: null });
-    return false;
-  } catch (caughtError) {
-    const resolvedError = caughtError instanceof Error ? caughtError : new Error(String(caughtError));
-    logger.error('Background message handler threw synchronously.', {
-      type: message?.type,
-      correlationId,
-      error: resolvedError,
-    });
-    sendResponse({ success: false, result: null, error: resolvedError.message });
-    return false;
-  }
+  return wrapped(message, sender, sendResponse);
 });
 
 /**

@@ -72,12 +72,16 @@
   let createLogger;
   let loadLoggingConfig;
   let setGlobalContext;
+  let withCorrelation;
+  let wrap;
 
   try {
     ({
       default: createLogger,
       loadLoggingConfig,
       setGlobalContext,
+      withCorrelation,
+      wrap,
     } = await loggerModulePromise);
   } catch (error) {
     if (isContextInvalidated(error)) {
@@ -132,6 +136,14 @@
   let observer;
   let activeHighlightId = null;
   let disposed = false;
+
+  function createCorrelationId(prefix = 'content') {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+    const random = Math.random().toString(36).slice(2, 8);
+    return `${prefix}-${Date.now().toString(36)}-${random}`;
+  }
 
   function getRuntimeLastError() {
     if (typeof chrome === 'object' && chrome?.runtime?.lastError) {
@@ -274,46 +286,60 @@
     if (disposed) {
       return false;
     }
-    if (!message || !message.type) {
-      return false;
-    }
+    const correlationId = createCorrelationId('content-msg');
+    const wrapped = wrap(
+      (incomingMessage, incomingSender, respond) => {
+        if (!incomingMessage || !incomingMessage.type) {
+          return false;
+        }
 
-    if (message.type === 'comet:getSegments') {
-      sendResponse({
-        ok: true,
-        result: {
-          url: window.location.href,
-          segments,
-        },
-      });
-      return true;
-    }
+        if (incomingMessage.type === 'comet:getSegments') {
+          respond({
+            ok: true,
+            result: {
+              url: window.location.href,
+              segments,
+            },
+          });
+          return true;
+        }
 
-    if (message.type === 'comet:highlightSegment') {
-      const ok = highlightSegment(message.payload.segmentId);
-      sendResponse({ ok, segmentId: message.payload.segmentId });
-      return true;
-    }
+        if (incomingMessage.type === 'comet:highlightSegment') {
+          const ok = highlightSegment(incomingMessage.payload.segmentId);
+          respond({ ok, segmentId: incomingMessage.payload.segmentId });
+          return true;
+        }
 
-    if (message.type === 'comet:clearHighlights') {
-      clearHighlights();
-      activeHighlightId = null;
-      sendResponse({ ok: true });
-      return true;
-    }
+        if (incomingMessage.type === 'comet:clearHighlights') {
+          clearHighlights();
+          activeHighlightId = null;
+          respond({ ok: true });
+          return true;
+        }
 
-    if (message.type === 'comet:refreshSegments') {
-      buildSegments();
-      sendResponse({
-        ok: true,
-        result: {
-          url: window.location.href,
-          segments,
-        },
-      });
-      return true;
-    }
+        if (incomingMessage.type === 'comet:refreshSegments') {
+          buildSegments();
+          respond({
+            ok: true,
+            result: {
+              url: window.location.href,
+              segments,
+            },
+          });
+          return true;
+        }
 
-    return false;
+        return false;
+      },
+      incomingMessage => ({
+        logger,
+        component: logger.component,
+        ...withCorrelation(correlationId),
+        messageType: incomingMessage?.type,
+        errorMessage: 'Content script runtime handler failed.',
+      }),
+    );
+
+    return wrapped(message, sender, sendResponse);
   });
 })();
