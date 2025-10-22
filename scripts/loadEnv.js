@@ -89,8 +89,6 @@ function registerProcessHandlers() {
   });
 }
 
-registerProcessHandlers();
-
 /**
  * Loads environment variables from a `.env` file using `dotenv`.
  *
@@ -119,6 +117,7 @@ export function loadEnv(options = {}) {
 if (typeof process !== 'undefined' && process.argv && process.argv[1]) {
   const entryUrl = pathToFileURL(process.argv[1]).href;
   if (import.meta.url === entryUrl && process.env.NODE_ENV !== 'production') {
+    registerProcessHandlers();
     loadEnv();
   }
 }
