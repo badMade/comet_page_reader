@@ -34,9 +34,7 @@ function sanitizeFileName(name) {
 
 export default defineConfig(({ mode, command }) => {
   const isDevCommand = command === 'serve' || mode === 'development';
-  const sourcemapEnv = (process.env.BUILD_SOURCEMAP ?? '').toLowerCase();
-  const sourcemapRequested = sourcemapEnv === 'true' || sourcemapEnv === '1';
-  const sourcemapEnabled = isDevCommand || sourcemapRequested;
+  const sourcemapEnabled = isDevCommand || Boolean(sourcemapRequested);
 
   return {
     publicDir: false,
