@@ -155,6 +155,59 @@
     return null;
   }
 
+  function extractStackTrace(value) {
+    if (!value) {
+      return undefined;
+    }
+    if (typeof value === 'string') {
+      return value;
+    }
+    if (typeof value === 'object' && typeof value.stack === 'string' && value.stack) {
+      return value.stack;
+    }
+    return undefined;
+  }
+
+  function handleWindowError(event) {
+    if (!event) {
+      return;
+    }
+    const correlationId = createCorrelationId('content-window-error');
+    const stack = extractStackTrace(event.error) ?? extractStackTrace(event.message);
+    const meta = {
+      ...withCorrelation(correlationId),
+      message: event.message,
+      filename: event.filename,
+      lineno: event.lineno,
+      colno: event.colno,
+    };
+    if (typeof stack === 'string') {
+      meta.stack = stack;
+    }
+    if (typeof event.error !== 'undefined') {
+      meta.error = event.error;
+    }
+    Promise.resolve(logger.error('Unhandled window error captured.', meta)).catch(() => {});
+  }
+
+  function handleUnhandledRejection(event) {
+    if (!event) {
+      return;
+    }
+    const correlationId = createCorrelationId('content-unhandled-rejection');
+    const stack = extractStackTrace(event.reason);
+    const meta = {
+      ...withCorrelation(correlationId),
+      reason: event.reason,
+    };
+    if (typeof stack === 'string') {
+      meta.stack = stack;
+    }
+    Promise.resolve(
+      logger.error('Unhandled promise rejection captured in content script.', meta),
+    ).catch(() => {});
+  }
+
   function dispose() {
     if (disposed) {
       return;
@@ -164,6 +217,8 @@
       observer.disconnect();
       observer = null;
     }
+    window.removeEventListener('error', handleWindowError);
+    window.removeEventListener('unhandledrejection', handleUnhandledRejection);
     document.removeEventListener('scroll', throttledUpdate);
     logger.info('Content script disposed.');
   }
@@ -259,6 +314,8 @@
 
   const throttledUpdate = throttle(buildSegments, 2000);
 
+  window.addEventListener('error', handleWindowError);
+  window.addEventListener('unhandledrejection', handleUnhandledRejection);
   window.addEventListener('pagehide', dispose);
   window.addEventListener('beforeunload', dispose);
 
