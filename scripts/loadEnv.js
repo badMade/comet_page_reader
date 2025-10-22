@@ -59,7 +59,7 @@ function registerProcessHandlers() {
       } else if (typeof input !== 'undefined') {
         meta.reason = input;
       }
-      await logger.error(message, meta);
+      await logger.fatal(message, meta);
       scheduleFatalExit();
     }, () => ({
       logger,
@@ -116,9 +116,20 @@ export function loadEnv(options = {}) {
   return result.parsed || {};
 }
 
+async function main() {
+  loadEnv();
+}
+
+const run = logger.wrapAsync(main, () => ({
+  logger,
+  component: logger.component,
+  ...withCorrelation(createCorrelationId('load-env-run')),
+  errorMessage: 'Failed to load environment variables.',
+}));
+
 if (typeof process !== 'undefined' && process.argv && process.argv[1]) {
   const entryUrl = pathToFileURL(process.argv[1]).href;
   if (import.meta.url === entryUrl && process.env.NODE_ENV !== 'production') {
-    loadEnv();
+    await run();
   }
 }

@@ -64,7 +64,7 @@ function registerProcessHandlers() {
       } else if (typeof input !== 'undefined') {
         meta.reason = input;
       }
-      await logger.error(message, meta);
+      await logger.fatal(message, meta);
       scheduleFatalExit();
     }, () => ({
       logger,
@@ -252,7 +252,7 @@ async function main() {
   }
 }
 
-const run = wrapAsync(main, () => ({
+const run = logger.wrapAsync(main, () => ({
   logger,
   component: logger.component,
   ...withCorrelation(createCorrelationId('verify-run')),
