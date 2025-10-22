@@ -12,8 +12,8 @@ const LOG_LEVEL_ALIASES = Object.freeze({
   err: 'error',
   error: 'error',
   errors: 'error',
-  fatal: 'error',
-  critical: 'error',
+  fatal: 'fatal',
+  critical: 'fatal',
   log: 'info',
 });
 
@@ -153,7 +153,7 @@ function normaliseLogLevel(value) {
     return LOG_LEVEL_ALIASES[normalised];
   }
 
-  if (['trace', 'debug', 'info', 'warn', 'error'].includes(normalised)) {
+  if (['trace', 'debug', 'info', 'warn', 'error', 'fatal'].includes(normalised)) {
     return normalised;
   }
 

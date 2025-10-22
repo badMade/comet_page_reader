@@ -8,19 +8,16 @@
  */
 import { APP_VERSION, ENV, LOG_LEVEL, ENABLE_TRACE } from './config.js';
 const LOG_LEVELS = Object.freeze({
-  error: 0,
-  warn: 1,
-  info: 2,
-  debug: 3,
-  trace: 4,
+  fatal: 0,
+  error: 1,
+  warn: 2,
+  info: 3,
+  debug: 4,
+  trace: 5,
 });
 
 const SENSITIVE_KEY_PATTERNS = [
-  /api[-_]?key/i,
-  /secret/i,
-  /token/i,
-  /password/i,
-  /authorization/i,
+  /key|token|secret|password|authorization/i,
   /session[-_]?id/i,
 ];
 
@@ -352,6 +349,14 @@ function extractCorrelationId(...contexts) {
   return null;
 }
 
+function normaliseCorrelationId(id) {
+  if (typeof id !== 'string') {
+    return null;
+  }
+  const trimmed = id.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
 function redactStackString(stack) {
   if (typeof stack !== 'string' || stack.length === 0) {
     return null;
@@ -475,7 +480,7 @@ function normaliseMessage(message) {
 
 function selectConsoleMethod(level) {
   const normalised = normaliseLevel(level);
-  if (normalised === 'error') {
+  if (normalised === 'fatal' || normalised === 'error') {
     return 'error';
   }
   if (normalised === 'warn') {
@@ -494,9 +499,9 @@ function selectConsoleMethod(level) {
 }
 
 function formatPrettyEntry(entry) {
-  const { ts, level, component, msg, stack, correlationId, context, env, version, meta } = entry;
+  const { ts, level, component, msg, stack, correlationId, context, env, version } = entry;
   const headline = `${ts} [${level.toUpperCase()}] (${component}) ${msg}`;
-  const details = {};
+  const details = { env, version };
   if (correlationId) {
     details.correlationId = correlationId;
   }
@@ -506,11 +511,6 @@ function formatPrettyEntry(entry) {
   if (context && Object.keys(context).length > 0) {
     details.context = context;
   }
-  if (meta && Object.keys(meta).length > 0) {
-    details.meta = meta;
-  }
-  details.env = env;
-  details.version = version;
   const suffix = safeStringify(details);
   return suffix && suffix !== '{}' ? `${headline} ${suffix}` : headline;
 }
@@ -531,7 +531,7 @@ async function emitLog(level, loggerInstance, message, meta) {
   const environment = typeof ENV === 'string' && ENV ? ENV : 'production';
   const version = typeof APP_VERSION === 'string' && APP_VERSION ? APP_VERSION : '0.0.0';
 
-  const scopedContext = collectScopeContext();
+  const scopedContext = sanitizeMeta(collectScopeContext());
   const mergedContext = mergeContexts(
     sanitizeMeta(activeConfig.context || {}),
     sanitizeMeta(globalContext),
@@ -552,12 +552,18 @@ async function emitLog(level, loggerInstance, message, meta) {
   }
 
   const stack = error ? buildStackTrace(error) : null;
+  const contextPayload = { ...contextWithoutReserved };
+  if (additionalMeta && typeof additionalMeta === 'object' && Object.keys(additionalMeta).length > 0) {
+    const existingMeta = contextPayload.meta && typeof contextPayload.meta === 'object' ? contextPayload.meta : {};
+    contextPayload.meta = { ...existingMeta, ...additionalMeta };
+  }
+
   const entry = {
     ts: timestamp,
     level: normaliseLevel(level),
     msg: normaliseMessage(message),
     stack: stack ?? null,
-    context: contextWithoutReserved,
+    context: contextPayload,
     component: mergedContext.component && typeof mergedContext.component === 'string' && mergedContext.component.trim().length > 0
       ? mergedContext.component.trim()
       : componentName,
@@ -565,10 +571,6 @@ async function emitLog(level, loggerInstance, message, meta) {
     env: environment,
     version,
   };
-
-  if (additionalMeta && typeof additionalMeta === 'object' && Object.keys(additionalMeta).length > 0) {
-    entry.meta = additionalMeta;
-  }
 
   if (activeConfig.console?.enabled !== false) {
     const consoleMethod = selectConsoleMethod(level);
@@ -727,6 +729,22 @@ class StructuredLogger {
     this.context = { ...this.context, ...sanitizeMeta(extraContext) };
   }
 
+  withCorrelation(id) {
+    const correlationId = normaliseCorrelationId(id);
+    if (!correlationId) {
+      return this;
+    }
+    return this.child({ correlationId });
+  }
+
+  wrap(fn, ctx = {}) {
+    return wrapSyncFunction(fn, ensureLoggerContext(ctx, this));
+  }
+
+  wrapAsync(fn, ctx = {}) {
+    return wrapAsyncFunction(fn, ensureLoggerContext(ctx, this));
+  }
+
   async trace(message, meta) {
     await emitLog('trace', this, message, meta);
   }
@@ -745,6 +763,10 @@ class StructuredLogger {
 
   async error(message, meta) {
     await emitLog('error', this, message, meta);
+  }
+
+  async fatal(message, meta) {
+    await emitLog('fatal', this, message, meta);
   }
 }
 
@@ -783,18 +805,7 @@ function logWrappedError(logger, message, error) {
   Promise.resolve(target.error(message, meta)).catch(() => {});
 }
 
-export function withCorrelation(id) {
-  if (typeof id !== 'string') {
-    return {};
-  }
-  const trimmed = id.trim();
-  if (!trimmed) {
-    return {};
-  }
-  return { correlationId: trimmed };
-}
-
-export function wrap(fn, ctx = {}) {
+function wrapSyncFunction(fn, ctx = {}) {
   if (typeof fn !== 'function') {
     throw new TypeError('wrap requires a function');
   }
@@ -804,7 +815,7 @@ export function wrap(fn, ctx = {}) {
     try {
       return fn(...args);
     } catch (error) {
-      logWrappedError(logger, errorMessage, error, context || {});
+      logWrappedError(logger, errorMessage, error);
       throw error;
     } finally {
       popScope();
@@ -812,7 +823,7 @@ export function wrap(fn, ctx = {}) {
   };
 }
 
-export function wrapAsync(fn, ctx = {}) {
+function wrapAsyncFunction(fn, ctx = {}) {
   if (typeof fn !== 'function') {
     throw new TypeError('wrapAsync requires a function');
   }
@@ -822,12 +833,48 @@ export function wrapAsync(fn, ctx = {}) {
     try {
       return await fn(...args);
     } catch (error) {
-      logWrappedError(logger, errorMessage, error, context || {});
+      logWrappedError(logger, errorMessage, error);
       throw error;
     } finally {
       popScope();
     }
   };
+}
+
+function ensureLoggerContext(ctx, loggerInstance) {
+  if (typeof ctx === 'function') {
+    return (...args) => {
+      const resolved = ctx(...args);
+      if (!resolved || typeof resolved !== 'object') {
+        return { logger: loggerInstance };
+      }
+      if (resolved.logger && typeof resolved.logger.error === 'function') {
+        return resolved;
+      }
+      return { ...resolved, logger: loggerInstance };
+    };
+  }
+  if (!ctx || typeof ctx !== 'object') {
+    return { logger: loggerInstance };
+  }
+  const context = { ...ctx };
+  if (!context.logger || typeof context.logger.error !== 'function') {
+    context.logger = loggerInstance;
+  }
+  return context;
+}
+
+export function withCorrelation(id) {
+  const correlationId = normaliseCorrelationId(id);
+  return correlationId ? { correlationId } : {};
+}
+
+export function wrap(fn, ctx = {}) {
+  return wrapSyncFunction(fn, ctx);
+}
+
+export function wrapAsync(fn, ctx = {}) {
+  return wrapAsyncFunction(fn, ctx);
 }
 
 /**
