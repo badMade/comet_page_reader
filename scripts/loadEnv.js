@@ -59,8 +59,11 @@ function registerProcessHandlers() {
       } else if (typeof input !== 'undefined') {
         meta.reason = input;
       }
-      await logger.fatal(message, meta);
-      scheduleFatalExit();
+      try {
+        await logger.fatal(message, meta);
+      } finally {
+        scheduleFatalExit();
+      }
     }, () => ({
       logger,
       component: logger.component,
