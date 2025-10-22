@@ -15,87 +15,11 @@ import { createCliCorrelationId, registerCliErrorHandlers } from './cliProcessHa
 const scriptName = 'load-env';
 const logger = createLogger({ name: scriptName, component: 'cli', context: { script: scriptName } });
 setGlobalContext({ script: scriptName });
-
-function createCorrelationId(prefix = 'load-env') {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID();
-  }
-  const random = Math.random().toString(36).slice(2, 8);
-  return `${prefix}-${Date.now().toString(36)}-${random}`;
-}
-
-let fatalExitScheduled = false;
-
-function scheduleFatalExit() {
-  if (fatalExitScheduled || typeof process === 'undefined') {
-    return;
-  }
-  fatalExitScheduled = true;
-  if (typeof process.exitCode === 'undefined' || process.exitCode === 0) {
-    process.exitCode = 1;
-  }
-  if (typeof process.exit === 'function') {
-    setTimeout(() => {
-      try {
-        process.exit(1);
-      } catch {
-        process.exitCode = 1;
-      }
-    }, 0);
-  }
-}
-
-function registerProcessHandlers() {
-  if (typeof process === 'undefined' || typeof process.on !== 'function') {
-    return;
-  }
-
-  const createFatalHandler = (eventName, message) => value => {
-    const correlationId = createCorrelationId(`load-env-${eventName}`);
-    const run = wrapAsync(async input => {
-      const meta = {
-        ...withCorrelation(correlationId),
-        event: eventName,
-      };
-      if (input instanceof Error) {
-        meta.error = input;
-      } else if (typeof input !== 'undefined') {
-        meta.reason = input;
-      }
-      try {
-        await logger.fatal(message, meta);
-      } finally {
-        scheduleFatalExit();
-      }
-    }, () => ({
-      logger,
-      component: logger.component,
-      ...withCorrelation(correlationId),
-      errorMessage: null,
-      event: eventName,
-    }));
-    return run(value);
-  };
-
-  const handleUncaughtException = createFatalHandler(
-    'uncaught-exception',
-    'Fatal uncaught exception while loading environment variables.'
-  );
-  const handleUnhandledRejection = createFatalHandler(
-    'unhandled-rejection',
-    'Fatal unhandled rejection while loading environment variables.'
-  );
-
-  process.on('uncaughtException', error => {
-    handleUncaughtException(error).catch(() => {});
-  });
-
-  process.on('unhandledRejection', reason => {
-    handleUnhandledRejection(reason).catch(() => {});
-  });
-}
-
-registerProcessHandlers();
+registerCliErrorHandlers(logger, {
+  scriptName,
+  uncaughtExceptionMessage: 'Fatal uncaught exception while loading environment variables.',
+  unhandledRejectionMessage: 'Fatal unhandled rejection while loading environment variables.',
+});
 
 /**
  * Loads environment variables from a `.env` file using `dotenv`.
