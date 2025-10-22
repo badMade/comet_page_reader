@@ -41,11 +41,111 @@ let activeConfig = {
 };
 
 let globalContext = {};
-const scopeStack = [];
 let fileStream = null;
 let fsModule;
 
 let yamlParserPromise = null;
+
+const SCOPE_PATCH_SYMBOL = Symbol.for('comet.logger.scopePatched');
+
+function createScopeStorage() {
+  const globalObject = typeof globalThis !== 'undefined'
+    ? globalThis
+    : typeof self !== 'undefined'
+      ? self
+      : typeof window !== 'undefined'
+        ? window
+        : typeof global !== 'undefined'
+          ? global
+          : {};
+
+  let currentStack = [];
+
+  const applyScope = (fn, stackSnapshot) => {
+    if (typeof fn !== 'function') {
+      return fn;
+    }
+    return function scopeAwareCallback(...args) {
+      const previousStack = currentStack;
+      currentStack = stackSnapshot;
+      try {
+        return fn.apply(this, args);
+      } finally {
+        currentStack = previousStack;
+      }
+    };
+  };
+
+  const patchScheduler = (target, method, callbackIndex = 0) => {
+    if (!target) {
+      return;
+    }
+    const original = target[method];
+    if (typeof original !== 'function' || original[SCOPE_PATCH_SYMBOL]) {
+      return;
+    }
+    const wrapped = function scopeAwareScheduler(...args) {
+      const callback = args[callbackIndex];
+      if (typeof callback === 'function') {
+        const stackSnapshot = currentStack;
+        args[callbackIndex] = applyScope(callback, stackSnapshot);
+      }
+      return original.apply(this, args);
+    };
+    wrapped[SCOPE_PATCH_SYMBOL] = true;
+    try {
+      target[method] = wrapped;
+    } catch (error) {
+      // Ignore environments where the scheduler cannot be patched.
+    }
+  };
+
+  const patchPromiseMethod = method => {
+    if (typeof Promise === 'undefined') {
+      return;
+    }
+    const original = Promise.prototype[method];
+    if (typeof original !== 'function' || original[SCOPE_PATCH_SYMBOL]) {
+      return;
+    }
+    const wrapped = function scopeAwarePromiseMethod(...args) {
+      const stackSnapshot = currentStack;
+      const wrappedArgs = args.map(arg => applyScope(arg, stackSnapshot));
+      return original.apply(this, wrappedArgs);
+    };
+    wrapped[SCOPE_PATCH_SYMBOL] = true;
+    try {
+      Promise.prototype[method] = wrapped;
+    } catch (error) {
+      // Ignore if the Promise method is not writable (very old runtimes).
+    }
+  };
+
+  patchScheduler(globalObject, 'setTimeout');
+  patchScheduler(globalObject, 'setInterval');
+  patchScheduler(globalObject, 'setImmediate');
+  patchScheduler(globalObject, 'queueMicrotask');
+  patchScheduler(globalObject, 'requestAnimationFrame');
+
+  patchPromiseMethod('then');
+  patchPromiseMethod('catch');
+  patchPromiseMethod('finally');
+
+  return {
+    getStore() {
+      return currentStack;
+    },
+    enterWith(value) {
+      if (Array.isArray(value) && value.length > 0) {
+        currentStack = value.slice();
+      } else {
+        currentStack = [];
+      }
+    },
+  };
+}
+
+const scopeStorage = createScopeStorage();
 
 function safeStringify(value) {
   const seen = new WeakSet();
@@ -271,24 +371,38 @@ function sanitizeMeta(meta) {
   return meta;
 }
 
+function getActiveScopes() {
+  const store = scopeStorage.getStore();
+  return Array.isArray(store) ? store : [];
+}
+
 function pushScopeContext(context) {
   if (!context || typeof context !== 'object' || Object.keys(context).length === 0) {
     return () => {};
   }
-  scopeStack.push(context);
+  const activeScopes = getActiveScopes();
+  const nextScopes = [...activeScopes, context];
+  scopeStorage.enterWith(nextScopes);
   return () => {
-    const index = scopeStack.lastIndexOf(context);
-    if (index !== -1) {
-      scopeStack.splice(index, 1);
+    const currentScopes = getActiveScopes();
+    if (!currentScopes.length) {
+      return;
     }
+    const index = currentScopes.lastIndexOf(context);
+    if (index === -1) {
+      return;
+    }
+    const next = currentScopes.slice(0, index).concat(currentScopes.slice(index + 1));
+    scopeStorage.enterWith(next);
   };
 }
 
 function collectScopeContext() {
-  if (scopeStack.length === 0) {
+  const scopes = getActiveScopes();
+  if (!scopes.length) {
     return {};
   }
-  return scopeStack.reduce((accumulator, scope) => ({ ...accumulator, ...scope }), {});
+  return scopes.reduce((accumulator, scope) => ({ ...accumulator, ...scope }), {});
 }
 
 function mergeContexts(...contexts) {
