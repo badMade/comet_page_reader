@@ -78,6 +78,8 @@ test('failing background message route logs a single structured error with corre
     assert.equal(response.success, false);
     assert.equal(typeof response.correlationId, 'string');
 
+    assert.equal(capturedErrors.length, 1, 'expected a single console.error invocation for the failure');
+
     const structuredEntries = capturedErrors
       .map(args => args[0])
       .filter(value => typeof value === 'string')
@@ -99,6 +101,7 @@ test('failing background message route logs a single structured error with corre
     assert.equal(entry.context.meta.type, 'comet:summarise');
     assert.equal(entry.context.meta.error.message, 'generate requires source text.');
     assert.equal(typeof entry.stack, 'string');
+    assert(entry.stack.length > 0, 'stack should include a redacted stack trace');
     assert(entry.stack.includes('generate requires source text.'));
     assert(entry.stack.includes('[REDACTED]'));
   } finally {
