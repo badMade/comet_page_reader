@@ -18,6 +18,14 @@ function validateAdapter(adapter, key) {
   }
 }
 
+/**
+ * Registers a text-to-speech adapter so it can be looked up by other modules.
+ *
+ * @param {string} key - Logical adapter identifier (for example `openai`).
+ * @param {{ synthesise: (options: object) => Promise<object> }} adapter - Adapter implementation exposing
+ *   a `synthesise` method.
+ * @returns {void}
+ */
 export function registerTtsAdapter(key, adapter) {
   const normalisedKey = normaliseKey(key);
   if (!normalisedKey) {
@@ -28,6 +36,12 @@ export function registerTtsAdapter(key, adapter) {
   logger.debug('TTS adapter registered.', { key: normalisedKey });
 }
 
+/**
+ * Resolves a previously registered text-to-speech adapter.
+ *
+ * @param {string} key - Adapter identifier supplied during registration.
+ * @returns {{ synthesise: (options: object) => Promise<object> }|undefined} Adapter instance when found.
+ */
 export function getTtsAdapter(key) {
   const normalisedKey = normaliseKey(key);
   if (!normalisedKey) {
@@ -36,6 +50,12 @@ export function getTtsAdapter(key) {
   return registry.get(normalisedKey);
 }
 
+/**
+ * Indicates whether an adapter exists for the supplied identifier.
+ *
+ * @param {string} key - Adapter identifier to verify.
+ * @returns {boolean} True when an adapter has been registered.
+ */
 export function hasTtsAdapter(key) {
   const normalisedKey = normaliseKey(key);
   if (!normalisedKey) {
@@ -44,11 +64,20 @@ export function hasTtsAdapter(key) {
   return registry.has(normalisedKey);
 }
 
+/**
+ * Removes all registered adapters. Primarily used by tests between cases.
+ *
+ * @returns {void}
+ */
 export function clearTtsAdapters() {
   registry.clear();
   logger.debug('TTS adapter registry cleared.');
 }
 
+/**
+ * Convenience facade mirroring the individual registry helpers. Retained for
+ * backwards compatibility with older imports.
+ */
 export const ttsAdapters = {
   register: registerTtsAdapter,
   get: getTtsAdapter,

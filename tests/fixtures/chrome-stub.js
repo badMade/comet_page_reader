@@ -50,6 +50,21 @@ function createStorageArea(store) {
   };
 }
 
+/**
+ * Installs a minimal `chrome` runtime stub for unit tests.
+ *
+ * @param {Record<string, unknown>} [persistent={}] - Pre-populated values for
+ *   persistent storage areas.
+ * @param {Record<string, unknown>} [session={}] - Pre-populated values for the
+ *   session storage area.
+ * @returns {{
+ *   chrome: object,
+ *   persistentStore: Record<string, unknown>,
+ *   localStore: Record<string, unknown>,
+ *   sessionStore: Record<string, unknown>,
+ *   uninstall: Function,
+ * }} Handle used to inspect stores and clean up the stub.
+ */
 export function installChromeStub(persistent = {}, session = {}) {
   const persistentStore = { ...persistent };
   const localStore = persistentStore;
@@ -84,6 +99,12 @@ export function installChromeStub(persistent = {}, session = {}) {
   };
 }
 
+/**
+ * Dynamically imports the background service worker with cache-busting applied.
+ *
+ * @returns {Promise<Record<string, unknown>>} Module namespace for the service
+ *   worker file.
+ */
 export async function importServiceWorker() {
   const moduleUrl = new URL('../../background/service_worker.js', import.meta.url);
   moduleUrl.searchParams.set('cacheBust', `${Date.now()}-${Math.random()}`);

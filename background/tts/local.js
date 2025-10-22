@@ -1,5 +1,15 @@
 import createLogger from '../../utils/logger.js';
 
+/**
+ * Creates a Chrome text-to-speech adapter that delegates synthesis to the
+ * browser's built-in `chrome.tts` API.
+ *
+ * @param {{ logger?: Console }} [options] - Optional logger override used to
+ *   integrate with existing log scopes. The logger should expose `info`,
+ *   `warn`, and `error` methods.
+ * @returns {{ id: string, type: string, synthesise: Function }} Adapter
+ *   implementation compatible with the TTS registry.
+ */
 export function createLocalTtsAdapter({ logger } = {}) {
   const localLogger = logger || createLogger({ name: 'tts-local' });
 

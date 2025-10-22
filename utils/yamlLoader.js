@@ -58,6 +58,8 @@ export async function loadYamlModule() {
 /**
  * Clears cached state to ensure deterministic behaviour across tests. The
  * helper is intentionally exported for the test suite only.
+ *
+ * @returns {void}
  */
 export function __resetYamlModuleForTests() {
   cachedYamlModule = undefined;
