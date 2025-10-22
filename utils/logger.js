@@ -42,10 +42,32 @@ let activeConfig = {
 
 let globalContext = {};
 const scopeStack = [];
+let scopeStorage = null;
 let fileStream = null;
 let fsModule;
 
 let yamlParserPromise = null;
+
+function getActiveScopes() {
+  if (scopeStorage) {
+    const store = scopeStorage.getStore();
+    if (Array.isArray(store)) {
+      return store;
+    }
+  }
+  return scopeStack;
+}
+
+function setActiveScopes(scopes) {
+  const nextScopes = Array.isArray(scopes) ? scopes : [];
+  scopeStack.length = 0;
+  if (nextScopes.length > 0) {
+    scopeStack.push(...nextScopes);
+  }
+  if (scopeStorage) {
+    scopeStorage.enterWith(nextScopes);
+  }
+}
 
 function safeStringify(value) {
   const seen = new WeakSet();
@@ -275,20 +297,30 @@ function pushScopeContext(context) {
   if (!context || typeof context !== 'object' || Object.keys(context).length === 0) {
     return () => {};
   }
-  scopeStack.push(context);
+  const currentScopes = getActiveScopes();
+  const nextScopes = [...currentScopes, context];
+  setActiveScopes(nextScopes);
   return () => {
-    const index = scopeStack.lastIndexOf(context);
-    if (index !== -1) {
-      scopeStack.splice(index, 1);
+    const current = getActiveScopes();
+    if (!current || current.length === 0) {
+      return;
     }
+    const index = current.lastIndexOf(context);
+    if (index === -1) {
+      return;
+    }
+    const next = [...current];
+    next.splice(index, 1);
+    setActiveScopes(next);
   };
 }
 
 function collectScopeContext() {
-  if (scopeStack.length === 0) {
+  const activeScopes = getActiveScopes();
+  if (!activeScopes || activeScopes.length === 0) {
     return {};
   }
-  return scopeStack.reduce((accumulator, scope) => ({ ...accumulator, ...scope }), {});
+  return activeScopes.reduce((accumulator, scope) => ({ ...accumulator, ...scope }), {});
 }
 
 function mergeContexts(...contexts) {
