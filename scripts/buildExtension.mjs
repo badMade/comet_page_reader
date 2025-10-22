@@ -99,6 +99,53 @@ async function enumerateDirectory(directory, base = directory) {
   return { size, files };
 }
 
+function isSourcemapEnabled(value) {
+  if (value === true) {
+    return true;
+  }
+  if (!value || value === false) {
+    return false;
+  }
+  if (typeof value === 'string') {
+    return value !== 'false';
+  }
+  if (typeof value === 'object') {
+    return Object.values(value).some(Boolean);
+  }
+  return Boolean(value);
+}
+
+async function ensureNoSourcemapReferences(outDir, emittedFiles) {
+  const violations = [];
+
+  for (const file of emittedFiles) {
+    if (file.type !== 'chunk' && file.type !== 'asset') {
+      continue;
+    }
+    if (!/\.(css|js)$/u.test(file.file)) {
+      continue;
+    }
+    const filePath = path.resolve(outDir, file.file);
+    let contents;
+    try {
+      contents = await fs.readFile(filePath, 'utf8');
+    } catch (error) {
+      // Skip files that are missing from disk; Rollup might have skipped emitting them.
+      continue;
+    }
+    if (/sourceMappingURL\s*=/u.test(contents)) {
+      violations.push(file.file);
+    }
+  }
+
+  if (violations.length > 0) {
+    throw new Error(
+      `Sourcemap references detected in ${violations.join(', ')} despite sourcemaps being disabled.` +
+        ' Re-run with --sourcemap to include sourcemaps.',
+    );
+  }
+}
+
 function createBuildSummary(result) {
   const outputs = Array.isArray(result) ? result : [result];
   const files = [];
@@ -156,11 +203,12 @@ async function main() {
   const outDirRelative = resolvedConfig.build?.outDir ?? 'dist';
   const outDir = path.resolve(projectRoot, outDirRelative);
   const sourcemapSetting = resolvedConfig.build?.sourcemap ?? false;
+  const sourcemapEnabled = isSourcemapEnabled(sourcemapSetting);
 
   const emittedFiles = createBuildSummary(buildResult);
   const copiedArtifacts = await copyStaticAssets(outDir);
 
-  if (!sourcemapSetting) {
+  if (!sourcemapEnabled) {
     const unexpectedMaps = emittedFiles.filter(file => file.file.endsWith('.map'));
     if (unexpectedMaps.length > 0) {
       throw new Error(
@@ -168,17 +216,24 @@ async function main() {
           ' but the configuration disabled them. Set BUILD_SOURCEMAP=true to keep sourcemaps.',
       );
     }
+    await ensureNoSourcemapReferences(outDir, emittedFiles);
   }
 
   const summary = {
     mode,
     outDir: path.relative(projectRoot, outDir) || '.',
-    sourcemap: Boolean(sourcemapSetting),
+    sourcemap: sourcemapEnabled,
     generated: emittedFiles,
     copied: copiedArtifacts,
   };
 
-  process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
+  const logFilePath = path.resolve(outDir, 'build.log.json');
+  const logFileRelative = path.relative(projectRoot, logFilePath) || 'build.log.json';
+  const summaryWithLogPath = { ...summary, logFile: logFileRelative };
+
+  await fs.writeFile(logFilePath, `${JSON.stringify(summaryWithLogPath, null, 2)}\n`, 'utf8');
+
+  process.stdout.write(`${JSON.stringify(summaryWithLogPath, null, 2)}\n`);
 }
 
 main().catch(error => {

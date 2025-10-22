@@ -34,10 +34,11 @@ function sanitizeFileName(name) {
 
 export default defineConfig(({ mode, command }) => {
   const isDevCommand = command === 'serve' || mode === 'development';
-  const sourcemapEnabled = isDevCommand || process.env.BUILD_SOURCEMAP === 'true';
+  const sourcemapEnabled = isDevCommand || Boolean(sourcemapRequested);
 
   return {
     publicDir: false,
+    cssDevSourcemap: sourcemapEnabled,
     build: {
       outDir: 'dist',
       emptyOutDir: true,
