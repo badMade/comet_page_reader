@@ -450,7 +450,7 @@ function selectConsoleMethod(level) {
     return 'warn';
   }
   if (normalised === 'trace') {
-    if (ENABLE_TRACE && typeof console !== 'undefined' && typeof console.trace === 'function') {
+    if (ENABLE_TRACE && typeof console?.trace === 'function') { // Simplified condition
       return 'trace';
     }
     return 'debug';
