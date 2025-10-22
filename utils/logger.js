@@ -136,7 +136,7 @@ function createScopeStorage() {
       return currentStack;
     },
     enterWith(value) {
-      if (Array.isArray(value) && value.length > 0) {
+      if (Array.isArray(value)) {
         currentStack = value.slice();
       } else {
         currentStack = [];
