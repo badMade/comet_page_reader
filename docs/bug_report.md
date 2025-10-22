@@ -2,7 +2,7 @@
 
 ## Resolved Issues
 
-- **Resolved:** The `ensureSupportedTab` helper in `popup/script.js` now resolves the tab URL through `resolveSupportedTabUrl` before validation, preventing any `supportedUrl` reference errors. (See `popup/script.js`, lines around 1470-1484.)
+- **Resolved:** The `ensureSupportedTab` helper in `popup/script.js` now resolves the tab URL through `resolveSupportedTabUrl` before validation, preventing any `supportedUrl` reference errors. (See `popup/script.js`, lines 1469-1480.)
 
 ## Known Issues
 
