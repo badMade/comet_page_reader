@@ -76,9 +76,14 @@ function resolveCorrelationBase(options = {}) {
       (typeof process !== 'undefined' && process.env && typeof process.env.CORRELATION_ID === 'string' && process.env.CORRELATION_ID.trim() ? process.env.CORRELATION_ID.trim() : null);
 
     if (preferred) {
-      cachedCorrelationBase = normaliseSegment(preferred) || generateCorrelationBase(`cli-${cachedScriptName}`);
+      cachedCorrelationBase = preferred;
     } else {
       const prefix = normaliseSegment(options.correlationPrefix) || normaliseSegment(`cli-${cachedScriptName}`) || 'cli';
+      cachedCorrelationBase = generateCorrelationBase(prefix);
+    }
+
+    if (!cachedCorrelationBase) {
+      const prefix = normaliseSegment(`cli-${cachedScriptName}`) || 'cli';
       cachedCorrelationBase = generateCorrelationBase(prefix);
     }
   }
