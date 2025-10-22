@@ -48,6 +48,7 @@ const MOCK_MODE = (() => {
 
 const logger = createLogger({
   name: 'popup-ui',
+  component: 'popup',
   context: {
     mockMode: MOCK_MODE,
   },
@@ -249,9 +250,100 @@ const state = {
   mediaStream: null,
   playbackController: null,
   ttsProgress: null,
+  correlationStack: [],
 };
 
 const elements = {};
+
+function pushCorrelationScope(correlationId) {
+  if (typeof correlationId !== 'string' || !correlationId.trim()) {
+    return () => {};
+  }
+  const stack = state.correlationStack;
+  stack.push(correlationId);
+  return () => {
+    const index = stack.lastIndexOf(correlationId);
+    if (index !== -1) {
+      stack.splice(index, 1);
+    }
+  };
+}
+
+function getActiveCorrelationId() {
+  const stack = state.correlationStack;
+  if (!Array.isArray(stack) || stack.length === 0) {
+    return null;
+  }
+  return stack[stack.length - 1] || null;
+}
+
+if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+  const logPopupError = wrapAsync(
+    async (event, correlationId) => {
+      const releaseCorrelation = pushCorrelationScope(correlationId);
+      try {
+        const meta = {
+          filename: event?.filename,
+          lineno: event?.lineno,
+          colno: event?.colno,
+          eventType: event?.type ?? 'error',
+        };
+        if (event?.message) {
+          meta.message = event.message;
+        }
+        if (event?.error) {
+          meta.error = event.error;
+        }
+        logger.error('Uncaught error in popup UI.', meta);
+      } finally {
+        releaseCorrelation();
+      }
+    },
+    (event, correlationId) => ({
+      logger,
+      component: logger.component,
+      eventType: event?.type ?? 'error',
+      ...withCorrelation(correlationId),
+      errorMessage: null,
+    }),
+  );
+
+  window.addEventListener('error', event => {
+    const correlationId = createCorrelationId('popup-uncaught-error');
+    logPopupError(event, correlationId);
+  });
+
+  const logPopupUnhandledRejection = wrapAsync(
+    async (event, correlationId) => {
+      const releaseCorrelation = pushCorrelationScope(correlationId);
+      try {
+        const meta = {
+          eventType: event?.type ?? 'unhandledrejection',
+        };
+        if (event?.reason instanceof Error) {
+          meta.error = event.reason;
+        } else if (typeof event?.reason !== 'undefined') {
+          meta.reason = event.reason;
+        }
+        logger.error('Unhandled promise rejection in popup UI.', meta);
+      } finally {
+        releaseCorrelation();
+      }
+    },
+    (event, correlationId) => ({
+      logger,
+      component: logger.component,
+      eventType: event?.type ?? 'unhandledrejection',
+      ...withCorrelation(correlationId),
+      errorMessage: null,
+    }),
+  );
+
+  window.addEventListener('unhandledrejection', event => {
+    const correlationId = createCorrelationId('popup-unhandled-rejection');
+    logPopupUnhandledRejection(event, correlationId);
+  });
+}
 
 /**
  * Retrieves a DOM element by ID and throws when not found to surface template
@@ -903,19 +995,46 @@ function resolveStatusMessage(error, fallbackMessage = 'Something went wrong.') 
   return fallbackMessage;
 }
 
-function withErrorHandling(handler) {
-  return async event => {
-    event?.preventDefault?.();
-    try {
-      await handler(event);
-    } catch (error) {
-      logger.error('Popup handler failed.', {
-        error,
-        handler: typeof handler === 'function' ? handler.name : undefined,
-      });
-      setStatus(resolveStatusMessage(error));
-    }
-  };
+function withErrorHandling(handler, options = {}) {
+  if (typeof handler !== 'function') {
+    throw new TypeError('withErrorHandling requires a function');
+  }
+
+  const handlerName =
+    (typeof options.name === 'string' && options.name.trim()) ||
+    (typeof handler.name === 'string' && handler.name.trim()) ||
+    'anonymous';
+
+  const execute = wrapAsync(
+    async (event, correlationId) => {
+      const releaseCorrelation = pushCorrelationScope(correlationId);
+      try {
+        event?.preventDefault?.();
+        try {
+          await handler(event);
+        } catch (error) {
+          logger.error('Popup handler failed.', {
+            error,
+            handler: handlerName,
+            eventType: event?.type ?? options.eventType,
+          });
+          setStatus(resolveStatusMessage(error));
+        }
+      } finally {
+        releaseCorrelation();
+      }
+    },
+    (event, correlationId) => ({
+      logger,
+      component: logger.component,
+      handler: handlerName,
+      eventType: event?.type ?? options.eventType ?? null,
+      ...withCorrelation(correlationId),
+      errorMessage: null,
+    }),
+  );
+
+  return event => execute(event, createCorrelationId(options.correlationPrefix ?? 'popup-handler'));
 }
 
 function getRuntimeLastError() {
@@ -976,7 +1095,8 @@ function responseIndicatesSuccess(response) {
  * @returns {Promise<*>} Background response result.
  */
 function sendMessage(type, payload) {
-  const correlationId = createCorrelationId('bg');
+  const activeCorrelationId = getActiveCorrelationId();
+  const correlationId = activeCorrelationId || createCorrelationId('bg');
   const execute = wrapAsync(
     async (messageType, messagePayload) => {
       const metadata = {
@@ -1007,7 +1127,7 @@ function sendMessage(type, payload) {
         }
       }
 
-      const payloadMessage = { type: messageType, payload: messagePayload };
+      const payloadMessage = { type: messageType, payload: messagePayload, correlationId };
 
       if (usesBrowserPromises) {
         try {
