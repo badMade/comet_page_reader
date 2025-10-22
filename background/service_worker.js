@@ -6,7 +6,7 @@
  * responsible for persisting provider preferences and token usage across
  * sessions while exposing request handlers to the extension runtime.
  */
-import createLogger, { loadLoggingConfig, setGlobalContext, withCorrelation, wrap, wrapAsync } from '../utils/logger.js';
+import createLogger, { loadLoggingConfig, setGlobalContext, withCorrelation } from '../utils/logger.js';
 import { createCostTracker, DEFAULT_TOKEN_LIMIT, estimateTokensFromUsd } from '../utils/cost.js';
 import { ensureNotesFile } from '../utils/notes.js';
 import { DEFAULT_PROVIDER, fetchApiKeyDetails, readApiKey, saveApiKey } from '../utils/apiKeyStore.js';
@@ -41,34 +41,64 @@ const logger = createLogger({ name: 'background-service' });
 setGlobalContext({ runtime: 'background-service' });
 
 if (typeof self !== 'undefined' && typeof self.addEventListener === 'function') {
+  const logBackgroundError = logger.wrapAsync(
+    async (event, correlationId) => {
+      const meta = {
+        ...getBackgroundContextMetadata(),
+        ...withCorrelation(correlationId),
+        eventType: event?.type ?? 'error',
+        filename: event?.filename,
+        lineno: event?.lineno,
+        colno: event?.colno,
+      };
+      if (event?.message) {
+        meta.message = event.message;
+      }
+      if (event?.error) {
+        meta.error = event.error;
+      }
+      await logger.error('Uncaught error in background service worker.', meta);
+    },
+    (event, correlationId) => ({
+      component: logger.component,
+      eventType: event?.type ?? 'error',
+      ...getBackgroundContextMetadata(),
+      ...withCorrelation(correlationId),
+      errorMessage: 'Background service worker error listener failed.',
+    }),
+  );
+
   self.addEventListener('error', event => {
     const correlationId = createCorrelationId('bg-uncaught-error');
-    const meta = {
-      ...withCorrelation(correlationId),
-      filename: event?.filename,
-      lineno: event?.lineno,
-      colno: event?.colno,
-    };
-    if (event?.message) {
-      meta.message = event.message;
-    }
-    if (event?.error) {
-      meta.error = event.error;
-    }
-    logger.error('Uncaught error in background service worker.', meta);
+    logBackgroundError(event, correlationId).catch(() => {});
   });
+
+  const logBackgroundUnhandledRejection = logger.wrapAsync(
+    async (event, correlationId) => {
+      const meta = {
+        ...getBackgroundContextMetadata(),
+        ...withCorrelation(correlationId),
+        eventType: event?.type ?? 'unhandledrejection',
+      };
+      if (event?.reason instanceof Error) {
+        meta.error = event.reason;
+      } else if (typeof event?.reason !== 'undefined') {
+        meta.reason = event.reason;
+      }
+      await logger.error('Unhandled promise rejection in background service worker.', meta);
+    },
+    (event, correlationId) => ({
+      component: logger.component,
+      eventType: event?.type ?? 'unhandledrejection',
+      ...getBackgroundContextMetadata(),
+      ...withCorrelation(correlationId),
+      errorMessage: 'Background service worker rejection listener failed.',
+    }),
+  );
 
   self.addEventListener('unhandledrejection', event => {
     const correlationId = createCorrelationId('bg-unhandled-rejection');
-    const meta = {
-      ...withCorrelation(correlationId),
-    };
-    if (event?.reason instanceof Error) {
-      meta.error = event.reason;
-    } else if (typeof event?.reason !== 'undefined') {
-      meta.reason = event.reason;
-    }
-    logger.error('Unhandled promise rejection in background service worker.', meta);
+    logBackgroundUnhandledRejection(event, correlationId).catch(() => {});
   });
 }
 
@@ -166,6 +196,90 @@ function normaliseRuntimeMessage(rawMessage) {
     return rawMessage;
   }
   return {};
+}
+
+function formatUrlForLog(value) {
+  if (typeof value !== 'string' || !value.trim()) {
+    return undefined;
+  }
+  try {
+    const parsed = new URL(value);
+    const base = `${parsed.origin}${parsed.pathname}`;
+    return parsed.hash ? `${base}${parsed.hash}` : base;
+  } catch (error) {
+    return value;
+  }
+}
+
+function describeSender(sender) {
+  if (!sender || typeof sender !== 'object') {
+    return {};
+  }
+  const meta = {};
+  const tabId = sender?.tab?.id;
+  if (typeof tabId === 'number') {
+    meta.senderTabId = tabId;
+  }
+  const tabUrl = formatUrlForLog(sender?.tab?.url);
+  if (tabUrl) {
+    meta.senderTabUrl = tabUrl;
+  }
+  if (typeof sender?.frameId === 'number') {
+    meta.senderFrameId = sender.frameId;
+  }
+  if (typeof sender?.documentId === 'string' && sender.documentId.trim()) {
+    meta.senderDocumentId = sender.documentId.trim();
+  }
+  const senderUrl = formatUrlForLog(sender?.url);
+  if (senderUrl) {
+    meta.senderUrl = senderUrl;
+  }
+  if (typeof sender?.origin === 'string' && sender.origin.trim()) {
+    meta.senderOrigin = sender.origin.trim();
+  }
+  return meta;
+}
+
+function getBackgroundContextMetadata() {
+  const meta = {};
+  if (typeof activeProviderId === 'string' && activeProviderId.trim()) {
+    meta.activeProviderId = activeProviderId.trim();
+  }
+  if (typeof loadingProviderId === 'string' && loadingProviderId.trim()) {
+    meta.loadingProviderId = loadingProviderId.trim();
+  }
+  if (typeof preferredProviderId === 'string' && preferredProviderId.trim()) {
+    meta.preferredProviderId = preferredProviderId.trim();
+  }
+  if (initialised) {
+    meta.initialised = true;
+  }
+  return meta;
+}
+
+function createRuntimeHandler(messageType, handler) {
+  if (typeof handler !== 'function') {
+    throw new TypeError('handler must be a function');
+  }
+  return logger.wrapAsync(
+    async (...args) => handler(...args),
+    (message, sender) => {
+      const correlationId = ensureMessageCorrelation(message);
+      const resolvedType = messageType || (message && message.type) || null;
+      const meta = {
+        messageType: resolvedType,
+        type: resolvedType,
+        ...getBackgroundContextMetadata(),
+        ...describeSender(sender),
+      };
+      return {
+        component: logger.component,
+        ...withCorrelation(correlationId),
+        meta,
+        errorMessage: 'Background message handler failed.',
+      };
+    },
+  );
 }
 
 const testAdapterOverrides = new Map();
@@ -1879,27 +1993,46 @@ async function handleSegmentsUpdated(message) {
 }
 
 const handlers = {
-  'comet:setApiKey': ({ payload }) => setApiKey(payload.apiKey, { provider: payload?.provider }),
-  'comet:getApiKey': ({ payload }) => getApiKey({ provider: payload?.provider }),
-  'comet:getApiKeyDetails': ({ payload }) => getApiKeyDetails({ provider: payload?.provider }),
-  'comet:setProvider': ({ payload }) => setActiveProvider(payload?.provider),
-  'comet:summarise': handleSummariseRequest,
-  'comet:transcribe': handleTranscriptionRequest,
-  'comet:synthesise': handleSpeechRequest,
-  'comet:getUsage': handleUsageRequest,
-  'comet:resetUsage': handleResetUsage,
-  'comet:segmentsUpdated': handleSegmentsUpdated,
-  'comet:getVoiceCapabilities': ({ payload }) => resolveVoiceCapabilities(payload?.provider),
+  'comet:setApiKey': createRuntimeHandler(
+    'comet:setApiKey',
+    ({ payload }) => setApiKey(payload.apiKey, { provider: payload?.provider }),
+  ),
+  'comet:getApiKey': createRuntimeHandler(
+    'comet:getApiKey',
+    ({ payload }) => getApiKey({ provider: payload?.provider }),
+  ),
+  'comet:getApiKeyDetails': createRuntimeHandler(
+    'comet:getApiKeyDetails',
+    ({ payload }) => getApiKeyDetails({ provider: payload?.provider }),
+  ),
+  'comet:setProvider': createRuntimeHandler(
+    'comet:setProvider',
+    ({ payload }) => setActiveProvider(payload?.provider),
+  ),
+  'comet:summarise': createRuntimeHandler('comet:summarise', handleSummariseRequest),
+  'comet:transcribe': createRuntimeHandler('comet:transcribe', handleTranscriptionRequest),
+  'comet:synthesise': createRuntimeHandler('comet:synthesise', handleSpeechRequest),
+  'comet:getUsage': createRuntimeHandler('comet:getUsage', handleUsageRequest),
+  'comet:resetUsage': createRuntimeHandler('comet:resetUsage', handleResetUsage),
+  'comet:segmentsUpdated': createRuntimeHandler('comet:segmentsUpdated', handleSegmentsUpdated),
+  'comet:getVoiceCapabilities': createRuntimeHandler(
+    'comet:getVoiceCapabilities',
+    ({ payload }) => resolveVoiceCapabilities(payload?.provider),
+  ),
 };
 
-const handleRuntimeMessage = wrap(
+const handleRuntimeMessage = logger.wrap(
   (message, sender, sendResponse) => {
     const correlationId = ensureMessageCorrelation(message);
+    const senderMeta = describeSender(sender);
+    const backgroundMeta = getBackgroundContextMetadata();
 
     if (!message.type || !handlers[message.type]) {
       logger.warn('Received unsupported message.', {
         messageType: message?.type,
-        correlationId,
+        ...backgroundMeta,
+        ...senderMeta,
+        ...withCorrelation(correlationId),
       });
       sendResponse({ success: false, result: null, error: 'Unsupported message type.', correlationId });
       return false;
@@ -1907,46 +2040,45 @@ const handleRuntimeMessage = wrap(
 
     logger.debug('Received background message.', {
       type: message.type,
-      correlationId,
+      ...backgroundMeta,
+      ...senderMeta,
+      ...withCorrelation(correlationId),
     });
 
     const handler = handlers[message.type];
-    const executeHandler = wrapAsync(handler, () => ({
-      logger,
-      component: logger.component,
-      ...withCorrelation(correlationId),
-      messageType: message.type,
-      errorMessage: null,
-    }));
-
-    const handlerPromise = Promise.resolve(executeHandler(message, sender));
+    const handlerPromise = Promise.resolve(handler(message, sender));
 
     handlerPromise
       .then(result => {
         logger.debug('Background message handled successfully.', {
           type: message.type,
-          correlationId,
+          ...backgroundMeta,
+          ...senderMeta,
+          ...withCorrelation(correlationId),
         });
         sendResponse({ success: true, result, error: null, correlationId });
       })
       .catch(error => {
         const resolvedError = error instanceof Error ? error : new Error(String(error));
-        logger.error('Background message handler failed.', {
+        logger.debug('Background message handler rejected.', {
           type: message.type,
-          correlationId,
           error: resolvedError,
+          ...backgroundMeta,
+          ...senderMeta,
+          ...withCorrelation(correlationId),
         });
         sendResponse({ success: false, result: null, error: resolvedError.message, correlationId });
       });
 
     return true;
   },
-  incomingMessage => {
+  (incomingMessage, incomingSender) => {
     const message = normaliseRuntimeMessage(incomingMessage);
     const correlationId = ensureMessageCorrelation(message);
     return {
-      logger,
       component: logger.component,
+      ...getBackgroundContextMetadata(),
+      ...describeSender(incomingSender),
       ...withCorrelation(correlationId),
       messageType: message?.type,
       errorMessage: 'Background message handler threw synchronously.',

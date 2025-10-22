@@ -1,4 +1,4 @@
-import createLogger, { loadLoggingConfig, setGlobalContext, withCorrelation, wrapAsync } from '../utils/logger.js';
+import createLogger, { loadLoggingConfig, setGlobalContext, withCorrelation } from '../utils/logger.js';
 import { DEFAULT_TOKEN_LIMIT } from '../utils/cost.js';
 import { availableLocales, setLocale, t } from '../utils/i18n.js';
 import { createRecorder } from '../utils/audio.js';
@@ -277,12 +277,48 @@ function getActiveCorrelationId() {
   return stack[stack.length - 1] || null;
 }
 
+function getPopupContextMetadata() {
+  const meta = {};
+  if (typeof window !== 'undefined' && window.location) {
+    const { hash, pathname } = window.location;
+    if (hash && hash !== '#') {
+      meta.route = hash;
+    } else if (pathname) {
+      meta.route = pathname;
+    }
+  }
+  if (typeof state.provider === 'string' && state.provider) {
+    meta.provider = state.provider;
+  }
+  if (typeof state.language === 'string' && state.language) {
+    meta.language = state.language;
+  }
+  if (typeof state.ttsProvider === 'string' && state.ttsProvider) {
+    meta.ttsProvider = state.ttsProvider;
+  }
+  if (typeof state.voice === 'string' && state.voice) {
+    meta.voice = state.voice;
+  }
+  if (typeof state.playbackRate === 'number') {
+    meta.playbackRate = state.playbackRate;
+  }
+  if (Array.isArray(state.summaries) && state.summaries.length > 0) {
+    meta.summaryCount = state.summaries.length;
+  }
+  if (state.audio) {
+    meta.hasAudio = true;
+  }
+  return meta;
+}
+
 if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
-  const logPopupError = wrapAsync(
+  const logPopupError = logger.wrapAsync(
     async (event, correlationId) => {
       const releaseCorrelation = pushCorrelationScope(correlationId);
       try {
         const meta = {
+          ...getPopupContextMetadata(),
+          ...withCorrelation(correlationId),
           filename: event?.filename,
           lineno: event?.lineno,
           colno: event?.colno,
@@ -294,30 +330,32 @@ if (typeof window !== 'undefined' && typeof window.addEventListener === 'functio
         if (event?.error) {
           meta.error = event.error;
         }
-        logger.error('Uncaught error in popup UI.', meta);
+        await logger.error('Uncaught error in popup UI.', meta);
       } finally {
         releaseCorrelation();
       }
     },
     (event, correlationId) => ({
-      logger,
       component: logger.component,
       eventType: event?.type ?? 'error',
+      ...getPopupContextMetadata(),
       ...withCorrelation(correlationId),
-      errorMessage: null,
+      errorMessage: 'Popup UI global error handler failed.',
     }),
   );
 
   window.addEventListener('error', event => {
     const correlationId = createCorrelationId('popup-uncaught-error');
-    logPopupError(event, correlationId);
+    logPopupError(event, correlationId).catch(() => {});
   });
 
-  const logPopupUnhandledRejection = wrapAsync(
+  const logPopupUnhandledRejection = logger.wrapAsync(
     async (event, correlationId) => {
       const releaseCorrelation = pushCorrelationScope(correlationId);
       try {
         const meta = {
+          ...getPopupContextMetadata(),
+          ...withCorrelation(correlationId),
           eventType: event?.type ?? 'unhandledrejection',
         };
         if (event?.reason instanceof Error) {
@@ -325,23 +363,23 @@ if (typeof window !== 'undefined' && typeof window.addEventListener === 'functio
         } else if (typeof event?.reason !== 'undefined') {
           meta.reason = event.reason;
         }
-        logger.error('Unhandled promise rejection in popup UI.', meta);
+        await logger.error('Unhandled promise rejection in popup UI.', meta);
       } finally {
         releaseCorrelation();
       }
     },
     (event, correlationId) => ({
-      logger,
       component: logger.component,
       eventType: event?.type ?? 'unhandledrejection',
+      ...getPopupContextMetadata(),
       ...withCorrelation(correlationId),
-      errorMessage: null,
+      errorMessage: 'Popup UI unhandled rejection logger failed.',
     }),
   );
 
   window.addEventListener('unhandledrejection', event => {
     const correlationId = createCorrelationId('popup-unhandled-rejection');
-    logPopupUnhandledRejection(event, correlationId);
+    logPopupUnhandledRejection(event, correlationId).catch(() => {});
   });
 }
 
@@ -1005,7 +1043,7 @@ function withErrorHandling(handler, options = {}) {
     (typeof handler.name === 'string' && handler.name.trim()) ||
     'anonymous';
 
-  const execute = wrapAsync(
+  const execute = logger.wrapAsync(
     async (event, correlationId) => {
       const releaseCorrelation = pushCorrelationScope(correlationId);
       try {
@@ -1025,10 +1063,10 @@ function withErrorHandling(handler, options = {}) {
       }
     },
     (event, correlationId) => ({
-      logger,
       component: logger.component,
       handler: handlerName,
       eventType: event?.type ?? options.eventType ?? null,
+      ...getPopupContextMetadata(),
       ...withCorrelation(correlationId),
       errorMessage: null,
     }),
@@ -1097,7 +1135,7 @@ function responseIndicatesSuccess(response) {
 function sendMessage(type, payload) {
   const activeCorrelationId = getActiveCorrelationId();
   const correlationId = activeCorrelationId || createCorrelationId('bg');
-  const execute = wrapAsync(
+  const execute = logger.wrapAsync(
     async (messageType, messagePayload) => {
       const metadata = {
         type: messageType,
@@ -1183,8 +1221,8 @@ function sendMessage(type, payload) {
       });
     },
     () => ({
-      logger,
       component: logger.component,
+      ...getPopupContextMetadata(),
       ...withCorrelation(correlationId),
       messageType: type,
       errorMessage: null,
