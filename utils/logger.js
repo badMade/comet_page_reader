@@ -6,7 +6,16 @@
  * under Node.js. Configuration can be provided programmatically or sourced
  * from JSON/YAML manifests to keep behaviour consistent across environments.
  */
-import { getAppVersion, getEnvironment } from './config.js';
+import {
+  APP_VERSION as APP_VERSION_CONSTANT,
+  CONSOLE_LOGGING_ENABLED,
+  ENV as ENVIRONMENT_CONSTANT,
+  LOG_FILE_ENABLED,
+  LOG_FILE_PATH,
+  LOG_LEVEL,
+  getAppVersion,
+  getEnvironment,
+} from './config.js';
 const LOG_LEVELS = Object.freeze({
   error: 0,
   warn: 1,
@@ -490,8 +499,16 @@ async function emitLog(level, loggerInstance, message, meta) {
   const componentName = typeof loggerInstance?.component === 'string' && loggerInstance.component.trim().length > 0
     ? loggerInstance.component.trim()
     : loggerName;
-  const environment = getEnvironment() || 'production';
-  const version = getAppVersion() || '0.0.0';
+  const resolvedEnvironment = ENVIRONMENT_CONSTANT ?? getEnvironment();
+  const resolvedVersion = APP_VERSION_CONSTANT ?? getAppVersion();
+  const environment =
+    typeof resolvedEnvironment === 'string' && resolvedEnvironment.trim().length > 0
+      ? resolvedEnvironment.trim()
+      : 'production';
+  const version =
+    typeof resolvedVersion === 'string' && resolvedVersion.trim().length > 0
+      ? resolvedVersion.trim()
+      : '0.0.0';
 
   const scopedContext = collectScopeContext();
   const mergedContext = mergeContexts(
@@ -810,18 +827,35 @@ export function createLogger(options = {}) {
   return new StructuredLogger(name, sanitizeMeta(context), component);
 }
 
-const envLevel = isNode && process.env && typeof process.env.COMET_LOG_LEVEL === 'string'
-  ? process.env.COMET_LOG_LEVEL
-  : null;
-const envLogFile = isNode && process.env && typeof process.env.COMET_LOG_FILE === 'string'
-  ? process.env.COMET_LOG_FILE
-  : null;
-
-if (envLevel) {
-  setLoggerConfig({ level: envLevel });
+if (typeof LOG_LEVEL === 'string') {
+  setLoggerConfig({ level: LOG_LEVEL });
 }
-if (envLogFile) {
-  setLoggerConfig({ file: { enabled: true, path: envLogFile } });
+
+if (typeof CONSOLE_LOGGING_ENABLED === 'boolean') {
+  setLoggerConfig({ console: { enabled: CONSOLE_LOGGING_ENABLED } });
+}
+
+const fileConfig = {};
+let hasFileConfig = false;
+
+if (typeof LOG_FILE_ENABLED === 'boolean') {
+  fileConfig.enabled = LOG_FILE_ENABLED;
+  hasFileConfig = true;
+}
+
+if (typeof LOG_FILE_PATH === 'string') {
+  const trimmedPath = LOG_FILE_PATH.trim();
+  if (trimmedPath.length > 0) {
+    fileConfig.path = trimmedPath;
+    if (typeof fileConfig.enabled === 'undefined') {
+      fileConfig.enabled = true;
+    }
+    hasFileConfig = true;
+  }
+}
+
+if (hasFileConfig) {
+  setLoggerConfig({ file: fileConfig });
 }
 
 export default createLogger;
