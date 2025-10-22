@@ -40,7 +40,7 @@ export function registerTtsAdapter(key, adapter) {
  * Resolves a previously registered text-to-speech adapter.
  *
  * @param {string} key - Adapter identifier supplied during registration.
- * @returns {{ synthesise: Function }|undefined} Adapter instance when found.
+ * @returns {{ synthesise: (options: object) => Promise<object> }|undefined} Adapter instance when found.
  */
 export function getTtsAdapter(key) {
   const normalisedKey = normaliseKey(key);
