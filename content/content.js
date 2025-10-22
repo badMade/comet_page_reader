@@ -73,7 +73,6 @@
   let loadLoggingConfig;
   let setGlobalContext;
   let withCorrelation;
-  let wrap;
 
   try {
     ({
@@ -81,7 +80,6 @@
       loadLoggingConfig,
       setGlobalContext,
       withCorrelation,
-      wrap,
     } = await loggerModulePromise);
   } catch (error) {
     if (isContextInvalidated(error)) {
@@ -137,6 +135,8 @@
   let activeHighlightId = null;
   let disposed = false;
 
+  const eventCorrelationIds = new WeakMap();
+
   function createCorrelationId(prefix = 'content') {
     if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
       return crypto.randomUUID();
@@ -168,45 +168,86 @@
     return undefined;
   }
 
-  function handleWindowError(event) {
-    if (!event) {
-      return;
+  function resolveEventCorrelation(event, prefix = 'content') {
+    if (!event || typeof event !== 'object') {
+      return createCorrelationId(prefix);
     }
-    const correlationId = createCorrelationId('content-window-error');
-    const stack = extractStackTrace(event.error) ?? extractStackTrace(event.message);
-    const meta = {
-      ...withCorrelation(correlationId),
-      message: event.message,
-      filename: event.filename,
-      lineno: event.lineno,
-      colno: event.colno,
-    };
-    if (typeof stack === 'string') {
-      meta.stack = stack;
+    if (eventCorrelationIds.has(event)) {
+      return eventCorrelationIds.get(event);
     }
-    if (typeof event.error !== 'undefined') {
-      meta.error = event.error;
-    }
-    Promise.resolve(logger.error('Unhandled window error captured.', meta)).catch(() => {});
+    const correlationId = createCorrelationId(prefix);
+    eventCorrelationIds.set(event, correlationId);
+    return correlationId;
   }
 
-  function handleUnhandledRejection(event) {
-    if (!event) {
-      return;
-    }
-    const correlationId = createCorrelationId('content-unhandled-rejection');
-    const stack = extractStackTrace(event.reason);
-    const meta = {
-      ...withCorrelation(correlationId),
-      reason: event.reason,
+  function getContentUiContext() {
+    return {
+      url: typeof window !== 'undefined' ? window.location?.href || null : null,
+      disposed,
+      segmentCount: Array.isArray(segments) ? segments.length : 0,
+      hasObserver: Boolean(observer),
+      activeHighlightId,
+      visibilityState: typeof document !== 'undefined' ? document.visibilityState || null : null,
     };
-    if (typeof stack === 'string') {
-      meta.stack = stack;
-    }
-    Promise.resolve(
-      logger.error('Unhandled promise rejection captured in content script.', meta),
-    ).catch(() => {});
   }
+
+  const logWindowError = logger.wrapAsync(
+    async event => {
+      const correlationId = resolveEventCorrelation(event, 'content-window-error');
+      const stack = extractStackTrace(event?.error) ?? extractStackTrace(event?.message);
+      const meta = {
+        ...withCorrelation(correlationId),
+        eventType: event?.type ?? 'error',
+        filename: event?.filename,
+        lineno: event?.lineno,
+        colno: event?.colno,
+        pageContext: getContentUiContext(),
+      };
+      if (event?.message) {
+        meta.message = event.message;
+      }
+      if (typeof stack === 'string') {
+        meta.stack = stack;
+      }
+      if (typeof event?.error !== 'undefined') {
+        meta.error = event.error;
+      }
+      await logger.error('Unhandled window error captured.', meta);
+    },
+    event => ({
+      component: logger.component,
+      eventType: event?.type ?? 'error',
+      ...withCorrelation(resolveEventCorrelation(event, 'content-window-error')),
+      errorMessage: null,
+    }),
+  );
+
+  const logUnhandledRejection = logger.wrapAsync(
+    async event => {
+      const correlationId = resolveEventCorrelation(event, 'content-unhandled-rejection');
+      const stack = extractStackTrace(event?.reason);
+      const meta = {
+        ...withCorrelation(correlationId),
+        eventType: event?.type ?? 'unhandledrejection',
+        pageContext: getContentUiContext(),
+      };
+      if (typeof stack === 'string') {
+        meta.stack = stack;
+      }
+      if (event?.reason instanceof Error) {
+        meta.error = event.reason;
+      } else if (typeof event?.reason !== 'undefined') {
+        meta.reason = event.reason;
+      }
+      await logger.error('Unhandled promise rejection captured in content script.', meta);
+    },
+    event => ({
+      component: logger.component,
+      eventType: event?.type ?? 'unhandledrejection',
+      ...withCorrelation(resolveEventCorrelation(event, 'content-unhandled-rejection')),
+      errorMessage: null,
+    }),
+  );
 
   function dispose() {
     if (disposed) {
@@ -217,8 +258,8 @@
       observer.disconnect();
       observer = null;
     }
-    window.removeEventListener('error', handleWindowError);
-    window.removeEventListener('unhandledrejection', handleUnhandledRejection);
+    window.removeEventListener('error', logWindowError);
+    window.removeEventListener('unhandledrejection', logUnhandledRejection);
     document.removeEventListener('scroll', throttledUpdate);
     logger.info('Content script disposed.');
   }
@@ -314,8 +355,8 @@
 
   const throttledUpdate = throttle(buildSegments, 2000);
 
-  window.addEventListener('error', handleWindowError);
-  window.addEventListener('unhandledrejection', handleUnhandledRejection);
+  window.addEventListener('error', logWindowError);
+  window.addEventListener('unhandledrejection', logUnhandledRejection);
   window.addEventListener('pagehide', dispose);
   window.addEventListener('beforeunload', dispose);
 
@@ -344,7 +385,7 @@
       return false;
     }
     const correlationId = createCorrelationId('content-msg');
-    const wrapped = wrap(
+    const wrapped = logger.wrap(
       (incomingMessage, incomingSender, respond) => {
         if (!incomingMessage || !incomingMessage.type) {
           return false;

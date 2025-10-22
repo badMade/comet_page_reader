@@ -255,6 +255,8 @@ const state = {
 
 const elements = {};
 
+const eventCorrelationIds = new WeakMap();
+
 function pushCorrelationScope(correlationId) {
   if (typeof correlationId !== 'string' || !correlationId.trim()) {
     return () => {};
@@ -277,16 +279,62 @@ function getActiveCorrelationId() {
   return stack[stack.length - 1] || null;
 }
 
+function resolveEventCorrelation(event, prefix = 'popup') {
+  if (!event || typeof event !== 'object') {
+    return createCorrelationId(prefix);
+  }
+  if (eventCorrelationIds.has(event)) {
+    return eventCorrelationIds.get(event);
+  }
+  const correlationId = createCorrelationId(prefix);
+  eventCorrelationIds.set(event, correlationId);
+  return correlationId;
+}
+
+function getPopupUiContext() {
+  if (typeof document === 'undefined') {
+    return {
+      mockMode: MOCK_MODE,
+      route: typeof window !== 'undefined' ? window.location?.hash || null : null,
+    };
+  }
+  const activeElement = document.activeElement || null;
+  const resolveAttribute = attribute => {
+    if (!activeElement || typeof activeElement.getAttribute !== 'function') {
+      return null;
+    }
+    const value = activeElement.getAttribute(attribute);
+    return value && value.trim() ? value.trim() : null;
+  };
+  return {
+    mockMode: MOCK_MODE,
+    route: typeof window !== 'undefined' ? window.location?.hash || null : null,
+    language: state.language,
+    provider: state.provider,
+    ttsProvider: state.ttsProvider,
+    ttsVoice: state.voice,
+    hasAudio: Boolean(state.audio),
+    hasSummaries: Array.isArray(state.summaries) && state.summaries.length > 0,
+    activeElementId: activeElement?.id || null,
+    activeElementRole: resolveAttribute('role'),
+    activeElementTag: activeElement?.tagName ? activeElement.tagName.toLowerCase() : null,
+    ttsContext: state.ttsProgress?.context ?? null,
+  };
+}
+
 if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
-  const logPopupError = wrapAsync(
-    async (event, correlationId) => {
+  const logPopupError = logger.wrapAsync(
+    async event => {
+      const correlationId = resolveEventCorrelation(event, 'popup-uncaught-error');
       const releaseCorrelation = pushCorrelationScope(correlationId);
       try {
         const meta = {
+          ...withCorrelation(correlationId),
+          eventType: event?.type ?? 'error',
           filename: event?.filename,
           lineno: event?.lineno,
           colno: event?.colno,
-          eventType: event?.type ?? 'error',
+          uiContext: getPopupUiContext(),
         };
         if (event?.message) {
           meta.message = event.message;
@@ -294,55 +342,49 @@ if (typeof window !== 'undefined' && typeof window.addEventListener === 'functio
         if (event?.error) {
           meta.error = event.error;
         }
-        logger.error('Uncaught error in popup UI.', meta);
+        await logger.error('Uncaught error in popup UI.', meta);
       } finally {
         releaseCorrelation();
       }
     },
-    (event, correlationId) => ({
-      logger,
+    event => ({
       component: logger.component,
       eventType: event?.type ?? 'error',
-      ...withCorrelation(correlationId),
+      ...withCorrelation(resolveEventCorrelation(event, 'popup-uncaught-error')),
       errorMessage: null,
     }),
   );
 
-  window.addEventListener('error', event => {
-    const correlationId = createCorrelationId('popup-uncaught-error');
-    logPopupError(event, correlationId);
-  });
-
-  const logPopupUnhandledRejection = wrapAsync(
-    async (event, correlationId) => {
+  const logPopupUnhandledRejection = logger.wrapAsync(
+    async event => {
+      const correlationId = resolveEventCorrelation(event, 'popup-unhandled-rejection');
       const releaseCorrelation = pushCorrelationScope(correlationId);
       try {
         const meta = {
+          ...withCorrelation(correlationId),
           eventType: event?.type ?? 'unhandledrejection',
+          uiContext: getPopupUiContext(),
         };
         if (event?.reason instanceof Error) {
           meta.error = event.reason;
         } else if (typeof event?.reason !== 'undefined') {
           meta.reason = event.reason;
         }
-        logger.error('Unhandled promise rejection in popup UI.', meta);
+        await logger.error('Unhandled promise rejection in popup UI.', meta);
       } finally {
         releaseCorrelation();
       }
     },
-    (event, correlationId) => ({
-      logger,
+    event => ({
       component: logger.component,
       eventType: event?.type ?? 'unhandledrejection',
-      ...withCorrelation(correlationId),
+      ...withCorrelation(resolveEventCorrelation(event, 'popup-unhandled-rejection')),
       errorMessage: null,
     }),
   );
 
-  window.addEventListener('unhandledrejection', event => {
-    const correlationId = createCorrelationId('popup-unhandled-rejection');
-    logPopupUnhandledRejection(event, correlationId);
-  });
+  window.addEventListener('error', logPopupError);
+  window.addEventListener('unhandledrejection', logPopupUnhandledRejection);
 }
 
 /**

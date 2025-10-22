@@ -6,7 +6,7 @@
  * responsible for persisting provider preferences and token usage across
  * sessions while exposing request handlers to the extension runtime.
  */
-import createLogger, { loadLoggingConfig, setGlobalContext, withCorrelation, wrap, wrapAsync } from '../utils/logger.js';
+import createLogger, { loadLoggingConfig, setGlobalContext, withCorrelation } from '../utils/logger.js';
 import { createCostTracker, DEFAULT_TOKEN_LIMIT, estimateTokensFromUsd } from '../utils/cost.js';
 import { ensureNotesFile } from '../utils/notes.js';
 import { DEFAULT_PROVIDER, fetchApiKeyDetails, readApiKey, saveApiKey } from '../utils/apiKeyStore.js';
@@ -40,36 +40,59 @@ import { LLMRouter } from './llm/router.js';
 const logger = createLogger({ name: 'background-service' });
 setGlobalContext({ runtime: 'background-service' });
 
-if (typeof self !== 'undefined' && typeof self.addEventListener === 'function') {
-  self.addEventListener('error', event => {
-    const correlationId = createCorrelationId('bg-uncaught-error');
-    const meta = {
-      ...withCorrelation(correlationId),
-      filename: event?.filename,
-      lineno: event?.lineno,
-      colno: event?.colno,
-    };
-    if (event?.message) {
-      meta.message = event.message;
-    }
-    if (event?.error) {
-      meta.error = event.error;
-    }
-    logger.error('Uncaught error in background service worker.', meta);
-  });
+const workerEventCorrelationIds = new WeakMap();
 
-  self.addEventListener('unhandledrejection', event => {
-    const correlationId = createCorrelationId('bg-unhandled-rejection');
-    const meta = {
-      ...withCorrelation(correlationId),
-    };
-    if (event?.reason instanceof Error) {
-      meta.error = event.reason;
-    } else if (typeof event?.reason !== 'undefined') {
-      meta.reason = event.reason;
-    }
-    logger.error('Unhandled promise rejection in background service worker.', meta);
-  });
+if (typeof self !== 'undefined' && typeof self.addEventListener === 'function') {
+  const logWorkerError = logger.wrapAsync(
+    async event => {
+      const correlationId = resolveWorkerEventCorrelation(event, 'bg-uncaught-error');
+      const meta = {
+        ...withCorrelation(correlationId),
+        eventType: event?.type ?? 'error',
+        filename: event?.filename,
+        lineno: event?.lineno,
+        colno: event?.colno,
+      };
+      if (event?.message) {
+        meta.message = event.message;
+      }
+      if (event?.error) {
+        meta.error = event.error;
+      }
+      await logger.error('Uncaught error in background service worker.', meta);
+    },
+    event => ({
+      component: logger.component,
+      eventType: event?.type ?? 'error',
+      ...withCorrelation(resolveWorkerEventCorrelation(event, 'bg-uncaught-error')),
+      errorMessage: null,
+    }),
+  );
+
+  const logWorkerUnhandledRejection = logger.wrapAsync(
+    async event => {
+      const correlationId = resolveWorkerEventCorrelation(event, 'bg-unhandled-rejection');
+      const meta = {
+        ...withCorrelation(correlationId),
+        eventType: event?.type ?? 'unhandledrejection',
+      };
+      if (event?.reason instanceof Error) {
+        meta.error = event.reason;
+      } else if (typeof event?.reason !== 'undefined') {
+        meta.reason = event.reason;
+      }
+      await logger.error('Unhandled promise rejection in background service worker.', meta);
+    },
+    event => ({
+      component: logger.component,
+      eventType: event?.type ?? 'unhandledrejection',
+      ...withCorrelation(resolveWorkerEventCorrelation(event, 'bg-unhandled-rejection')),
+      errorMessage: null,
+    }),
+  );
+
+  self.addEventListener('error', logWorkerError);
+  self.addEventListener('unhandledrejection', logWorkerUnhandledRejection);
 }
 
 const adapterLogger = logger.child({ subsystem: 'adapter' });
@@ -139,6 +162,18 @@ function applyProviderLoggingContext(providerId) {
   });
 }
 
+function resolveWorkerEventCorrelation(event, prefix = 'bg') {
+  if (!event || typeof event !== 'object') {
+    return createCorrelationId(prefix);
+  }
+  if (workerEventCorrelationIds.has(event)) {
+    return workerEventCorrelationIds.get(event);
+  }
+  const correlationId = createCorrelationId(prefix);
+  workerEventCorrelationIds.set(event, correlationId);
+  return correlationId;
+}
+
 function createCorrelationId(prefix = 'bg') {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID();
@@ -166,6 +201,30 @@ function normaliseRuntimeMessage(rawMessage) {
     return rawMessage;
   }
   return {};
+}
+
+function wrapBackgroundHandler(fn, { errorMessage = null } = {}) {
+  if (typeof fn !== 'function') {
+    throw new TypeError('wrapBackgroundHandler expects a function');
+  }
+  return logger.wrapAsync(
+    async (message, sender) => fn(message, sender),
+    message => {
+      const correlationId = message && typeof message === 'object' && typeof message.correlationId === 'string'
+        ? message.correlationId
+        : ensureMessageCorrelation(message);
+      const messageType = message?.type ?? null;
+      const resolvedErrorMessage = typeof errorMessage === 'string' && errorMessage.trim().length > 0
+        ? errorMessage.trim()
+        : null;
+      return {
+        component: logger.component,
+        messageType,
+        ...withCorrelation(correlationId),
+        errorMessage: resolvedErrorMessage,
+      };
+    },
+  );
 }
 
 const testAdapterOverrides = new Map();
@@ -1879,20 +1938,20 @@ async function handleSegmentsUpdated(message) {
 }
 
 const handlers = {
-  'comet:setApiKey': ({ payload }) => setApiKey(payload.apiKey, { provider: payload?.provider }),
-  'comet:getApiKey': ({ payload }) => getApiKey({ provider: payload?.provider }),
-  'comet:getApiKeyDetails': ({ payload }) => getApiKeyDetails({ provider: payload?.provider }),
-  'comet:setProvider': ({ payload }) => setActiveProvider(payload?.provider),
-  'comet:summarise': handleSummariseRequest,
-  'comet:transcribe': handleTranscriptionRequest,
-  'comet:synthesise': handleSpeechRequest,
-  'comet:getUsage': handleUsageRequest,
-  'comet:resetUsage': handleResetUsage,
-  'comet:segmentsUpdated': handleSegmentsUpdated,
-  'comet:getVoiceCapabilities': ({ payload }) => resolveVoiceCapabilities(payload?.provider),
+  'comet:setApiKey': wrapBackgroundHandler(({ payload }) => setApiKey(payload.apiKey, { provider: payload?.provider })),
+  'comet:getApiKey': wrapBackgroundHandler(({ payload }) => getApiKey({ provider: payload?.provider })),
+  'comet:getApiKeyDetails': wrapBackgroundHandler(({ payload }) => getApiKeyDetails({ provider: payload?.provider })),
+  'comet:setProvider': wrapBackgroundHandler(({ payload }) => setActiveProvider(payload?.provider)),
+  'comet:summarise': wrapBackgroundHandler(handleSummariseRequest),
+  'comet:transcribe': wrapBackgroundHandler(handleTranscriptionRequest),
+  'comet:synthesise': wrapBackgroundHandler(handleSpeechRequest),
+  'comet:getUsage': wrapBackgroundHandler(handleUsageRequest),
+  'comet:resetUsage': wrapBackgroundHandler(handleResetUsage),
+  'comet:segmentsUpdated': wrapBackgroundHandler(handleSegmentsUpdated),
+  'comet:getVoiceCapabilities': wrapBackgroundHandler(({ payload }) => resolveVoiceCapabilities(payload?.provider)),
 };
 
-const handleRuntimeMessage = wrap(
+const handleRuntimeMessage = logger.wrap(
   (message, sender, sendResponse) => {
     const correlationId = ensureMessageCorrelation(message);
 
@@ -1911,15 +1970,7 @@ const handleRuntimeMessage = wrap(
     });
 
     const handler = handlers[message.type];
-    const executeHandler = wrapAsync(handler, () => ({
-      logger,
-      component: logger.component,
-      ...withCorrelation(correlationId),
-      messageType: message.type,
-      errorMessage: null,
-    }));
-
-    const handlerPromise = Promise.resolve(executeHandler(message, sender));
+    const handlerPromise = Promise.resolve(handler(message, sender));
 
     handlerPromise
       .then(result => {
