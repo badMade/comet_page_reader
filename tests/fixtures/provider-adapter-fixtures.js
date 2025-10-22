@@ -3,6 +3,19 @@ export const SAMPLE_LANGUAGE = 'en';
 export const SAMPLE_VOICE = 'alloy';
 export const SAMPLE_FORMAT = 'mp3';
 
+/**
+ * Builds a representative adapter configuration for the supplied provider key.
+ *
+ * @param {string} providerKey - Identifier used to namespace endpoints.
+ * @returns {{
+ *   model: string,
+ *   apiUrl: string,
+ *   transcriptionUrl: string,
+ *   ttsUrl: string,
+ *   temperature: number,
+ *   headers: Record<string, string>,
+ * }} Mock configuration object consumed by adapter tests.
+ */
 export function createAdapterConfig(providerKey) {
   const baseUrl = `https://api.${providerKey}.example/v1`;
   return {
@@ -15,6 +28,13 @@ export function createAdapterConfig(providerKey) {
   };
 }
 
+/**
+ * Parses the JSON payload embedded in placeholder adapter error messages.
+ *
+ * @param {Error} error - Error thrown by a placeholder adapter invocation.
+ * @returns {Record<string, unknown>} Deserialised payload captured in the message.
+ * @throws {Error} When the error message does not contain a JSON payload.
+ */
 export function extractPlaceholderPayload(error) {
   const match = /Expected(?: transcription| synthesis)? request: (\{.*\})$/.exec(error.message);
   if (!match) {

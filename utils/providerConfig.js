@@ -528,6 +528,7 @@ export {
  * a function returning a string, mirroring the behaviour of `readAgentYaml`.
  *
  * @param {string|Function} override - Alternate YAML content or supplier.
+ * @returns {void}
  */
 export function __setAgentYamlOverrideForTests(override) {
   logger.warn('Setting agent.yaml override for tests.');
@@ -537,6 +538,8 @@ export function __setAgentYamlOverrideForTests(override) {
 /**
  * Removes any previously configured YAML override, restoring the default
  * loading behaviour.
+ *
+ * @returns {void}
  */
 export function __clearAgentYamlOverrideForTests() {
   logger.warn('Clearing agent.yaml override for tests.');

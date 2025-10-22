@@ -439,6 +439,13 @@ export class CostTracker {
     };
   }
 
+  /**
+   * Returns the most recent token totals that count towards the configured
+   * limit. This snapshot mirrors the values displayed in the popup usage panel.
+   *
+   * @returns {{promptTokens: number, completionTokens: number, totalTokens: number}}
+   *   Aggregated token usage.
+   */
   getUsageTotals() {
     return {
       promptTokens: this.usage.totalPromptTokens,
@@ -447,6 +454,13 @@ export class CostTracker {
     };
   }
 
+  /**
+   * Provides cumulative token totals including entries marked as excluded from
+   * the enforcement limit. Useful for long-term analytics and reporting.
+   *
+   * @returns {{promptTokens: number, completionTokens: number, totalTokens: number}}
+   *   Lifetime token usage snapshot.
+   */
   getCumulativeTotals() {
     return {
       promptTokens: this.usage.cumulativePromptTokens,

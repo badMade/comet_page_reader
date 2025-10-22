@@ -21,6 +21,13 @@ function createElementStub() {
   return node;
 }
 
+/**
+ * Installs DOM, media, and Chrome stubs required to exercise the popup logic
+ * in a Node.js test environment.
+ *
+ * @returns {{ chrome: Record<string, unknown>, getElement: Function }} Handles
+ *   for accessing stubbed objects within tests.
+ */
 export function setupPopupTestEnvironment() {
   const elementCache = new Map();
 

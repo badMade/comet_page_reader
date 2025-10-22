@@ -569,7 +569,11 @@ export class LLMRouter {
    * @param {number} promptTokens - Tokens submitted in the request.
    * @param {number} completionTokens - Tokens returned in the response.
    * @param {object} metadata - Additional metadata stored alongside the entry.
-   * @returns {Promise<number>} Recorded token total.
+   * @returns {Promise<{
+   *   totalTokens: number,
+   *   usageTotals: {promptTokens: number, completionTokens: number, totalTokens: number}|null,
+   *   cumulativeTotals: {promptTokens: number, completionTokens: number, totalTokens: number}|null,
+   * }>} Recorded token summary.
    */
   async recordCost(model, promptTokens, completionTokens, metadata) {
     if (!this.costTracker) {
