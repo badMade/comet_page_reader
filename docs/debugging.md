@@ -11,11 +11,17 @@ The logger resolves its threshold from (highest priority first):
 3. `ENABLE_TRACE`, which forces the threshold to `trace` when set to a truthy value.
 4. The default of `info` when no override applies.
 
-Both the background worker and shared Node.js tooling load `logging_config.yaml` automatically; edit the `level` key or supply a JSON/YAML override with `setLoggerConfig` / `loadLoggingConfig` when you need ad-hoc tweaks. When running scripts locally, export `COMET_LOG_LEVEL=debug` (or another supported level) before invoking Node commands to surface additional detail.
+The supported levels are `trace`, `debug`, `info`, `warn`, `error`, and `fatal`. Both the background worker and shared Node.js tooling load `logging_config.yaml` automatically; edit the `level` key or supply a JSON/YAML override with `setLoggerConfig` / `loadLoggingConfig` when you need ad-hoc tweaks. When running scripts locally, export `COMET_LOG_LEVEL=debug` (or another supported level) before invoking Node commands to surface additional detail, for example:
+
+```bash
+COMET_LOG_LEVEL=debug npm test
+```
+
+You can also set `ENABLE_TRACE=true` (or toggle the manifest field) to momentarily unlock verbose trace entries without editing the log level directly.
 
 ## Console formats by environment
 
-Console output adapts to the resolved environment (`ENV`). Production builds emit a single JSON object per line so collectors can parse the data deterministically. Development environments (for example by launching with `NODE_ENV=development` or `COMET_ENV=development`) render the same information in a human-readable string with grouped metadata. Use JSON output for ingestion pipelines and switch to the pretty formatter while diagnosing issues interactively.
+Console output adapts to the resolved environment (`ENV`). Production builds emit a single JSON object per line so collectors can parse the data deterministically. Development environments—triggered by setting `COMET_ENV=development`, `NODE_ENV=development`, or the equivalent manifest flag—render the same information in a human-readable string with grouped metadata. Use JSON output for ingestion pipelines and switch to the pretty formatter while diagnosing issues interactively; you can always recover the original JSON payload from the trailing fragment of the pretty log line.
 
 ## Reading log entries
 
@@ -31,6 +37,29 @@ Every log record contains the following top-level fields:
 - `stack`: Redacted stack trace for captured `Error` objects (suppressed when unavailable).
 
 When the console is in JSON mode, copy the line into a formatter to inspect nested context; in pretty mode, the trailing JSON fragment mirrors the structured payload. File outputs (when enabled via `logging_config.yaml`) always store newline-delimited JSON.
+
+### Example structured entry
+
+```json
+{
+  "ts": "2024-03-06T19:48:12.519Z",
+  "level": "info",
+  "component": "background.service_worker",
+  "msg": "Provider response cached",
+  "correlationId": "bg-9af2c6",
+  "env": "production",
+  "version": "1.2.3",
+  "context": {
+    "meta": {
+      "provider": "openai",
+      "tokensUsed": 742
+    }
+  },
+  "stack": null
+}
+```
+
+The `context.meta` object aggregates any supplemental key-value pairs you passed when logging. Search for the `correlationId` across consoles or log files to follow a request through every runtime.
 
 ## Following correlation IDs
 

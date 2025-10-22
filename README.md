@@ -160,7 +160,7 @@ The ES module structure enables lightweight unit tests. For example, you can imp
 
 ## Troubleshooting
 
-- **Debug logging guidance:** Review [docs/debugging.md](docs/debugging.md) for log configuration tips, correlation-ID tracing, and stack analysis workflows.
+- **Debug logging guidance:** Review [docs/debugging.md](docs/debugging.md) for log configuration tips, environment-specific console formats (JSON vs. pretty), correlation-ID tracing, redaction behaviour, and source-mapped stack workflows.
 - **Microphone access denied:** The popup’s status area reports permission errors. Grant microphone access in browser settings and retry.
 - **Token limit exceeded:** The service worker blocks calls once the configured ceiling is reached. Lower the requested workload, reset usage from the popup, or increase `DEFAULT_TOKEN_LIMIT`.
 - **Firefox session storage:** Firefox currently lacks `chrome.storage.session`. The service worker falls back to an in-memory cache which resets per session.
