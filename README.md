@@ -33,12 +33,16 @@ Comet Page Reader focuses on three responsibilities:
 ### Steps
 
 1. Clone or download this repository: `git clone https://github.com/<your-org>/comet_page_reader`.
-2. Generate API credentials for the providers you plan to use and store them securely.
-3. Load the extension in your browser:
-   - **Chromium (Chrome, Edge, Comet):** open `chrome://extensions`, enable **Developer Mode**, choose **Load unpacked**, and select the repository root.
-   - **Firefox:** open `about:debugging#/runtime/this-firefox`, choose **Load Temporary Add-on**, and select the repository root (e.g. `manifest.json`).
+2. Install dependencies: `npm install` (installs test tooling and the build pipeline).
+3. Build the extension assets:
+   - **Production bundle:** `npm run build:extension` writes optimised assets to `dist/` and prints a JSON summary of the output.
+   - **Development bundle:** `npm run build:extension:dev` keeps sourcemaps enabled so the background worker and scripts reference debug-friendly assets.
+     Pass `BUILD_SOURCEMAP=true` with the production command when you explicitly want sourcemaps in a release archive.
+4. Load the generated assets in your browser:
+   - **Chromium (Chrome, Edge, Comet):** open `chrome://extensions`, enable **Developer Mode**, choose **Load unpacked**, and select the `dist/` directory.
+   - **Firefox:** open `about:debugging#/runtime/this-firefox`, choose **Load Temporary Add-on**, and select the `dist/manifest.json` file.
 
-The extension is fully static, so no bundling step is required. If you plan to execute the test suite, install the dev dependencies once via `npm install`.
+Re-run the relevant build command whenever you change source files. Both commands clean `dist/` before writing fresh assets so packaged extensions never reference outdated sourcemaps.
 
 ### Provider setup
 
