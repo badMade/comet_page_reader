@@ -40,6 +40,38 @@ import { LLMRouter } from './llm/router.js';
 const logger = createLogger({ name: 'background-service' });
 setGlobalContext({ runtime: 'background-service' });
 
+if (typeof self !== 'undefined' && typeof self.addEventListener === 'function') {
+  self.addEventListener('error', event => {
+    const correlationId = createCorrelationId('bg-uncaught-error');
+    const meta = {
+      ...withCorrelation(correlationId),
+      filename: event?.filename,
+      lineno: event?.lineno,
+      colno: event?.colno,
+    };
+    if (event?.message) {
+      meta.message = event.message;
+    }
+    if (event?.error) {
+      meta.error = event.error;
+    }
+    logger.error('Uncaught error in background service worker.', meta);
+  });
+
+  self.addEventListener('unhandledrejection', event => {
+    const correlationId = createCorrelationId('bg-unhandled-rejection');
+    const meta = {
+      ...withCorrelation(correlationId),
+    };
+    if (event?.reason instanceof Error) {
+      meta.error = event.reason;
+    } else if (typeof event?.reason !== 'undefined') {
+      meta.reason = event.reason;
+    }
+    logger.error('Unhandled promise rejection in background service worker.', meta);
+  });
+}
+
 const adapterLogger = logger.child({ subsystem: 'adapter' });
 
 ttsAdapters.register('local', createLocalTtsAdapter({ logger: adapterLogger.child({ provider: 'local-tts' }) }));
@@ -113,6 +145,27 @@ function createCorrelationId(prefix = 'bg') {
   }
   const random = Math.random().toString(36).slice(2, 8);
   return `${prefix}-${Date.now().toString(36)}-${random}`;
+}
+
+function ensureMessageCorrelation(message, prefix = 'bg-handler') {
+  if (!message || typeof message !== 'object') {
+    return createCorrelationId(prefix);
+  }
+  const existing = typeof message.correlationId === 'string' ? message.correlationId.trim() : '';
+  if (existing) {
+    message.correlationId = existing;
+    return existing;
+  }
+  const generated = createCorrelationId(prefix);
+  message.correlationId = generated;
+  return generated;
+}
+
+function normaliseRuntimeMessage(rawMessage) {
+  if (rawMessage && typeof rawMessage === 'object') {
+    return rawMessage;
+  }
+  return {};
 }
 
 const testAdapterOverrides = new Map();
@@ -1839,73 +1892,71 @@ const handlers = {
   'comet:getVoiceCapabilities': ({ payload }) => resolveVoiceCapabilities(payload?.provider),
 };
 
-runtime.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  const correlationId = createCorrelationId('bg-handler');
-  const wrapped = wrap(
-    (incomingMessage, incomingSender, respond) => {
-      if (!incomingMessage || !incomingMessage.type || !handlers[incomingMessage.type]) {
-        logger.warn('Received unsupported message.', {
-          messageType: incomingMessage?.type,
-          correlationId,
-        });
-        respond({ success: false, result: null, error: 'Unsupported message type.' });
-        return false;
-      }
+const handleRuntimeMessage = wrap(
+  (message, sender, sendResponse) => {
+    const correlationId = ensureMessageCorrelation(message);
 
-      logger.debug('Received background message.', {
-        type: incomingMessage.type,
+    if (!message.type || !handlers[message.type]) {
+      logger.warn('Received unsupported message.', {
+        messageType: message?.type,
         correlationId,
       });
-
-      const handler = handlers[incomingMessage.type];
-      const executeHandler = wrapAsync(handler, () => ({
-        logger,
-        component: logger.component,
-        ...withCorrelation(correlationId),
-        messageType: incomingMessage.type,
-        errorMessage: null,
-      }));
-
-      const handlerResult = executeHandler(incomingMessage, incomingSender);
-
-      if (handlerResult && typeof handlerResult.then === 'function') {
-        handlerResult
-          .then(result => {
-            logger.debug('Background message handled successfully.', {
-              type: incomingMessage.type,
-              correlationId,
-            });
-            respond({ success: true, result, error: null });
-          })
-          .catch(error => {
-            const resolvedError = error instanceof Error ? error : new Error(String(error));
-            logger.error('Background message handler failed.', {
-              type: incomingMessage.type,
-              correlationId,
-              error: resolvedError,
-            });
-            respond({ success: false, result: null, error: resolvedError.message });
-          });
-        return true;
-      }
-
-      logger.debug('Background message handled successfully.', {
-        type: incomingMessage.type,
-        correlationId,
-      });
-      respond({ success: true, result: handlerResult, error: null });
+      sendResponse({ success: false, result: null, error: 'Unsupported message type.', correlationId });
       return false;
-    },
-    incomingMessage => ({
+    }
+
+    logger.debug('Received background message.', {
+      type: message.type,
+      correlationId,
+    });
+
+    const handler = handlers[message.type];
+    const executeHandler = wrapAsync(handler, () => ({
       logger,
       component: logger.component,
       ...withCorrelation(correlationId),
-      messageType: incomingMessage?.type,
-      errorMessage: 'Background message handler threw synchronously.',
-    }),
-  );
+      messageType: message.type,
+      errorMessage: null,
+    }));
 
-  return wrapped(message, sender, sendResponse);
+    const handlerPromise = Promise.resolve(executeHandler(message, sender));
+
+    handlerPromise
+      .then(result => {
+        logger.debug('Background message handled successfully.', {
+          type: message.type,
+          correlationId,
+        });
+        sendResponse({ success: true, result, error: null, correlationId });
+      })
+      .catch(error => {
+        const resolvedError = error instanceof Error ? error : new Error(String(error));
+        logger.error('Background message handler failed.', {
+          type: message.type,
+          correlationId,
+          error: resolvedError,
+        });
+        sendResponse({ success: false, result: null, error: resolvedError.message, correlationId });
+      });
+
+    return true;
+  },
+  incomingMessage => {
+    const message = normaliseRuntimeMessage(incomingMessage);
+    const correlationId = ensureMessageCorrelation(message);
+    return {
+      logger,
+      component: logger.component,
+      ...withCorrelation(correlationId),
+      messageType: message?.type,
+      errorMessage: 'Background message handler threw synchronously.',
+    };
+  },
+);
+
+runtime.runtime.onMessage.addListener((rawMessage, sender, sendResponse) => {
+  const message = normaliseRuntimeMessage(rawMessage);
+  return handleRuntimeMessage(message, sender, sendResponse);
 });
 
 /**
