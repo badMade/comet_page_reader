@@ -5,9 +5,10 @@ This document supplements the main README with implementation details, known iss
 ## Environment Setup
 
 1. Install a Chromium-based browser and Firefox for manual testing.
-2. Install Node.js 20+ and run `npm install` to fetch the optional dev dependencies (currently `jsdom` for DOM-focused unit tests).
-3. Clone the repository and load it as an unpacked extension (see README).
-4. When debugging, open the following developer tools:
+2. Install Node.js 20+ and run `npm install` to fetch dev dependencies (tests, Vite, and build scripts).
+3. Produce a build: `npm run build:extension` for optimised assets or `npm run build:extension:dev` for sourcemap-friendly bundles. The commands clean `dist/` before rebuilding and emit JSON logs that enumerate generated files.
+4. Load `dist/` as an unpacked extension (see README) and repeat the relevant build command whenever you modify source files.
+5. When debugging, open the following developer tools:
    - **Service worker** console via `chrome://extensions` → inspect views.
    - **Popup** developer tools via right-click → **Inspect** on the popup window.
    - **Content script** console in the active tab.
