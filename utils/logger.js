@@ -6,7 +6,7 @@
  * under Node.js. Configuration can be provided programmatically or sourced
  * from JSON/YAML manifests to keep behaviour consistent across environments.
  */
-import { getAppVersion, getEnvironment } from './config.js';
+import { APP_VERSION, ENV, LOG_LEVEL, ENABLE_TRACE } from './config.js';
 const LOG_LEVELS = Object.freeze({
   error: 0,
   warn: 1,
@@ -25,7 +25,7 @@ const SENSITIVE_KEY_PATTERNS = [
 ];
 
 const DEFAULT_CONFIG = {
-  level: 'info',
+  level: LOG_LEVEL,
   console: {
     enabled: true,
   },
@@ -449,7 +449,13 @@ function selectConsoleMethod(level) {
   if (normalised === 'warn') {
     return 'warn';
   }
-  if (normalised === 'trace' || normalised === 'debug') {
+  if (normalised === 'trace') {
+    if (ENABLE_TRACE && typeof console !== 'undefined' && typeof console.trace === 'function') {
+      return 'trace';
+    }
+    return 'debug';
+  }
+  if (normalised === 'debug') {
     return 'debug';
   }
   return 'info';
@@ -490,8 +496,8 @@ async function emitLog(level, loggerInstance, message, meta) {
   const componentName = typeof loggerInstance?.component === 'string' && loggerInstance.component.trim().length > 0
     ? loggerInstance.component.trim()
     : loggerName;
-  const environment = getEnvironment() || 'production';
-  const version = getAppVersion() || '0.0.0';
+  const environment = typeof ENV === 'string' && ENV ? ENV : 'production';
+  const version = typeof APP_VERSION === 'string' && APP_VERSION ? APP_VERSION : '0.0.0';
 
   const scopedContext = collectScopeContext();
   const mergedContext = mergeContexts(
@@ -810,15 +816,12 @@ export function createLogger(options = {}) {
   return new StructuredLogger(name, sanitizeMeta(context), component);
 }
 
-const envLevel = isNode && process.env && typeof process.env.COMET_LOG_LEVEL === 'string'
-  ? process.env.COMET_LOG_LEVEL
-  : null;
 const envLogFile = isNode && process.env && typeof process.env.COMET_LOG_FILE === 'string'
   ? process.env.COMET_LOG_FILE
   : null;
 
-if (envLevel) {
-  setLoggerConfig({ level: envLevel });
+if (LOG_LEVEL) {
+  setLoggerConfig({ level: LOG_LEVEL });
 }
 if (envLogFile) {
   setLoggerConfig({ file: { enabled: true, path: envLogFile } });
