@@ -137,6 +137,34 @@
   let activeHighlightId = null;
   let disposed = false;
 
+  function getContentContextMetadata() {
+    const meta = {};
+    if (typeof window !== 'undefined' && window.location) {
+      if (window.location.hostname) {
+        meta.locationHost = window.location.hostname;
+      }
+      if (window.location.pathname) {
+        meta.locationPath = window.location.pathname;
+      }
+      if (window.location.hash) {
+        meta.locationHash = window.location.hash;
+      }
+    }
+    if (Array.isArray(segments)) {
+      meta.segmentCount = segments.length;
+    }
+    if (activeHighlightId) {
+      meta.activeHighlightId = activeHighlightId;
+    }
+    if (observer) {
+      meta.observerActive = true;
+    }
+    if (disposed) {
+      meta.disposed = true;
+    }
+    return meta;
+  }
+
   function createCorrelationId(prefix = 'content') {
     if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
       return crypto.randomUUID();
@@ -168,45 +196,67 @@
     return undefined;
   }
 
-  function handleWindowError(event) {
-    if (!event) {
-      return;
-    }
-    const correlationId = createCorrelationId('content-window-error');
-    const stack = extractStackTrace(event.error) ?? extractStackTrace(event.message);
-    const meta = {
+  const logWindowError = logger.wrapAsync(
+    async (event, correlationId) => {
+      const stack = extractStackTrace(event?.error) ?? extractStackTrace(event?.message);
+      const meta = {
+        ...getContentContextMetadata(),
+        ...withCorrelation(correlationId),
+        message: event?.message,
+        filename: event?.filename,
+        lineno: event?.lineno,
+        colno: event?.colno,
+        eventType: event?.type ?? 'error',
+      };
+      if (typeof stack === 'string') {
+        meta.stack = stack;
+      }
+      if (typeof event?.error !== 'undefined') {
+        meta.error = event.error;
+      }
+      await logger.error('Unhandled window error captured.', meta);
+    },
+    (event, correlationId) => ({
+      component: logger.component,
+      eventType: event?.type ?? 'error',
+      ...getContentContextMetadata(),
       ...withCorrelation(correlationId),
-      message: event.message,
-      filename: event.filename,
-      lineno: event.lineno,
-      colno: event.colno,
-    };
-    if (typeof stack === 'string') {
-      meta.stack = stack;
-    }
-    if (typeof event.error !== 'undefined') {
-      meta.error = event.error;
-    }
-    Promise.resolve(logger.error('Unhandled window error captured.', meta)).catch(() => {});
-  }
+      errorMessage: 'Content script window error handler failed.',
+    }),
+  );
 
-  function handleUnhandledRejection(event) {
-    if (!event) {
-      return;
-    }
-    const correlationId = createCorrelationId('content-unhandled-rejection');
-    const stack = extractStackTrace(event.reason);
-    const meta = {
+  const logUnhandledRejection = logger.wrapAsync(
+    async (event, correlationId) => {
+      const stack = extractStackTrace(event?.reason);
+      const meta = {
+        ...getContentContextMetadata(),
+        ...withCorrelation(correlationId),
+        reason: event?.reason,
+        eventType: event?.type ?? 'unhandledrejection',
+      };
+      if (typeof stack === 'string') {
+        meta.stack = stack;
+      }
+      await logger.error('Unhandled promise rejection captured in content script.', meta);
+    },
+    (event, correlationId) => ({
+      component: logger.component,
+      eventType: event?.type ?? 'unhandledrejection',
+      ...getContentContextMetadata(),
       ...withCorrelation(correlationId),
-      reason: event.reason,
-    };
-    if (typeof stack === 'string') {
-      meta.stack = stack;
-    }
-    Promise.resolve(
-      logger.error('Unhandled promise rejection captured in content script.', meta),
-    ).catch(() => {});
-  }
+      errorMessage: 'Content script unhandled rejection handler failed.',
+    }),
+  );
+
+  const handleWindowError = event => {
+    const correlationId = createCorrelationId('content-window-error');
+    logWindowError(event, correlationId).catch(() => {});
+  };
+
+  const handleUnhandledRejection = event => {
+    const correlationId = createCorrelationId('content-unhandled-rejection');
+    logUnhandledRejection(event, correlationId).catch(() => {});
+  };
 
   function dispose() {
     if (disposed) {
