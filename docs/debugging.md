@@ -71,6 +71,12 @@ Each runtime constructs correlation IDs for request/response cycles and attaches
 
 To follow an event end-to-end, search for the correlation ID reported in one component’s log across the other consoles. When spawning new work from existing handlers, wrap the new logger in `logger.withCorrelation(currentId)` or merge the helper’s return value into your message payload.
 
+## CLI exception hooks and exit codes
+
+Node-based utility scripts under `scripts/` register shared exception hooks so failures emit predictable, structured output. The helper wires `process.on('uncaughtException')` and `process.on('unhandledRejection')` to a logger configured with `component: "cli"` and the script name in `context.script`. Each handler derives a correlation ID from `COMET_CLI_CORRELATION_ID`, `COMET_CORRELATION_ID`, or `CORRELATION_ID` when present; otherwise it generates a single `cli-<script>-*` identifier for the entire process and appends the event name (for example `:uncaught-exception`).
+
+After logging the fatal entry the helper sets `process.exitCode` (default `1`) and schedules a hard exit, ensuring collectors receive the JSON line before Node terminates. Downstream tooling can rely on a single fatal record with a non-zero exit code and the script-level context to correlate the shutdown with any earlier `info` or `debug` logs. Supply a correlation ID explicitly (`COMET_CLI_CORRELATION_ID=preflight npm run verify:npm-registry`) when you want to stitch the script lifecycle into a broader workflow trace.
+
 ## Redaction behaviour
 
 Sensitive values are automatically removed before emission. Keys containing terms such as `key`, `token`, `secret`, `password`, or `sessionId` are replaced with `[REDACTED]`, and `Error` instances are serialised to safe objects. Stack traces are also scrubbed to drop local paths and URLs, ensuring that logs can be shipped to shared backends without leaking secrets or filesystem structure. If you need full detail locally, inspect the original `Error` object inside developer tools before it is logged or temporarily emit diagnostic data via `debugger` statements.

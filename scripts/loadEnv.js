@@ -9,9 +9,12 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import dotenv from 'dotenv';
 
-import createLogger, { withCorrelation, wrapAsync } from '../utils/logger.js';
+import createLogger, { setGlobalContext, withCorrelation } from '../utils/logger.js';
+import { createCliCorrelationId, registerCliErrorHandlers } from './cliProcessHandlers.js';
 
-const logger = createLogger({ name: 'load-env' });
+const scriptName = 'load-env';
+const logger = createLogger({ name: scriptName, component: 'cli', context: { script: scriptName } });
+setGlobalContext({ script: scriptName });
 
 function createCorrelationId(prefix = 'load-env') {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -126,7 +129,7 @@ async function main() {
 const run = logger.wrapAsync(main, () => ({
   logger,
   component: logger.component,
-  ...withCorrelation(createCorrelationId('load-env-run')),
+  ...withCorrelation(createCliCorrelationId('load-env-run', { scriptName })),
   errorMessage: 'Failed to load environment variables.',
 }));
 
