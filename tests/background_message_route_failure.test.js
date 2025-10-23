@@ -225,7 +225,7 @@ test('adapter failure propagates correlation id and cause stack in structured lo
     assert(entry.context.meta.error.stack.includes('adapter pipeline failure'));
     assert.equal(typeof entry.stack, 'string');
     assert(entry.stack.includes('adapter pipeline failure'));
-    assert(entry.stack.includes('Caused by:') || entry.stack.includes('LLMRouter.generate'));
+    assert(entry.stack.includes('Caused by:'));
     assert(entry.stack.includes('[REDACTED]'));
 
     const providerEntries = extractStructuredEntries(capturedLogs, 'Provider invocation failed.');
