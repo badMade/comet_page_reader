@@ -2033,28 +2033,30 @@ const handleRuntimeMessage = logger.wrap(
     const senderMeta = describeSender(sender);
     const backgroundMeta = getBackgroundContextMetadata();
 
-    if (!message.type || !handlers[message.type]) {
-      logger.warn('Received unsupported message.', {
-        messageType: message?.type,
+    const executeHandler = () => {
+      if (!message.type || !handlers[message.type]) {
+        logger.warn('Received unsupported message.', {
+          messageType: message?.type,
+          ...backgroundMeta,
+          ...senderMeta,
+          ...withCorrelation(correlationId),
+        });
+        throw new Error('Unsupported message type.');
+      }
+
+      logger.debug('Received background message.', {
+        type: message.type,
         ...backgroundMeta,
         ...senderMeta,
         ...withCorrelation(correlationId),
       });
-      sendResponse({ success: false, result: null, error: 'Unsupported message type.', correlationId });
-      return false;
-    }
 
-    logger.debug('Received background message.', {
-      type: message.type,
-      ...backgroundMeta,
-      ...senderMeta,
-      ...withCorrelation(correlationId),
-    });
+      const handler = handlers[message.type];
+      return handler(message, sender);
+    };
 
-    const handler = handlers[message.type];
-    const handlerPromise = Promise.resolve(handler(message, sender));
-
-    handlerPromise
+    Promise.resolve()
+      .then(executeHandler)
       .then(result => {
         logger.debug('Background message handled successfully.', {
           type: message.type,

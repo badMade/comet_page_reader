@@ -912,7 +912,15 @@ export class LLMRouter {
     const errorMessages = failures
       .map(entry => `${entry.provider}: ${entry.reason || entry.error?.message || 'unavailable'}`)
       .join('; ');
-    throw new Error(`All providers failed. Attempts: ${errorMessages}`);
+    const aggregateError = new Error(`All providers failed. Attempts: ${errorMessages}`);
+    for (let index = failures.length - 1; index >= 0; index -= 1) {
+      const failureError = failures[index]?.error;
+      if (failureError instanceof Error) {
+        aggregateError.cause = failureError;
+        break;
+      }
+    }
+    throw aggregateError;
   }
 }
 
