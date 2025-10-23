@@ -439,6 +439,34 @@ function assignElements() {
   }
 }
 
+function isControlDisabled(control) {
+  if (!control) {
+    return false;
+  }
+  if (control.disabled) {
+    return true;
+  }
+  if (typeof control.getAttribute === 'function') {
+    const ariaDisabled = control.getAttribute('aria-disabled');
+    if (typeof ariaDisabled === 'string' && ariaDisabled.toLowerCase() === 'true') {
+      return true;
+    }
+  }
+  return false;
+}
+
+function disableControl(control) {
+  if (!control) {
+    return;
+  }
+  if ('disabled' in control) {
+    control.disabled = true;
+  }
+  if (typeof control.setAttribute === 'function') {
+    control.setAttribute('aria-disabled', 'true');
+  }
+}
+
 function getVoiceOptions() {
   return state.voiceOptions.slice();
 }
@@ -812,6 +840,18 @@ function setStatus(message) {
   elements.recordingStatus.textContent = message || '';
 }
 
+function disableTabDependentControls() {
+  [
+    elements.summarise,
+    elements.read,
+    elements.readPage,
+    elements.play,
+    elements.pause,
+    elements.stop,
+    elements.pushToTalk,
+  ].forEach(disableControl);
+}
+
 function setPlaybackReady() {
   elements.play.disabled = false;
   elements.pause.disabled = true;
@@ -1079,6 +1119,18 @@ function withErrorHandling(handler, options = {}) {
   );
 
   return event => execute(event, createCorrelationId(options.correlationPrefix ?? 'popup-handler'));
+}
+
+function createGuardedHandler(control, handler, options = {}) {
+  return withErrorHandling(
+    async event => {
+      if (isControlDisabled(control)) {
+        return;
+      }
+      await handler(event);
+    },
+    options,
+  );
 }
 
 function getRuntimeLastError() {
@@ -1657,13 +1709,41 @@ function ensureSupportedTab(tab) {
   return { ...tab, url: supportedUrl };
 }
 
-async function getActiveTabId() {
+async function resolveActiveTabSupport() {
   const tabs = await queryTabs({ active: true, currentWindow: true });
-  if (!tabs.length) {
+  if (!Array.isArray(tabs) || tabs.length === 0) {
+    return { supported: false, tab: null };
+  }
+
+  const [activeTab] = tabs;
+  if (!activeTab || typeof activeTab !== 'object') {
+    return { supported: false, tab: null };
+  }
+
+  const supportedUrl = resolveSupportedTabUrl(activeTab);
+  const hasValidId = typeof activeTab.id === 'number';
+  const supported = Boolean(hasValidId && supportedUrl && isTabUrlSupported(supportedUrl));
+
+  if (!supported) {
+    return { supported: false, tab: activeTab };
+  }
+
+  if (activeTab.url === supportedUrl) {
+    return { supported: true, tab: activeTab };
+  }
+
+  return { supported: true, tab: { ...activeTab, url: supportedUrl } };
+}
+
+async function getActiveTabId() {
+  const { supported, tab } = await resolveActiveTabSupport();
+  if (!tab || typeof tab.id !== 'number') {
     throw new Error('No active tab detected.');
   }
-  const activeTab = ensureSupportedTab(tabs[0]);
-  return activeTab.id;
+  if (!supported) {
+    throw new Error(UNSUPPORTED_TAB_MESSAGE);
+  }
+  return tab.id;
 }
 
 /**
@@ -2431,42 +2511,86 @@ function bindEvents() {
   elements.apiForm.addEventListener('submit', withErrorHandling(saveApiKey));
   elements.provider.addEventListener('change', withErrorHandling(handleProviderChange));
   elements.ttsProvider.addEventListener('change', withErrorHandling(handleTtsProviderChange));
-  elements.summarise.addEventListener('click', withErrorHandling(summarisePage));
-  elements.read.addEventListener('click', withErrorHandling(readAloud));
-  elements.readPage.addEventListener('click', withErrorHandling(readFullPage));
-  elements.play.addEventListener('click', withErrorHandling(async () => {
-    if (state.audio) {
-      if (typeof state.audio.playbackRate === 'number') {
-        state.audio.playbackRate = state.playbackRate;
-      }
-      await state.audio.play();
-      setPlaybackActive();
-    }
-  }));
-  elements.pause.addEventListener('click', withErrorHandling(async () => {
-    pausePlayback();
-  }));
-  elements.stop.addEventListener('click', withErrorHandling(async () => {
-    stopPlayback();
-  }));
-  elements.resetUsage.addEventListener('click', withErrorHandling(resetUsage));
+  elements.summarise.addEventListener(
+    'click',
+    createGuardedHandler(elements.summarise, summarisePage, { name: 'summarisePage' }),
+  );
+  elements.read.addEventListener(
+    'click',
+    createGuardedHandler(elements.read, readAloud, { name: 'readAloud' }),
+  );
+  elements.readPage.addEventListener(
+    'click',
+    createGuardedHandler(elements.readPage, readFullPage, { name: 'readFullPage' }),
+  );
+  elements.play.addEventListener(
+    'click',
+    createGuardedHandler(
+      elements.play,
+      async () => {
+        if (state.audio) {
+          if (typeof state.audio.playbackRate === 'number') {
+            state.audio.playbackRate = state.playbackRate;
+          }
+          await state.audio.play();
+          setPlaybackActive();
+        }
+      },
+      { name: 'playAudio' },
+    ),
+  );
+  elements.pause.addEventListener(
+    'click',
+    createGuardedHandler(elements.pause, async () => { pausePlayback(); }, { name: 'pausePlayback' }),
+  );
+  elements.stop.addEventListener(
+    'click',
+    createGuardedHandler(elements.stop, async () => { stopPlayback(); }, { name: 'stopPlayback' }),
+  );
+  elements.resetUsage.addEventListener(
+    'click',
+    createGuardedHandler(elements.resetUsage, resetUsage, { name: 'resetUsage' }),
+  );
   elements.language.addEventListener('change', withErrorHandling(updateLanguage));
   elements.voice.addEventListener('change', withErrorHandling(updateVoice));
-  elements.saveSpeechSettings.addEventListener('click', withErrorHandling(saveSpeechSettings));
+  elements.saveSpeechSettings.addEventListener(
+    'click',
+    createGuardedHandler(
+      elements.saveSpeechSettings,
+      saveSpeechSettings,
+      { name: 'saveSpeechSettings' },
+    ),
+  );
   elements.playbackRate.addEventListener('change', withErrorHandling(updatePlaybackRate));
-  elements.pushToTalk.addEventListener('mousedown', withErrorHandling(startRecording));
-  elements.pushToTalk.addEventListener('mouseup', withErrorHandling(stopRecording));
-  elements.pushToTalk.addEventListener('mouseleave', withErrorHandling(stopRecording));
+  const startRecordingHandler = createGuardedHandler(
+    elements.pushToTalk,
+    startRecording,
+    { name: 'startRecording' },
+  );
+  const stopRecordingHandler = createGuardedHandler(
+    elements.pushToTalk,
+    stopRecording,
+    { name: 'stopRecording' },
+  );
+  elements.pushToTalk.addEventListener('mousedown', startRecordingHandler);
+  elements.pushToTalk.addEventListener('mouseup', stopRecordingHandler);
+  elements.pushToTalk.addEventListener('mouseleave', stopRecordingHandler);
   elements.pushToTalk.addEventListener('keydown', event => {
     if (event.code === 'Space' || event.code === 'Enter') {
       event.preventDefault();
-      withErrorHandling(startRecording)(event);
+      if (isControlDisabled(elements.pushToTalk)) {
+        return;
+      }
+      startRecordingHandler(event);
     }
   });
   elements.pushToTalk.addEventListener('keyup', event => {
     if (event.code === 'Space' || event.code === 'Enter') {
       event.preventDefault();
-      withErrorHandling(stopRecording)(event);
+      if (isControlDisabled(elements.pushToTalk)) {
+        return;
+      }
+      stopRecordingHandler(event);
     }
   });
   window.addEventListener('beforeunload', () => {
@@ -2483,6 +2607,11 @@ function bindEvents() {
 async function init() {
   assignElements();
   setPlaybackReady();
+  const activeTabSupport = await resolveActiveTabSupport();
+  if (!activeTabSupport.supported) {
+    setStatus(UNSUPPORTED_TAB_MESSAGE);
+    disableTabDependentControls();
+  }
   // Populate the provider selector immediately so the UI is interactive while
   // background configuration loads. This prevents the dropdown from appearing
   // empty when the popup opens and ensures required attributes are applied
@@ -2538,6 +2667,7 @@ const __TESTING__ = {
   resolveSupportedTabUrl,
   isTabUrlSupported,
   ensureSupportedTab,
+  resolveActiveTabSupport,
   UNSUPPORTED_TAB_MESSAGE,
   loadPreferences,
   applyVoiceCapabilities,
@@ -2547,6 +2677,7 @@ const __TESTING__ = {
   beginTtsProgress,
   clearTtsProgress,
   handleTtsProgressMessage,
+  init,
 };
 
 export { sendMessageToTab, sendMessage, __TESTING__ };
