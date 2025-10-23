@@ -913,12 +913,9 @@ export class LLMRouter {
       .map(entry => `${entry.provider}: ${entry.reason || entry.error?.message || 'unavailable'}`)
       .join('; ');
     const aggregateError = new Error(`All providers failed. Attempts: ${errorMessages}`);
-    for (let index = failures.length - 1; index >= 0; index -= 1) {
-      const failureError = failures[index]?.error;
-      if (failureError instanceof Error) {
-        aggregateError.cause = failureError;
-        break;
-      }
+    const failureWithError = failures.findLast(entry => entry?.error instanceof Error);
+    if (failureWithError) {
+      aggregateError.cause = failureWithError.error;
     }
     throw aggregateError;
   }
