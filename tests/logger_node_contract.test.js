@@ -246,9 +246,9 @@ test('node logger contract behaviours', async t => {
     if (!serialised.includes('inner network failure')) {
       const cause =
         entry.cause ??
-        entry.error?.cause ??
-        entry.metadata?.cause ??
-        entry.context?.cause;
+        entry.err?.cause ??
+        entry.context?.cause ??
+        entry.context?.error?.cause;
       if (cause) {
         const causeSerialised = JSON.stringify(cause);
         assert.ok(
