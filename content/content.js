@@ -71,6 +71,7 @@
 
   let createLogger;
   let loadLoggingConfig;
+  let createCorrelationId;
   let setGlobalContext;
   let withCorrelation;
   let wrap;
