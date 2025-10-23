@@ -359,9 +359,7 @@ function normaliseCorrelationId(id) {
 
 export function createCorrelationId(prefix = '') {
   const normalisedPrefix = typeof prefix === 'string' && prefix.trim() ? prefix.trim() : '';
-  const cryptoRef =
-    (typeof globalThis !== 'undefined' && globalThis.crypto) ||
-    (typeof crypto !== 'undefined' ? crypto : null);
+  const cryptoRef = globalThis?.crypto;
 
   if (cryptoRef && typeof cryptoRef.randomUUID === 'function') {
     const uuid = cryptoRef.randomUUID();
