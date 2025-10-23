@@ -22,15 +22,16 @@ export function matchesMessage(entry, message) {
 }
 
 export function findEntries(calls, predicate) {
-  return (calls ?? []).reduce((entries, args) => {
-    if (Array.isArray(args) && args.length > 0 && typeof args[0] === 'string') {
-      const parsed = parseJson(args[0]);
-      if (parsed && predicate(parsed)) {
-        entries.push(parsed);
+  return (calls ?? [])
+    .map(args => {
+      if (Array.isArray(args) && args.length > 0 && typeof args[0] === 'string') {
+        return parseJson(args[0]);
       }
-    }
-    return entries;
-  }, []);
+      return null;
+    })
+    .filter(parsed => {
+      return parsed && predicate(parsed);
+    });
 }
 
 export function readLevel(entry) {
