@@ -6,7 +6,7 @@
  * responsible for persisting provider preferences and token usage across
  * sessions while exposing request handlers to the extension runtime.
  */
-import createLogger, { loadLoggingConfig, setGlobalContext, withCorrelation } from '../utils/logger.js';
+import createLogger, { createCorrelationId, loadLoggingConfig, setGlobalContext, withCorrelation } from '../utils/logger.js';
 import { createCostTracker, DEFAULT_TOKEN_LIMIT, estimateTokensFromUsd } from '../utils/cost.js';
 import { ensureNotesFile } from '../utils/notes.js';
 import { DEFAULT_PROVIDER, fetchApiKeyDetails, readApiKey, saveApiKey } from '../utils/apiKeyStore.js';
@@ -167,20 +167,6 @@ function applyProviderLoggingContext(providerId) {
     aiProviderId: resolved,
     aiProviderLabel: label,
   });
-}
-
-function createCorrelationId(prefix = 'bg') {
-  const normalisedPrefix = typeof prefix === 'string' && prefix.trim() ? prefix.trim() : '';
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    const uuid = crypto.randomUUID();
-    return normalisedPrefix ? `${normalisedPrefix}-${uuid}` : uuid;
-  }
-  const random = Math.random().toString(36).slice(2, 8);
-  const timestamp = Date.now().toString(36);
-  if (!normalisedPrefix) {
-    return `${timestamp}-${random}`;
-  }
-  return `${normalisedPrefix}-${timestamp}-${random}`;
 }
 
 function ensureMessageCorrelation(message, prefix = 'bg-handler') {
