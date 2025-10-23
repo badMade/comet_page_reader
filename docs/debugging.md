@@ -11,10 +11,10 @@ The logger resolves its threshold from (highest priority first):
 3. `ENABLE_TRACE`, which forces the threshold to `trace` when set to a truthy value.
 4. The default of `info` when no override applies.
 
-The supported levels are `trace`, `debug`, `info`, `warn`, `error`, and `fatal`. Both the background worker and shared Node.js tooling load `logging_config.yaml` automatically; edit the `level` key or supply a JSON/YAML override with `setLoggerConfig` / `loadLoggingConfig` when you need ad-hoc tweaks. When running scripts locally, export `COMET_LOG_LEVEL=debug` (or another supported level) before invoking Node commands to surface additional detail, for example:
+The supported levels are `trace`, `debug`, `info`, `warn`, `error`, and `fatal`. Both the background worker and shared Node.js tooling load `logging_config.yaml` automatically; edit the `level` key or supply a JSON/YAML override with `setLoggerConfig` / `loadLoggingConfig` when you need ad-hoc tweaks. When running scripts locally, export `LOG_LEVEL=debug` (or its alias `COMET_LOG_LEVEL=debug`, both accepted by `utils/config.js`) before invoking Node commands to surface additional detail, for example:
 
 ```bash
-COMET_LOG_LEVEL=debug npm test
+LOG_LEVEL=debug npm test
 ```
 
 You can also set `ENABLE_TRACE=true` (or toggle the manifest field) to momentarily unlock verbose trace entries without editing the log level directly.

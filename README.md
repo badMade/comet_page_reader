@@ -113,6 +113,17 @@ Key settings are embedded in source files so they remain easy to audit:
 - **Locales & strings:** Update the `MESSAGES` map inside `utils/i18n.js`.
 - **Permissions:** Modify `manifest.json` for additional scopes.
 
+### Logging & environment overrides
+
+The shared loader in [`utils/config.js`](utils/config.js) reads runtime metadata from a consistent set of environment variables:
+
+- `LOG_LEVEL`, `COMET_LOG_LEVEL`, or `npm_package_config_log_level` control the logger threshold (fallback `info`).
+- `ENABLE_TRACE`, `COMET_ENABLE_TRACE`, `TRACE`, or `COMET_TRACE` force verbose traces when truthy.
+- `COMET_ENV`, `NODE_ENV`, or `ENV` choose the active environment, which affects formatter selection and feature toggles.
+- `APP_VERSION`, `COMET_VERSION`, or `npm_package_version` override the reported build version.
+
+See [docs/debugging.md](docs/debugging.md) for concrete examples of changing log verbosity, reading JSON entries, correlation-ID tracing, and redaction behaviour.
+
 ### Free-First Routing
 
 The background worker now routes every generate request through a **free-first router**. Providers are attempted in the order defined by the `routing.provider_order` entry in `agent.yaml` (or the `PROVIDER_ORDER` environment variable), progressing from local/community options through trials and finally paid tiers. If `DISABLE_PAID=true`, the router stops before contacting paid providers and returns `No free providers available and paid disabled.`.
