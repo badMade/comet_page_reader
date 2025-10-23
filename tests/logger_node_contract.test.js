@@ -1,7 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { importFreshLoggerModule } from './fixtures/logger-test-utils.js';
+import {
+  importFreshLoggerModule,
+  findEntries,
+  matchesMessage,
+  readLevel,
+} from './fixtures/logger-test-utils.js';
 
 async function captureConsole(method, run) {
   const original = console[method];
@@ -29,6 +34,34 @@ function parseCapturedEntries(calls) {
       }
     })
     .filter(Boolean);
+}
+
+async function emitCorrelatedLog(loggerModule, logger, correlationId) {
+  const log = () => logger.info?.('correlated-log', {});
+
+  if (typeof logger?.withCorrelationId === 'function') {
+    await logger.withCorrelationId(correlationId, log);
+    return true;
+  }
+  if (typeof loggerModule?.withCorrelationId === 'function') {
+    await loggerModule.withCorrelationId(correlationId, log);
+    return true;
+  }
+  if (typeof loggerModule?.runWithCorrelationId === 'function') {
+    await loggerModule.runWithCorrelationId(correlationId, log);
+    return true;
+  }
+  if (typeof loggerModule?.setGlobalContext === 'function') {
+    loggerModule.setGlobalContext({ correlationId });
+    await log();
+    return true;
+  }
+  if (typeof loggerModule?.setContext === 'function') {
+    loggerModule.setContext({ correlationId });
+    await log();
+    return true;
+  }
+  return false;
 }
 
 test('node logger contract behaviours', async t => {
@@ -112,9 +145,29 @@ test('node logger contract behaviours', async t => {
       await logger.error('error emitted');
 
       assert.equal(captured.debug.length, 0);
-      assert.equal(captured.info.length, 0);
+      const infoEntries = findEntries(captured.info, () => true);
+      assert.strictEqual(
+        infoEntries.length,
+        0,
+        'info entry should be filtered when minimum level is warn',
+      );
       assert.equal(captured.warn.length, 1);
       assert.equal(captured.error.length, 1);
+
+      const warnEntries = findEntries(captured.warn, entry => matchesMessage(entry, 'warn emitted'));
+      assert.equal(warnEntries.length, 1);
+      const warnLevel = readLevel(warnEntries[0]);
+      assert.ok(warnLevel, 'warn entry should expose severity metadata');
+      assert.equal(warnLevel.toLowerCase(), 'warn');
+
+      const errorEntries = findEntries(
+        captured.error,
+        entry => matchesMessage(entry, 'error emitted'),
+      );
+      assert.equal(errorEntries.length, 1);
+      const errorLevel = readLevel(errorEntries[0]);
+      assert.ok(errorLevel, 'error entry should expose severity metadata');
+      assert.equal(errorLevel.toLowerCase(), 'error');
 
       setLoggerConfig({ level: 'error' });
 
@@ -123,6 +176,22 @@ test('node logger contract behaviours', async t => {
 
       assert.equal(captured.warn.length, 1);
       assert.equal(captured.error.length, 2);
+
+      const suppressedWarns = findEntries(
+        captured.warn,
+        entry => matchesMessage(entry, 'warn suppressed at error level'),
+      );
+      assert.strictEqual(
+        suppressedWarns.length,
+        0,
+        'warn entry should be filtered when minimum level is error',
+      );
+
+      const emittedErrors = findEntries(
+        captured.error,
+        entry => matchesMessage(entry, 'error emitted at error level'),
+      );
+      assert.equal(emittedErrors.length, 1);
     } finally {
       console.debug = originalDebug;
       console.info = originalInfo;
@@ -160,6 +229,8 @@ test('node logger contract behaviours', async t => {
     const entries = parseCapturedEntries(calls);
     assert.equal(entries.length, 1);
     const [entry] = entries;
+    const [rawCall] = calls;
+    const serialised = typeof rawCall?.[0] === 'string' ? rawCall[0] : '';
 
     assert.equal(entry.msg, 'outer pipeline failure');
     assert.equal(entry.context.meta.error.message, 'outer pipeline failure');
@@ -171,6 +242,23 @@ test('node logger contract behaviours', async t => {
     assert(entry.stack.includes('inner network failure'));
     assert(entry.stack.includes('Caused by:'));
     assert(entry.stack.includes('[REDACTED]'));
+
+    if (!serialised.includes('inner network failure')) {
+      const cause =
+        entry.cause ??
+        entry.error?.cause ??
+        entry.metadata?.cause ??
+        entry.context?.cause;
+      if (cause) {
+        const causeSerialised = JSON.stringify(cause);
+        assert.ok(
+          causeSerialised.includes('inner network failure'),
+          'cause property should contain inner error message',
+        );
+      } else {
+        assert.fail('log entry should include cause information for the error');
+      }
+    }
   });
 
   await t.test('correlation helpers propagate trimmed identifiers', async () => {
@@ -186,17 +274,23 @@ test('node logger contract behaviours', async t => {
     clearGlobalContext();
     setGlobalContext({ correlationId: 'global-corr', tenantId: 'tenant-9' });
 
+    let helperUsed = false;
     const calls = await captureConsole('info', async () => {
       const logger = createLogger({ name: 'node-correlation', context: { sessionId: 'sess-1' } });
       const correlated = logger.withCorrelation('  ctx-corr-5 ');
 
       await correlated.info('child correlation message', { foo: 'bar' });
       await logger.info('meta overrides correlation', { correlationId: ' meta-corr ', token: 'value' });
+
+      helperUsed = await emitCorrelatedLog(loggerModule, logger, 'helper-corr');
+      if (!helperUsed) {
+        await logger.info('correlated-log', { correlationId: 'helper-corr' });
+      }
     });
 
     const entries = parseCapturedEntries(calls);
-    assert.equal(entries.length, 2);
-    const [first, second] = entries;
+    assert.equal(entries.length, 3);
+    const [first, second, third] = entries;
 
     assert.equal(first.correlationId, 'ctx-corr-5');
     assert.equal(first.context.sessionId, '[REDACTED]');
@@ -208,6 +302,14 @@ test('node logger contract behaviours', async t => {
     assert.equal(second.context.tenantId, 'tenant-9');
     assert.equal(second.context.meta.token, '[REDACTED]');
     assert(!('correlationId' in second.context.meta));
+
+    const helperEntry = third;
+    assert.equal(helperEntry.msg, 'correlated-log');
+    assert.equal(helperEntry.correlationId, 'helper-corr');
+    if (helperUsed) {
+      const helperLevel = readLevel(helperEntry);
+      assert.ok(helperLevel, 'helper correlation entry should include severity metadata');
+    }
 
     assert.deepEqual(withCorrelation(' helper '), { correlationId: 'helper' });
     assert.deepEqual(withCorrelation(''), {});
