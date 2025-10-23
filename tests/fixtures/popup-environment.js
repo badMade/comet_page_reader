@@ -1,10 +1,17 @@
 function createElementStub() {
+  const attributes = new Map();
   const node = {
     addEventListener: () => {},
     appendChild: () => {},
     cloneNode: () => createElementStub(),
     querySelector: () => createElementStub(),
-    setAttribute: () => {},
+    setAttribute: (name, value) => {
+      attributes.set(String(name), String(value));
+    },
+    getAttribute: name => (attributes.has(name) ? attributes.get(name) : null),
+    removeAttribute: name => {
+      attributes.delete(name);
+    },
     removeEventListener: () => {},
     dataset: {},
     style: {},

@@ -3,9 +3,19 @@ import assert from 'node:assert/strict';
 
 import { setupPopupTestEnvironment } from './fixtures/popup-environment.js';
 
-setupPopupTestEnvironment();
+const { getElement } = setupPopupTestEnvironment();
+const hadMockFlag = Object.prototype.hasOwnProperty.call(globalThis, '__COMET_MOCK_MODE__');
+const previousMockMode = globalThis.__COMET_MOCK_MODE__;
+globalThis.__COMET_MOCK_MODE__ = true;
 
 const modulePromise = import('../popup/script.js');
+modulePromise.finally(() => {
+  if (hadMockFlag) {
+    globalThis.__COMET_MOCK_MODE__ = previousMockMode;
+  } else {
+    delete globalThis.__COMET_MOCK_MODE__;
+  }
+});
 
 test('resolves microphone permission errors to a helpful status message', async () => {
   const { __TESTING__ } = await modulePromise;
@@ -67,5 +77,48 @@ test('normalises supported pending URLs when the active URL is unsupported', asy
     ...tab,
     url: 'https://example.com/article',
   });
+});
+
+test('disables tab-dependent controls when the active tab is unsupported', async () => {
+  const { __TESTING__ } = await modulePromise;
+  const originalQuery = chrome.tabs.query;
+  chrome.tabs.query = (_options, callback) => {
+    const tabs = [{ id: 88, url: 'chrome://settings/' }];
+    if (typeof callback === 'function') {
+      callback(tabs);
+      return undefined;
+    }
+    return Promise.resolve(tabs);
+  };
+
+  try {
+    const support = await __TESTING__.resolveActiveTabSupport();
+    assert.equal(support.supported, false);
+    assert.equal(support.tab.id, 88);
+    assert.equal(support.tab.url, 'chrome://settings/');
+
+    await __TESTING__.init();
+
+    const controlIds = [
+      'summariseBtn',
+      'readBtn',
+      'readPageBtn',
+      'playBtn',
+      'pauseBtn',
+      'stopBtn',
+      'pushToTalkBtn',
+    ];
+
+    for (const id of controlIds) {
+      const element = getElement(id);
+      assert.ok(element.disabled, `${id} should be disabled`);
+      assert.equal(element.getAttribute('aria-disabled'), 'true');
+    }
+
+    const statusElement = getElement('recordingStatus');
+    assert.equal(statusElement.textContent, __TESTING__.UNSUPPORTED_TAB_MESSAGE);
+  } finally {
+    chrome.tabs.query = originalQuery;
+  }
 });
 
