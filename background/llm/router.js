@@ -912,12 +912,18 @@ export class LLMRouter {
     const errorMessages = failures
       .map(entry => `${entry.provider}: ${entry.reason || entry.error?.message || 'unavailable'}`)
       .join('; ');
-    const aggregateError = new Error(`All providers failed. Attempts: ${errorMessages}`);
+    const errors = failures
+      .map(entry => entry?.error)
+      .filter(error => error instanceof Error);
     const failureWithError = failures.findLast(entry => entry?.error instanceof Error);
-    if (failureWithError) {
-      aggregateError.cause = failureWithError.error;
+    const message = `All providers failed. Attempts: ${errorMessages}`;
+    if (errors.length > 0) {
+      if (failureWithError) {
+        throw new AggregateError(errors, message, { cause: failureWithError.error });
+      }
+      throw new AggregateError(errors, message);
     }
-    throw aggregateError;
+    throw new Error(message);
   }
 }
 
