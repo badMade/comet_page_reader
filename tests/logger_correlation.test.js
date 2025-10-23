@@ -43,3 +43,62 @@ test('correlation helpers prioritise meta values and inherit scoped context', as
     console.info = originalInfo;
   }
 });
+
+test('createCorrelationId falls back to timestamp and random segments when crypto.randomUUID is unavailable', { concurrency: false }, async () => {
+  const originalDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
+  const originalRandom = Math.random;
+  const originalNow = Date.now;
+
+  const stubCrypto = {};
+
+  try {
+    Object.defineProperty(globalThis, 'crypto', {
+      configurable: true,
+      enumerable: true,
+      get: () => stubCrypto,
+    });
+    Math.random = () => 0.123456789;
+    Date.now = () => 1234567890;
+
+    const { createCorrelationId } = await importFreshLoggerModule();
+
+    const prefixed = createCorrelationId(' test-prefix ');
+    const unprefixed = createCorrelationId();
+
+    assert.equal(prefixed, 'test-prefix-kf12oi-4fzzzx');
+    assert.equal(unprefixed, 'kf12oi-4fzzzx');
+  } finally {
+    if (originalDescriptor) {
+      Object.defineProperty(globalThis, 'crypto', originalDescriptor);
+    } else {
+      delete globalThis.crypto;
+    }
+    Math.random = originalRandom;
+    Date.now = originalNow;
+  }
+});
+
+test('createCorrelationId uses crypto.randomUUID when available', { concurrency: false }, async () => {
+  const originalDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
+
+  const stubCrypto = { randomUUID: () => 'uuid-1234' };
+
+  try {
+    Object.defineProperty(globalThis, 'crypto', {
+      configurable: true,
+      enumerable: true,
+      get: () => stubCrypto,
+    });
+
+    const { createCorrelationId } = await importFreshLoggerModule();
+
+    assert.equal(createCorrelationId('prefix'), 'prefix-uuid-1234');
+    assert.equal(createCorrelationId(), 'uuid-1234');
+  } finally {
+    if (originalDescriptor) {
+      Object.defineProperty(globalThis, 'crypto', originalDescriptor);
+    } else {
+      delete globalThis.crypto;
+    }
+  }
+});

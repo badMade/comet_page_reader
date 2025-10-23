@@ -357,6 +357,27 @@ function normaliseCorrelationId(id) {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+export function createCorrelationId(prefix = '') {
+  const normalisedPrefix = typeof prefix === 'string' && prefix.trim() ? prefix.trim() : '';
+  const cryptoRef =
+    (typeof globalThis !== 'undefined' && globalThis.crypto) ||
+    (typeof crypto !== 'undefined' ? crypto : null);
+
+  if (cryptoRef && typeof cryptoRef.randomUUID === 'function') {
+    const uuid = cryptoRef.randomUUID();
+    return normalisedPrefix ? `${normalisedPrefix}-${uuid}` : uuid;
+  }
+
+  const random = Math.random().toString(36).slice(2, 8);
+  const timestamp = Date.now().toString(36);
+
+  if (!normalisedPrefix) {
+    return `${timestamp}-${random}`;
+  }
+
+  return `${normalisedPrefix}-${timestamp}-${random}`;
+}
+
 function redactStackString(stack) {
   if (typeof stack !== 'string' || stack.length === 0) {
     return null;

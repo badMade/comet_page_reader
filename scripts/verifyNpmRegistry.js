@@ -13,7 +13,7 @@ import { URL } from 'node:url';
 import { HttpProxyAgent } from 'http-proxy-agent';
 import { HttpsProxyAgent } from 'https-proxy-agent';
 
-import createLogger, { loadLoggingConfig, setGlobalContext, withCorrelation } from '../utils/logger.js';
+import createLogger, { createCorrelationId, loadLoggingConfig, setGlobalContext, withCorrelation } from '../utils/logger.js';
 import { createCliCorrelationId, registerCliErrorHandlers } from './cliProcessHandlers.js';
 
 const scriptName = 'verify-npm-registry';
@@ -103,19 +103,22 @@ function selectTransport(protocol) {
 
 function verify(target, timeout, agent) {
   const transport = selectTransport(target.protocol);
+  const correlationId = createCorrelationId('verify-request');
+  const correlationMeta = withCorrelation(correlationId);
 
   return new Promise((resolve, reject) => {
     logger.debug('Initiating registry verification request.', {
       target: target.href,
       timeout,
       usingProxy: Boolean(agent),
+      ...correlationMeta,
     });
     const request = transport.request(target, { agent, method: 'GET' }, (response) => {
       const { statusCode = 0, statusMessage = '' } = response;
 
       if (statusCode >= 200 && statusCode < 400) {
         response.resume();
-        logger.debug('Received successful response from registry.', { statusCode, statusMessage });
+        logger.debug('Received successful response from registry.', { statusCode, statusMessage, ...correlationMeta });
         resolve({ statusCode, statusMessage });
         return;
       }
@@ -132,18 +135,19 @@ function verify(target, timeout, agent) {
           statusMessage,
           body,
           target: target.href,
+          ...correlationMeta,
         });
         reject(new Error(`Unexpected response ${statusCode} ${statusMessage} from ${target.href}. Body: ${body}`));
       });
     });
 
     request.on('error', (error) => {
-      logger.error('Network error while verifying registry.', { error, target: target.href });
+      logger.error('Network error while verifying registry.', { error, target: target.href, ...correlationMeta });
       reject(new Error(`Network error while contacting ${target.href}: ${error.message}`));
     });
 
     request.setTimeout(timeout, () => {
-      logger.warn('Registry verification request timed out.', { timeout, target: target.href });
+      logger.warn('Registry verification request timed out.', { timeout, target: target.href, ...correlationMeta });
       request.destroy(new Error(`Timed out after ${timeout}ms while contacting ${target.href}`));
     });
 
