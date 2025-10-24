@@ -37,34 +37,107 @@ let activeConfig = {
   ...DEFAULT_CONFIG,
 };
 
+const isNode = typeof process !== 'undefined' && !!process.versions && !!process.versions.node;
+
 let globalContext = {};
-const scopeStack = [];
-let scopeStorage = null;
+let AsyncLocalStorageClass = typeof globalThis?.AsyncLocalStorage === 'function'
+  ? globalThis.AsyncLocalStorage
+  : null;
+
+if (!AsyncLocalStorageClass && isNode) {
+  try {
+    const asyncHooks = await import('node:async_hooks');
+    if (asyncHooks?.AsyncLocalStorage) {
+      AsyncLocalStorageClass = asyncHooks.AsyncLocalStorage;
+    }
+  } catch (error) {
+    // Continue without AsyncLocalStorage support when the module is unavailable.
+  }
+}
+
+class ExecutionContextManager {
+  constructor() {
+    this.asyncLocal = AsyncLocalStorageClass ? new AsyncLocalStorageClass() : null;
+    this.browserTokens = new Map();
+    this.activeToken = null;
+  }
+
+  run(context, callback) {
+    if (this.asyncLocal) {
+      const current = this.asyncLocal.getStore();
+      const baseStack = Array.isArray(current) ? current : [];
+      const hasContext = context && typeof context === 'object' && Object.keys(context).length > 0;
+      const nextStack = hasContext ? [...baseStack, context] : baseStack;
+      if (nextStack === current) {
+        return callback();
+      }
+      return this.asyncLocal.run(nextStack, callback);
+    }
+
+    return this.runFallback(context, callback);
+  }
+
+  runFallback(context, callback) {
+    const hasContext = context && typeof context === 'object' && Object.keys(context).length > 0;
+    if (!hasContext) {
+      return callback();
+    }
+
+    const parentToken = this.activeToken;
+    const parentStack = parentToken ? this.browserTokens.get(parentToken) || [] : [];
+    const token = Symbol('logger-scope');
+    const stack = [...parentStack, context];
+
+    this.browserTokens.set(token, stack);
+    this.activeToken = token;
+
+    const restore = () => {
+      this.browserTokens.delete(token);
+      this.activeToken = parentToken || null;
+    };
+
+    try {
+      const result = callback();
+      if (result && typeof result.then === 'function') {
+        return result.finally(restore);
+      }
+      restore();
+      return result;
+    } catch (error) {
+      restore();
+      throw error;
+    }
+  }
+
+  getCurrentScopes() {
+    if (this.asyncLocal) {
+      const store = this.asyncLocal.getStore();
+      return Array.isArray(store) ? store : [];
+    }
+
+    if (!this.activeToken) {
+      return [];
+    }
+
+    const stack = this.browserTokens.get(this.activeToken);
+    return Array.isArray(stack) ? stack : [];
+  }
+
+  getCurrentContext() {
+    const scopes = this.getCurrentScopes();
+    if (!scopes || scopes.length === 0) {
+      return {};
+    }
+    return scopes.reduce((accumulator, scope) => ({ ...accumulator, ...scope }), {});
+  }
+}
+
+const scopeManager = new ExecutionContextManager();
+
 let fileStream = null;
 let fsModule;
 
 let yamlParserPromise = null;
-
-function getActiveScopes() {
-  if (scopeStorage) {
-    const store = scopeStorage.getStore();
-    if (Array.isArray(store)) {
-      return store;
-    }
-  }
-  return scopeStack;
-}
-
-function setActiveScopes(scopes) {
-  const nextScopes = Array.isArray(scopes) ? scopes : [];
-  scopeStack.length = 0;
-  if (nextScopes.length > 0) {
-    scopeStack.push(...nextScopes);
-  }
-  if (scopeStorage) {
-    scopeStorage.enterWith(nextScopes);
-  }
-}
 
 function safeStringify(value) {
   const seen = new WeakSet();
@@ -89,8 +162,6 @@ function safeStringify(value) {
     }
   }
 }
-
-const isNode = typeof process !== 'undefined' && !!process.versions && !!process.versions.node;
 
 function parseScalar(value) {
   if (value === 'true') {
@@ -290,34 +361,8 @@ function sanitizeMeta(meta) {
   return meta;
 }
 
-function pushScopeContext(context) {
-  if (!context || typeof context !== 'object' || Object.keys(context).length === 0) {
-    return () => {};
-  }
-  const currentScopes = getActiveScopes();
-  const nextScopes = [...currentScopes, context];
-  setActiveScopes(nextScopes);
-  return () => {
-    const current = getActiveScopes();
-    if (!current || current.length === 0) {
-      return;
-    }
-    const index = current.lastIndexOf(context);
-    if (index === -1) {
-      return;
-    }
-    const next = [...current];
-    next.splice(index, 1);
-    setActiveScopes(next);
-  };
-}
-
 function collectScopeContext() {
-  const activeScopes = getActiveScopes();
-  if (!activeScopes || activeScopes.length === 0) {
-    return {};
-  }
-  return activeScopes.reduce((accumulator, scope) => ({ ...accumulator, ...scope }), {});
+  return scopeManager.getCurrentContext();
 }
 
 function mergeContexts(...contexts) {
@@ -830,15 +875,15 @@ function wrapSyncFunction(fn, ctx = {}) {
   }
   return (...args) => {
     const { context, logger, errorMessage } = resolveScopeContext(ctx, args);
-    const popScope = pushScopeContext(context);
-    try {
-      return fn(...args);
-    } catch (error) {
-      logWrappedError(logger, errorMessage, error);
-      throw error;
-    } finally {
-      popScope();
-    }
+    const invoke = () => {
+      try {
+        return fn(...args);
+      } catch (error) {
+        logWrappedError(logger, errorMessage, error);
+        throw error;
+      }
+    };
+    return scopeManager.run(context, invoke);
   };
 }
 
@@ -848,15 +893,15 @@ function wrapAsyncFunction(fn, ctx = {}) {
   }
   return async (...args) => {
     const { context, logger, errorMessage } = resolveScopeContext(ctx, args);
-    const popScope = pushScopeContext(context);
-    try {
-      return await fn(...args);
-    } catch (error) {
-      logWrappedError(logger, errorMessage, error);
-      throw error;
-    } finally {
-      popScope();
-    }
+    const invoke = async () => {
+      try {
+        return await fn(...args);
+      } catch (error) {
+        logWrappedError(logger, errorMessage, error);
+        throw error;
+      }
+    };
+    return scopeManager.run(context, invoke);
   };
 }
 
