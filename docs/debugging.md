@@ -108,16 +108,12 @@ const logger = createLogger();
 
 // Using the same taskOne/taskTwo definitions from above.
 
+// Strategy 1: sequential execution
 // ✅ Running tasks sequentially prevents context leakage.
 await logger.wrapAsync(taskOne, { id: 1 })();
 await logger.wrapAsync(taskTwo, { id: 2 })();
-```
 
-```javascript
-import { createLogger } from "utils/logger.js";
-
-const logger = createLogger();
-
+// Strategy 2: child loggers for parallel execution
 async function taskOneWithChildLogger() {
   const taskLogger = logger.child({ id: 1 });
   await fetch("/api/task-one");
