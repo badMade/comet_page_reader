@@ -75,6 +75,58 @@ To follow an event end-to-end, search for the correlation ID reported in one com
 
 Browser runtimes rely on a cooperative fallback when `AsyncLocalStorage` is unavailable. The helper tracks scope on a single token tied to the active call stack, which means overlapping `await` chains (for example, multiple parallel fetches) can overwrite one another’s context. When you need strict isolation in the browser, avoid interleaving awaits on the same logger instance or include correlation data explicitly in each log payload.
 
+#### Example: overlapping async scopes
+
+```javascript
+import { createLogger } from "utils/logger.js";
+
+const logger = createLogger();
+
+async function taskOne() {
+  await fetch("/api/task-one");
+  logger.info("task one finished");
+}
+
+async function taskTwo() {
+  await fetch("/api/task-two");
+  logger.info("task two finished");
+}
+
+// ❌ Context from `taskTwo` can leak into `taskOne` when the await chains overlap.
+await Promise.all([
+  logger.wrapAsync(taskOne, { id: 1 })(),
+  logger.wrapAsync(taskTwo, { id: 2 })(),
+]);
+```
+
+Use one of the following strategies when you need deterministic scope isolation:
+
+```javascript
+import { createLogger } from "utils/logger.js";
+
+// Using the same taskOne/taskTwo definitions from above.
+async function runWithSeparateLoggers(taskOne, taskTwo) {
+  const loggerOne = createLogger();
+  const loggerTwo = createLogger();
+
+  // ✅ Independent loggers maintain separate scope tokens.
+  await Promise.all([
+    loggerOne.wrapAsync(taskOne, { id: 1 })(),
+    loggerTwo.wrapAsync(taskTwo, { id: 2 })(),
+  ]);
+}
+
+async function runWithCorrelation(taskOne, taskTwo) {
+  const logger = createLogger();
+
+  // ✅ Explicit correlation data keeps entries distinguishable.
+  await Promise.all([
+    logger.wrapAsync(taskOne, { correlationId: "task-1" })(),
+    logger.wrapAsync(taskTwo, { correlationId: "task-2" })(),
+  ]);
+}
+```
+
 ## CLI exception hooks and exit codes
 
 Node-based utility scripts under `scripts/` register shared exception hooks (via `registerCliErrorHandlers`) so failures emit predictable, structured output. The helper wires `process.on('uncaughtException')` and `process.on('unhandledRejection')` to a logger configured with `component: "cli"` and the script name in `context.script`. Each handler derives a correlation ID from `COMET_CLI_CORRELATION_ID`, `COMET_CORRELATION_ID`, or `CORRELATION_ID` when present; otherwise it generates a single `cli-<script>-*` identifier for the entire process and appends the event name (for example `:uncaught-exception`). The metadata sent to the logger flows through the normal sanitisation rules, so sensitive keys on either the error or rejection reason are redacted automatically before the JSON line is flushed.
