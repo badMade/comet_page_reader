@@ -105,3 +105,57 @@ test('wrapAsync logs wrapped error once with scoped context and rethrows', async
     console.error = originalError;
   }
 });
+
+test('parallel wrapAsync invocations keep correlation and metadata isolated', async () => {
+  const loggerModule = await importFreshLoggerModule();
+  const { createLogger, setLoggerConfig, clearGlobalContext, wrapAsync } = loggerModule;
+
+  const captured = [];
+  const originalInfo = console.info;
+  console.info = (...args) => {
+    captured.push(args);
+  };
+
+  try {
+    setLoggerConfig({ level: 'info', console: { enabled: true }, file: { enabled: false, path: null }, context: {} });
+    clearGlobalContext();
+
+    const logger = createLogger({ name: 'wrap-async-parallel' });
+
+    const handler = wrapAsync(async payload => {
+      await new Promise(resolve => setTimeout(resolve, payload.delay));
+      await logger.info('processing payload', { step: payload.step });
+      return payload.result;
+    }, payload => ({
+      logger,
+      correlationId: payload.correlationId,
+      requestId: payload.requestId,
+    }));
+
+    const results = await Promise.all([
+      handler({ correlationId: 'corr-1', requestId: 'req-1', step: 'first', result: 1, delay: 15 }),
+      handler({ correlationId: 'corr-2', requestId: 'req-2', step: 'second', result: 2, delay: 5 }),
+    ]);
+
+    assert.deepEqual(results, [1, 2]);
+    assert.equal(captured.length, 2);
+
+    const entries = captured.map(args => JSON.parse(args[0]));
+    const mapByCorrelation = new Map(entries.map(entry => [entry.correlationId, entry]));
+
+    assert.equal(mapByCorrelation.size, 2);
+
+    const first = mapByCorrelation.get('corr-1');
+    const second = mapByCorrelation.get('corr-2');
+
+    assert(first, 'missing entry for corr-1');
+    assert(second, 'missing entry for corr-2');
+
+    assert.equal(first.context.requestId, 'req-1');
+    assert.equal(first.context.meta.step, 'first');
+    assert.equal(second.context.requestId, 'req-2');
+    assert.equal(second.context.meta.step, 'second');
+  } finally {
+    console.info = originalInfo;
+  }
+});
