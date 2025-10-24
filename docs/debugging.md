@@ -99,32 +99,42 @@ await Promise.all([
 ]);
 ```
 
-Use one of the following strategies when you need deterministic scope isolation:
+Use one of the following strategies when you need deterministic scope isolation in browser environments:
 
 ```javascript
 import { createLogger } from "utils/logger.js";
 
+const logger = createLogger();
+
 // Using the same taskOne/taskTwo definitions from above.
-async function runWithSeparateLoggers(taskOne, taskTwo) {
-  const loggerOne = createLogger();
-  const loggerTwo = createLogger();
 
-  // ✅ Independent loggers maintain separate scope tokens.
-  await Promise.all([
-    loggerOne.wrapAsync(taskOne, { id: 1 })(),
-    loggerTwo.wrapAsync(taskTwo, { id: 2 })(),
-  ]);
+// ✅ Running tasks sequentially prevents context leakage.
+await logger.wrapAsync(taskOne, { id: 1 })();
+await logger.wrapAsync(taskTwo, { id: 2 })();
+```
+
+```javascript
+import { createLogger } from "utils/logger.js";
+
+const logger = createLogger();
+
+async function taskOneWithChildLogger() {
+  const taskLogger = logger.child({ id: 1 });
+  await fetch("/api/task-one");
+  taskLogger.info("task one finished");
 }
 
-async function runWithCorrelation(taskOne, taskTwo) {
-  const logger = createLogger();
-
-  // ✅ Explicit correlation data keeps entries distinguishable.
-  await Promise.all([
-    logger.wrapAsync(taskOne, { correlationId: "task-1" })(),
-    logger.wrapAsync(taskTwo, { correlationId: "task-2" })(),
-  ]);
+async function taskTwoWithChildLogger() {
+  const taskLogger = logger.child({ id: 2 });
+  await fetch("/api/task-two");
+  taskLogger.info("task two finished");
 }
+
+// ✅ Using child loggers with explicit context is safe for parallel execution.
+await Promise.all([
+  taskOneWithChildLogger(),
+  taskTwoWithChildLogger(),
+]);
 ```
 
 ## CLI exception hooks and exit codes
