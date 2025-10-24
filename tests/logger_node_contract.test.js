@@ -393,6 +393,8 @@ test('node logger contract behaviours', async t => {
     assert.equal(syncEntry.correlationId, 'sync-req-9');
     assert.equal(syncEntry.context.requestId, 'req-9');
     assert.equal(syncEntry.context.apiSecret, '[REDACTED]');
+    assert.equal(syncEntry.context.meta.requestId, 'req-9');
+    assert.equal(syncEntry.context.meta.apiSecret, '[REDACTED]');
     assert.equal(typeof syncEntry.stack, 'string');
     assert(syncEntry.stack.includes('sync failure reason'));
     assert(syncEntry.stack.includes('[REDACTED]'));
@@ -400,7 +402,8 @@ test('node logger contract behaviours', async t => {
     assert.equal(asyncEntry.msg, 'Async failure handled');
     assert.equal(asyncEntry.correlationId, 'async-user-1');
     assert.equal(asyncEntry.context.userId, 'user-1');
-    assert.equal(asyncEntry.context.meta.error.message, 'async wrapper failure');
+    assert.equal(asyncEntry.context.meta.userId, 'user-1');
+    assert.equal(asyncEntry.context.meta.error, undefined);
     assert.equal(typeof asyncEntry.stack, 'string');
     assert(asyncEntry.stack.includes('async wrapper failure'));
     assert(asyncEntry.stack.includes('async root cause'));

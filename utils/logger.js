@@ -868,13 +868,48 @@ function resolveScopeContext(rawContext, args) {
   };
 }
 
-function logWrappedError(logger, message, error) {
+function coerceToError(error) {
+  if (error instanceof Error) {
+    return error;
+  }
+  if (typeof error === 'string') {
+    return new Error(error);
+  }
+  try {
+    const serialised = safeStringify(error);
+    const coerced = new Error(serialised || 'Unknown error');
+    coerced.name = 'NonErrorThrown';
+    return coerced;
+  } catch (coerceError) {
+    const fallback = new Error('Unknown error');
+    fallback.name = 'NonErrorThrown';
+    fallback.cause = coerceError instanceof Error ? coerceError : undefined;
+    return fallback;
+  }
+}
+
+function createWrappedError(message, error) {
+  const baseError = coerceToError(error);
+  const finalMessage = typeof message === 'string' && message.trim().length > 0
+    ? message.trim()
+    : baseError.message || DEFAULT_WRAP_ERROR_MESSAGE;
+  try {
+    return new Error(finalMessage, { cause: baseError });
+  } catch (constructorError) {
+    const wrapped = new Error(finalMessage);
+    wrapped.cause = baseError;
+    return wrapped;
+  }
+}
+
+function logWrappedError(logger, message, error, context) {
   if (!message) {
     return;
   }
   const target = logger && typeof logger.error === 'function' ? logger : fallbackLogger;
-  const meta = { error };
-  Promise.resolve(target.error(message, meta)).catch(() => {});
+  const wrappedError = createWrappedError(message, error);
+  const meta = context && typeof context === 'object' ? { ...context } : undefined;
+  Promise.resolve(meta ? target.error(wrappedError, meta) : target.error(wrappedError)).catch(() => {});
 }
 
 function wrapSyncFunction(fn, ctx = {}) {
@@ -887,7 +922,7 @@ function wrapSyncFunction(fn, ctx = {}) {
       try {
         return fn(...args);
       } catch (error) {
-        logWrappedError(logger, errorMessage, error);
+        logWrappedError(logger, errorMessage, error, context);
         throw error;
       }
     };
@@ -905,7 +940,7 @@ function wrapAsyncFunction(fn, ctx = {}) {
       try {
         return await fn(...args);
       } catch (error) {
-        logWrappedError(logger, errorMessage, error);
+        logWrappedError(logger, errorMessage, error, context);
         throw error;
       }
     };
