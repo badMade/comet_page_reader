@@ -45,7 +45,8 @@ test('wrap logs wrapped error once with scoped context and rethrows', async () =
     assert.equal(entry.msg, 'Sync wrapper failure');
     assert.equal(entry.correlationId, 'wrap-sync-corr');
     assert.equal(entry.context.requestId, 'req-001');
-    assert.equal(entry.context.meta.error.message, 'sync failure body');
+    assert.equal(entry.context.meta.requestId, 'req-001');
+    assert.equal(entry.context.meta.error, undefined);
     assert.equal(typeof entry.stack, 'string');
     assert(entry.stack.includes('sync failure body'));
     assert(entry.stack.includes('[REDACTED]'));
@@ -96,11 +97,14 @@ test('wrapAsync logs wrapped error once with scoped context and rethrows', async
     assert.equal(entry.msg, 'Async wrapper failure');
     assert.equal(entry.correlationId, 'wrap-async-corr');
     assert.equal(entry.context.requestId, 'req-123');
-    assert.equal(entry.context.meta.error.message, 'async failure body');
+    assert.equal(entry.context.meta.requestId, 'req-123');
+    assert.equal(entry.context.meta.error, undefined);
     assert.equal(typeof entry.stack, 'string');
     assert(entry.stack.includes('async failure body'));
     assert(entry.stack.includes('root cause boom'));
     assert(entry.stack.includes('[REDACTED]'));
+    const stackSegments = entry.stack.split('\nCaused by: ');
+    assert.equal(stackSegments.length, 3);
   } finally {
     console.error = originalError;
   }
