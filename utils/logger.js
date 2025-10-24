@@ -77,6 +77,14 @@ class ExecutionContextManager {
     return this.runFallback(context, callback);
   }
 
+  /**
+   * Fallback implementation used when AsyncLocalStorage is unavailable (for example in
+   * browsers). Because browsers lack a built-in async context primitive, the scope is tracked
+   * on a single token per call stack. Interleaved async work (such as overlapping `await`
+   * chains) may therefore leak context between tasks. Callers that require strict isolation
+   * should avoid parallel awaits when relying on this fallback or inject correlation metadata
+   * manually.
+   */
   runFallback(context, callback) {
     const hasContext = context && typeof context === 'object' && Object.keys(context).length > 0;
     if (!hasContext) {
@@ -128,7 +136,7 @@ class ExecutionContextManager {
     if (!scopes || scopes.length === 0) {
       return {};
     }
-    return scopes.reduce((accumulator, scope) => ({ ...accumulator, ...scope }), {});
+    return Object.assign({}, ...scopes);
   }
 }
 

@@ -71,6 +71,10 @@ Each runtime constructs correlation IDs for request/response cycles and attaches
 
 To follow an event end-to-end, search for the correlation ID reported in one component’s log across the other consoles. When spawning new work from existing handlers, wrap the new logger in `logger.withCorrelation(currentId)` or merge the helper’s return value into your message payload.
 
+### Browser fallback limitations
+
+Browser runtimes rely on a cooperative fallback when `AsyncLocalStorage` is unavailable. The helper tracks scope on a single token tied to the active call stack, which means overlapping `await` chains (for example, multiple parallel fetches) can overwrite one another’s context. When you need strict isolation in the browser, avoid interleaving awaits on the same logger instance or include correlation data explicitly in each log payload.
+
 ## CLI exception hooks and exit codes
 
 Node-based utility scripts under `scripts/` register shared exception hooks (via `registerCliErrorHandlers`) so failures emit predictable, structured output. The helper wires `process.on('uncaughtException')` and `process.on('unhandledRejection')` to a logger configured with `component: "cli"` and the script name in `context.script`. Each handler derives a correlation ID from `COMET_CLI_CORRELATION_ID`, `COMET_CORRELATION_ID`, or `CORRELATION_ID` when present; otherwise it generates a single `cli-<script>-*` identifier for the entire process and appends the event name (for example `:uncaught-exception`). The metadata sent to the logger flows through the normal sanitisation rules, so sensitive keys on either the error or rejection reason are redacted automatically before the JSON line is flushed.
